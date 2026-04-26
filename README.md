@@ -69,6 +69,17 @@ home = "~/.musio"
 `api_key` supports environment references in the form `${ENV_NAME}` or
 `${ENV_NAME:fallback}`.
 
+The QQ Music sidecar also reads `MUSIO_CONFIG` and `MUSIO_HOME`. By default it
+uses `${storage.home}/credentials/qqmusic.json`, so the Spring QR login and the
+Python QQMusicApi client share the same credential file. You can override these
+sidecar-specific values when debugging:
+
+```bash
+MUSIO_QQMUSIC_CREDENTIALS=/path/to/qqmusic.json
+MUSIO_QQMUSIC_DEVICE_PATH=/path/to/qqmusic-device.json
+MUSIO_QQMUSIC_PROXY=http://127.0.0.1:7890
+```
+
 For local Ollama, use an OpenAI-compatible endpoint:
 
 ```toml
@@ -128,7 +139,7 @@ Override `MUSIO_JAVA_EXE_WIN` or `MUSIO_MAVEN_HOME_WIN` if those paths change.
 ## Current Scope
 
 The QQ Music QR login flow is implemented in the Spring backend and stores
-credentials under the configured `storage.home`. Basic chat now calls the
-configured OpenAI-compatible model endpoint. Tool calling and music-provider
-actions are still routed through backend interfaces so the React frontend and
-provider sidecars do not depend on each other directly.
+credentials under the configured `storage.home`. The Spring music API calls the
+local Python sidecar, which adapts `qqmusic-api-python` for search, song detail,
+play URLs, lyrics, comments, profile, playlists, and playlist songs. Basic chat
+now calls the configured OpenAI-compatible model endpoint.

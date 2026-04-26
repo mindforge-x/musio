@@ -5,6 +5,7 @@ import com.musio.model.Lyrics;
 import com.musio.model.Playlist;
 import com.musio.model.Song;
 import com.musio.model.SongDetail;
+import com.musio.model.SongUrl;
 import com.musio.model.UserProfile;
 import com.musio.providers.MusicProviderGateway;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -47,6 +48,11 @@ public class MusicController {
     @GetMapping("/songs/{songId}")
     public SongDetail song(@PathVariable String songId) {
         return providerGateway.defaultProvider().getSongDetail(songId);
+    }
+
+    @GetMapping("/songs/{songId}/url")
+    public SongUrl songUrl(@PathVariable String songId) {
+        return providerGateway.defaultProvider().getSongUrl(songId);
     }
 
     @GetMapping("/songs/{songId}/lyrics")
