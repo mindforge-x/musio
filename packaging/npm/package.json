@@ -1,0 +1,15 @@
+{
+  "name": "musio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Launcher for the Musio local music agent",
+  "bin": {
+    "musio": "bin/musio.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

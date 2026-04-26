@@ -1,0 +1,9 @@
+services:
+  qqmusic-sidecar:
+    build:
+      context: ./providers/qqmusic-python-sidecar
+    ports:
+      - "127.0.0.1:18767:18767"
+    environment:
+      MUSIO_QQMUSIC_HOST: 0.0.0.0
+      MUSIO_QQMUSIC_PORT: 18767

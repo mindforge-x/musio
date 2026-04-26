@@ -1,0 +1,17 @@
+[project]
+name = "musio-qqmusic-sidecar"
+version = "0.1.0"
+description = "Local QQ Music provider sidecar for Musio"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27"
+]
+
+[project.optional-dependencies]
+qqmusic = [
+    "qqmusic-api-python"
+]
+
+[tool.uvicorn]
+factory = false

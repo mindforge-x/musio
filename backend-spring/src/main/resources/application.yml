@@ -1,0 +1,18 @@
+server:
+  port: 18765
+  address: 127.0.0.1
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+musio:
+  cors:
+    allowed-origins: "http://127.0.0.1:18766,http://localhost:18766"
+  providers:
+    qqmusic:
+      sidecar-base-url: "http://127.0.0.1:18767"
+  storage:
+    home: "${user.home}/.musio"
