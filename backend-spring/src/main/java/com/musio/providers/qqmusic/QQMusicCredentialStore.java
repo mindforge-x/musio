@@ -2,8 +2,8 @@ package com.musio.providers.qqmusic;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.musio.config.MusioConfigService;
 import com.musio.model.QQMusicCredential;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -16,10 +16,10 @@ public class QQMusicCredentialStore {
     private final ObjectMapper objectMapper;
     private final Path credentialPath;
 
-    public QQMusicCredentialStore(@Value("${musio.storage.home}") String musioHome) {
+    public QQMusicCredentialStore(MusioConfigService configService) {
         this.objectMapper = new ObjectMapper().findAndRegisterModules()
                 .enable(SerializationFeature.INDENT_OUTPUT);
-        this.credentialPath = Path.of(musioHome, "credentials", "qqmusic.json");
+        this.credentialPath = configService.config().storage().home().resolve("credentials").resolve("qqmusic.json");
     }
 
     public boolean exists() {

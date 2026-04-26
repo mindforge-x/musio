@@ -1,0 +1,41 @@
+# Musio user configuration.
+# Copy this file to:
+#   Linux/macOS: ~/.musio/config.toml
+#   Windows:     C:\Users\<you>\.musio\config.toml
+#
+# If Musio is launched from WSL through a Windows JDK, Java sees the Windows
+# user home. In that case the WSL path is usually:
+#   /mnt/c/Users/<you>/.musio/config.toml
+
+[ai]
+# Supported values for the first implementation:
+#   openai-compatible  Any API that speaks the OpenAI chat/completions shape
+#   openai             OpenAI API
+#   ollama             Local Ollama server
+provider = "openai-compatible"
+
+# Examples:
+#   OpenAI:        "https://api.openai.com"
+#   Ollama:        "http://127.0.0.1:11434/v1"
+#   Local gateway: "http://127.0.0.1:8000/v1"
+base_url = "http://127.0.0.1:11434/v1"
+
+# You can put a literal value here, but an environment reference is safer:
+#   api_key = "${OPENAI_API_KEY}"
+# For local Ollama, an empty value is usually fine.
+api_key = "${MUSIO_AI_API_KEY:}"
+
+# Examples:
+#   "gpt-4.1-mini"
+#   "qwen2.5:7b"
+#   "llama3.1"
+model = "qwen2.5:7b"
+
+temperature = 0.7
+max_tokens = 2048
+
+[providers.qqmusic]
+sidecar_base_url = "http://127.0.0.1:18767"
+
+[storage]
+home = "~/.musio"

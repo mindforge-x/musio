@@ -118,6 +118,11 @@ export function App() {
       source.addEventListener("agent_message_delta", (evt) => {
         setEvents((current) => [{ id: crypto.randomUUID(), name: "agent", detail: (evt as MessageEvent).data }, ...current]);
       });
+      source.addEventListener("agent_error", (evt) => {
+        setEvents((current) => [{ id: crypto.randomUUID(), name: "agent_error", detail: (evt as MessageEvent).data }, ...current]);
+        source.close();
+        setBusy(false);
+      });
       source.addEventListener("done", () => {
         source.close();
         setBusy(false);
@@ -176,6 +181,9 @@ export function App() {
           <div>
             <p className="eyebrow">Musio local agent</p>
             <h1>Music operations console</h1>
+            <p className="config-line">
+              {status ? `${status.aiProvider} / ${status.aiModel}` : "model config unavailable"}
+            </p>
           </div>
           <div className={`status-pill ${backendLabel === "ok" ? "online" : ""}`}>
             <Activity size={16} />

@@ -1,2 +1,3 @@
 fastapi>=0.110
+qqmusic-api-python>=0.5.2
 uvicorn[standard]>=0.27

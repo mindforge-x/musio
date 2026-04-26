@@ -23,6 +23,83 @@ React web:               http://127.0.0.1:18766
 QQMusic Python sidecar:  http://127.0.0.1:18767
 ```
 
+## User Configuration
+
+Musio reads user configuration from:
+
+```text
+~/.musio/config.toml
+```
+
+Copy the example file before starting the backend:
+
+```bash
+mkdir -p ~/.musio
+cp config/musio.example.toml ~/.musio/config.toml
+```
+
+If the backend is launched from WSL through a Windows JDK, Java uses the Windows
+home directory instead. For the current development setup that usually means:
+
+```text
+C:\Users\<you>\.musio\config.toml
+/mnt/c/Users/<you>/.musio/config.toml
+```
+
+You can override the path with `MUSIO_CONFIG`.
+
+Example model settings:
+
+```toml
+[ai]
+provider = "openai-compatible"
+base_url = "http://127.0.0.1:11434/v1"
+api_key = "${MUSIO_AI_API_KEY:}"
+model = "qwen2.5:7b"
+temperature = 0.7
+max_tokens = 2048
+
+[providers.qqmusic]
+sidecar_base_url = "http://127.0.0.1:18767"
+
+[storage]
+home = "~/.musio"
+```
+
+`api_key` supports environment references in the form `${ENV_NAME}` or
+`${ENV_NAME:fallback}`.
+
+The QQ Music sidecar also reads `MUSIO_CONFIG` and `MUSIO_HOME`. By default it
+uses `${storage.home}/credentials/qqmusic.json`, so the Spring QR login and the
+Python QQMusicApi client share the same credential file. You can override these
+sidecar-specific values when debugging:
+
+```bash
+MUSIO_QQMUSIC_CREDENTIALS=/path/to/qqmusic.json
+MUSIO_QQMUSIC_DEVICE_PATH=/path/to/qqmusic-device.json
+MUSIO_QQMUSIC_PROXY=http://127.0.0.1:7890
+```
+
+For local Ollama, use an OpenAI-compatible endpoint:
+
+```toml
+[ai]
+provider = "ollama"
+base_url = "http://127.0.0.1:11434/v1"
+api_key = ""
+model = "qwen2.5:7b"
+```
+
+For OpenAI:
+
+```toml
+[ai]
+provider = "openai"
+base_url = "https://api.openai.com"
+api_key = "${OPENAI_API_KEY}"
+model = "gpt-4.1-mini"
+```
+
 ## Development
 
 ```bash
@@ -61,13 +138,8 @@ Override `MUSIO_JAVA_EXE_WIN` or `MUSIO_MAVEN_HOME_WIN` if those paths change.
 
 ## Current Scope
 
-This is the initial project skeleton. The QQ Music QR login flow should be
-migrated from the existing `aasee-music-backend` project into:
-
-```text
-backend-spring/src/main/java/com/musio/providers/qqmusic/QQMusicAuthService.java
-backend-spring/src/main/java/com/musio/providers/qqmusic/QQMusicCredentialStore.java
-```
-
-Agent execution is intentionally routed through backend interfaces so the React
-frontend and provider sidecars do not depend on each other directly.
+The QQ Music QR login flow is implemented in the Spring backend and stores
+credentials under the configured `storage.home`. The Spring music API calls the
+local Python sidecar, which adapts `qqmusic-api-python` for search, song detail,
+play URLs, lyrics, comments, profile, playlists, and playlist songs. Basic chat
+now calls the configured OpenAI-compatible model endpoint.

@@ -36,7 +36,7 @@ public class SseEventPublisher {
             emitter.send(SseEmitter.event()
                     .name(event.type())
                     .data(event));
-            if ("done".equals(event.type()) || "error".equals(event.type())) {
+            if ("done".equals(event.type()) || "agent_error".equals(event.type())) {
                 emitter.complete();
                 emitters.remove(runId);
             }
