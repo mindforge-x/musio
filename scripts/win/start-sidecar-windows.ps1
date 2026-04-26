@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent $PSScriptRoot
+$Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $RunDir = Join-Path $Root ".musio\run"
 $SidecarDir = Join-Path $Root "providers\qqmusic-python-sidecar"
 $SidecarUrl = "http://127.0.0.1:18767/health"
@@ -86,7 +86,7 @@ function Prepare-SidecarPython {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        & $pythonExe -c "import fastapi, uvicorn" *> $null
+        & $pythonExe -c "import fastapi, uvicorn, qqmusic_api" *> $null
         $dependenciesReady = $LASTEXITCODE -eq 0
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference

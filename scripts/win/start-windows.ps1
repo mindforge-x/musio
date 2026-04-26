@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent $PSScriptRoot
+$Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $RunDir = Join-Path $Root ".musio\run"
 
 $BackendUrl = "http://127.0.0.1:18765/actuator/health"
@@ -158,7 +158,7 @@ function Prepare-SidecarPython {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        & $pythonExe -c "import fastapi, uvicorn" *> $null
+        & $pythonExe -c "import fastapi, uvicorn, qqmusic_api" *> $null
         $dependenciesReady = $LASTEXITCODE -eq 0
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
@@ -228,4 +228,4 @@ if (-not $NoBrowser) {
 
 Write-Host ""
 Write-Host "Musio is available at $FrontendUrl"
-Write-Host "Stop with: .\scripts\stop-windows.ps1"
+Write-Host "Stop with: .\scripts\win\stop-windows.ps1"
