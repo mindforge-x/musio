@@ -35,10 +35,16 @@ cd frontend
 npm install
 cd ..
 
+# One terminal with all services:
 ./scripts/dev.sh
+
+# Or, for debugging, run these in separate terminals:
+./scripts/dev-sidecar.sh
+./scripts/dev-backend.sh
+./scripts/dev-frontend.sh
 ```
 
-The script expects Java 21, Maven, Python 3.11+, and Node.js. If you are in WSL
+The scripts expect Java 21, Maven, Python 3.11+, and Node.js. If you are in WSL
 with dependencies downloaded through a local proxy, use the proxy flags supported
 by each package manager, for example `npm install --proxy=http://127.0.0.1:7890
 --https-proxy=http://127.0.0.1:7890`.
