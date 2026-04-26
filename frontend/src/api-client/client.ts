@@ -14,6 +14,14 @@ export type LoginStartResult = {
   message: string;
 };
 
+export type LoginStatus = {
+  sessionId: string;
+  provider: string;
+  state: string;
+  credentialStored: boolean;
+  message: string;
+};
+
 export type ChatRunResponse = {
   runId: string;
   state: string;
@@ -46,6 +54,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   status: () => request<SystemStatus>("/api/system/status"),
   startLogin: () => request<LoginStartResult>("/api/auth/qqmusic/qr"),
+  loginStatus: (sessionId: string) => request<LoginStatus>(`/api/auth/qqmusic/qr/${sessionId}/status`),
   startChat: (message: string) =>
     request<ChatRunResponse>("/api/chat", {
       method: "POST",

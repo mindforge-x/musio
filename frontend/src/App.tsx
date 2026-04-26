@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Activity, CircleStop, Headphones, ListMusic, MessageSquare, Play, QrCode, Radio, Search } from "lucide-react";
-import { api, LoginStartResult, Song, SystemStatus } from "./api-client/client";
+import { api, LoginStartResult, LoginStatus, Song, SystemStatus } from "./api-client/client";
 
 type EventLog = {
   id: string;
@@ -11,6 +11,7 @@ type EventLog = {
 export function App() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [login, setLogin] = useState<LoginStartResult | null>(null);
+  const [loginStatus, setLoginStatus] = useState<LoginStatus | null>(null);
   const [message, setMessage] = useState("Recommend five songs for a late-night coding session.");
   const [searchKeyword, setSearchKeyword] = useState("city pop");
   const [events, setEvents] = useState<EventLog[]>([]);
@@ -25,11 +26,68 @@ export function App() {
 
   const backendLabel = useMemo(() => status?.backend ?? "offline", [status]);
 
+  useEffect(() => {
+    if (!login?.sessionId) {
+      return;
+    }
+
+    const terminalStates = new Set(["DONE", "EXPIRED", "FAILED"]);
+    if (loginStatus && terminalStates.has(loginStatus.state)) {
+      return;
+    }
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const result = await api.loginStatus(login.sessionId);
+        if (cancelled) {
+          return;
+        }
+        setLoginStatus((previous) => {
+          if (previous?.state !== result.state) {
+            setEvents((current) => [
+              { id: crypto.randomUUID(), name: "login", detail: `${result.state}: ${result.message}` },
+              ...current
+            ]);
+          }
+          return result;
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setEvents((current) => [
+            { id: crypto.randomUUID(), name: "login", detail: error instanceof Error ? error.message : "Login polling failed" },
+            ...current
+          ]);
+        }
+      }
+    };
+
+    const interval = window.setInterval(() => {
+      if (!loginStatus || !terminalStates.has(loginStatus.state)) {
+        void poll();
+      }
+    }, 2000);
+
+    void poll();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [login?.sessionId, loginStatus?.state]);
+
   async function startLogin() {
     setBusy(true);
     try {
       const result = await api.startLogin();
       setLogin(result);
+      setLoginStatus({
+        sessionId: result.sessionId,
+        provider: result.provider,
+        state: result.state,
+        credentialStored: false,
+        message: result.message
+      });
       setEvents((current) => [
         { id: crypto.randomUUID(), name: "login", detail: `${result.state}: ${result.message}` },
         ...current
@@ -143,7 +201,7 @@ export function App() {
           <section className="panel auth-panel">
             <div className="panel-heading">
               <h2>QQ Music</h2>
-              <span>{login?.state ?? "not linked"}</span>
+              <span>{loginStatus?.state ?? "not linked"}</span>
             </div>
             <div className="qr-box">
               {login?.qrCodeDataUrl ? <img src={login.qrCodeDataUrl} alt="QQ Music login QR" /> : <QrCode size={96} />}
