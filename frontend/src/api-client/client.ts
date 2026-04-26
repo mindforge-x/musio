@@ -3,6 +3,10 @@ const API_BASE = "";
 export type SystemStatus = {
   backend: string;
   qqMusicSidecarBaseUrl: string;
+  configPath: string;
+  aiProvider: string;
+  aiModel: string;
+  aiApiKeyConfigured: boolean;
   checkedAt: string;
 };
 

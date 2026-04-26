@@ -121,6 +121,14 @@ h1 {
   letter-spacing: 0;
 }
 
+.config-line {
+  margin-top: 10px;
+  color: var(--muted);
+  font-family: "Cascadia Code", "IBM Plex Mono", monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 h2 {
   font-size: 16px;
   letter-spacing: 0;

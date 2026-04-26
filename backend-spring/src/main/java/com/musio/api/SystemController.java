@@ -1,7 +1,8 @@
 package com.musio.api;
 
+import com.musio.config.MusioConfig;
+import com.musio.config.MusioConfigService;
 import com.musio.model.SystemStatus;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -11,14 +12,23 @@ import java.time.Instant;
 @RestController
 @RequestMapping("/api/system")
 public class SystemController {
-    private final String qqMusicSidecarBaseUrl;
+    private final MusioConfigService configService;
 
-    public SystemController(@Value("${musio.providers.qqmusic.sidecar-base-url}") String qqMusicSidecarBaseUrl) {
-        this.qqMusicSidecarBaseUrl = qqMusicSidecarBaseUrl;
+    public SystemController(MusioConfigService configService) {
+        this.configService = configService;
     }
 
     @GetMapping("/status")
     public SystemStatus status() {
-        return new SystemStatus("ok", qqMusicSidecarBaseUrl, Instant.now());
+        MusioConfig config = configService.config();
+        return new SystemStatus(
+                "ok",
+                config.providers().qqmusic().sidecarBaseUrl(),
+                config.configPath().toString(),
+                config.ai().provider(),
+                config.ai().model(),
+                config.ai().apiKeyConfigured(),
+                Instant.now()
+        );
     }
 }

@@ -1,5 +1,6 @@
 package com.musio.providers.qqmusic;
 
+import com.musio.config.MusioConfigService;
 import com.musio.model.Comment;
 import com.musio.model.Lyrics;
 import com.musio.model.Playlist;
@@ -8,17 +9,16 @@ import com.musio.model.Song;
 import com.musio.model.SongDetail;
 import com.musio.model.SongUrl;
 import com.musio.model.UserProfile;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 @Component
 public class QQMusicSidecarClient {
-    private final String baseUrl;
+    private final MusioConfigService configService;
 
-    public QQMusicSidecarClient(@Value("${musio.providers.qqmusic.sidecar-base-url}") String baseUrl) {
-        this.baseUrl = baseUrl;
+    public QQMusicSidecarClient(MusioConfigService configService) {
+        this.configService = configService;
     }
 
     public UserProfile profile() {
@@ -38,7 +38,7 @@ public class QQMusicSidecarClient {
     }
 
     public SongDetail song(String songId) {
-        return new SongDetail(songId, ProviderType.QQMUSIC, "", List.of(), "", null, null, baseUrl);
+        return new SongDetail(songId, ProviderType.QQMUSIC, "", List.of(), "", null, null, baseUrl());
     }
 
     public SongUrl songUrl(String songId) {
@@ -51,5 +51,9 @@ public class QQMusicSidecarClient {
 
     public List<Comment> comments(String songId) {
         return List.of();
+    }
+
+    private String baseUrl() {
+        return configService.config().providers().qqmusic().sidecarBaseUrl();
     }
 }

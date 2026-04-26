@@ -9,6 +9,15 @@ management:
         include: health,info
 
 musio:
+  config:
+    path: "${MUSIO_CONFIG:${user.home}/.musio/config.toml}"
+  ai:
+    provider: "${MUSIO_AI_PROVIDER:openai-compatible}"
+    base-url: "${MUSIO_AI_BASE_URL:http://127.0.0.1:11434/v1}"
+    api-key: "${MUSIO_AI_API_KEY:}"
+    model: "${MUSIO_AI_MODEL:qwen2.5:7b}"
+    temperature: "${MUSIO_AI_TEMPERATURE:0.7}"
+    max-tokens: "${MUSIO_AI_MAX_TOKENS:2048}"
   cors:
     allowed-origins: "http://127.0.0.1:18766,http://localhost:18766"
   providers:
