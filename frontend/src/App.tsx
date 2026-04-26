@@ -8,6 +8,12 @@ type EventLog = {
   detail: string;
 };
 
+type AgentEvent = {
+  type: string;
+  data?: Record<string, unknown>;
+  createdAt?: string;
+};
+
 export function App() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [login, setLogin] = useState<LoginStartResult | null>(null);
@@ -116,10 +122,37 @@ export function App() {
         setEvents((current) => [{ id: crypto.randomUUID(), name: "message", detail: evt.data }, ...current]);
       };
       source.addEventListener("agent_message_delta", (evt) => {
-        setEvents((current) => [{ id: crypto.randomUUID(), name: "agent", detail: (evt as MessageEvent).data }, ...current]);
+        const agentEvent = parseAgentEvent((evt as MessageEvent).data);
+        const text = typeof agentEvent?.data?.text === "string" ? agentEvent.data.text : (evt as MessageEvent).data;
+        setEvents((current) => [{ id: crypto.randomUUID(), name: "agent", detail: text }, ...current]);
+      });
+      source.addEventListener("tool_start", (evt) => {
+        const agentEvent = parseAgentEvent((evt as MessageEvent).data);
+        setEvents((current) => [
+          { id: crypto.randomUUID(), name: "tool_start", detail: formatToolEvent(agentEvent) },
+          ...current
+        ]);
+      });
+      source.addEventListener("tool_result", (evt) => {
+        const agentEvent = parseAgentEvent((evt as MessageEvent).data);
+        setEvents((current) => [
+          { id: crypto.randomUUID(), name: "tool_result", detail: formatToolEvent(agentEvent) },
+          ...current
+        ]);
+      });
+      source.addEventListener("song_cards", (evt) => {
+        const agentEvent = parseAgentEvent((evt as MessageEvent).data);
+        const nextSongs = Array.isArray(agentEvent?.data?.songs) ? agentEvent.data.songs as Song[] : [];
+        setSongs(nextSongs);
+        setEvents((current) => [
+          { id: crypto.randomUUID(), name: "song_cards", detail: `received ${nextSongs.length} songs` },
+          ...current
+        ]);
       });
       source.addEventListener("agent_error", (evt) => {
-        setEvents((current) => [{ id: crypto.randomUUID(), name: "agent_error", detail: (evt as MessageEvent).data }, ...current]);
+        const agentEvent = parseAgentEvent((evt as MessageEvent).data);
+        const detail = typeof agentEvent?.data?.message === "string" ? agentEvent.data.message : (evt as MessageEvent).data;
+        setEvents((current) => [{ id: crypto.randomUUID(), name: "agent_error", detail }, ...current]);
         source.close();
         setBusy(false);
       });
@@ -267,4 +300,27 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function parseAgentEvent(raw: string): AgentEvent | null {
+  try {
+    return JSON.parse(raw) as AgentEvent;
+  } catch {
+    return null;
+  }
+}
+
+function formatToolEvent(event: AgentEvent | null): string {
+  if (!event?.data) {
+    return "tool event";
+  }
+
+  const tool = typeof event.data.tool === "string" ? event.data.tool : "tool";
+  const summary = typeof event.data.summary === "string" ? event.data.summary : "";
+  if (summary) {
+    return `${tool}: ${summary}`;
+  }
+
+  const input = event.data.input ? JSON.stringify(event.data.input) : "";
+  return input ? `${tool}: ${input}` : tool;
 }
