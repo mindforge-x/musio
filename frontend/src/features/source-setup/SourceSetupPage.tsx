@@ -5,16 +5,24 @@ import { ProviderLoginCard } from "./ProviderLoginCard";
 
 type SourceSetupPageProps = {
   busy: boolean;
+  selectedSources: string[];
   onBusyChange: (busy: boolean) => void;
   onEvent: (event: EventLog) => void;
 };
 
 const QQ_PROVIDER = "qqmusic";
 const TERMINAL_LOGIN_STATES = new Set(["DONE", "EXPIRED", "FAILED"]);
+const SOURCE_OPTIONS = [
+  { id: "qqmusic", label: "QQ Music", enabled: true },
+  { id: "netease", label: "NetEase Cloud Music", enabled: false },
+  { id: "local", label: "Local Music", enabled: false }
+];
 
-export function SourceSetupPage({ busy, onBusyChange, onEvent }: SourceSetupPageProps) {
+export function SourceSetupPage({ busy, selectedSources, onBusyChange, onEvent }: SourceSetupPageProps) {
   const [login, setLogin] = useState<LoginStartResult | null>(null);
   const [loginStatus, setLoginStatus] = useState<LoginStatus | null>(null);
+  const selectedSet = new Set(selectedSources);
+  const qqMusicSelected = selectedSet.has(QQ_PROVIDER);
 
   useEffect(() => {
     if (!login?.sessionId) {
@@ -83,12 +91,41 @@ export function SourceSetupPage({ busy, onBusyChange, onEvent }: SourceSetupPage
   }
 
   return (
-    <ProviderLoginCard
-      providerLabel="QQ Music"
-      login={login}
-      loginStatus={loginStatus}
-      busy={busy}
-      onStartLogin={startLogin}
-    />
+    <section className="source-setup-stack">
+      <section className="panel source-summary-panel">
+        <div className="panel-heading">
+          <h2>Music Sources</h2>
+          <span>from terminal</span>
+        </div>
+        <div className="source-option-list">
+          {SOURCE_OPTIONS.map((source) => (
+            <article
+              key={source.id}
+              className={`source-option ${selectedSet.has(source.id) ? "selected" : ""} ${source.enabled ? "" : "disabled"}`}
+            >
+              <strong>{source.label}</strong>
+              <span>{selectedSet.has(source.id) ? "selected" : source.enabled ? "available" : "coming soon"}</span>
+            </article>
+          ))}
+        </div>
+      </section>
+      {qqMusicSelected ? (
+        <ProviderLoginCard
+          providerLabel="QQ Music"
+          login={login}
+          loginStatus={loginStatus}
+          busy={busy}
+          onStartLogin={startLogin}
+        />
+      ) : (
+        <section className="panel auth-panel">
+          <div className="panel-heading">
+            <h2>No login source</h2>
+            <span>waiting</span>
+          </div>
+          <p className="empty-copy">Select QQ Music in the terminal startup workflow to continue the MVP login flow.</p>
+        </section>
+      )}
+    </section>
   );
 }

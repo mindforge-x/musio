@@ -60,7 +60,7 @@ if (Test-PortListening -Port 18766) {
     exit 0
 }
 
-$command = "Write-Host 'Starting musio-frontend'; & npm.cmd run dev -- --host 127.0.0.1 --port 18766"
+$command = "Write-Host 'Starting musio-frontend'; & npm.cmd run dev -- --host 127.0.0.1 --port 18766 --strictPort"
 $process = Start-Process -FilePath "powershell.exe" -WorkingDirectory $FrontendDir -ArgumentList @("-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $command) -PassThru
 Set-Content -Path (Join-Path $RunDir "musio-frontend.pid") -Value $process.Id
 Write-Host "musio-frontend launched, pid=$($process.Id)"

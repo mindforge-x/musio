@@ -212,7 +212,7 @@ $PythonExe = Prepare-SidecarPython -SidecarDirectory $SidecarDir
 
 $SidecarCommand = "& '$PythonExe' -m app.main"
 $BackendCommand = "& mvn spring-boot:run"
-$FrontendCommand = "& npm.cmd run dev -- --host 127.0.0.1 --port 18766"
+$FrontendCommand = "& npm.cmd run dev -- --host 127.0.0.1 --port 18766 --strictPort"
 
 Start-ServiceWindow -Name "musio-sidecar" -WorkingDirectory $SidecarDir -Command $SidecarCommand -Port 18767
 Start-ServiceWindow -Name "musio-backend" -WorkingDirectory $BackendDir -Command $BackendCommand -Port 18765

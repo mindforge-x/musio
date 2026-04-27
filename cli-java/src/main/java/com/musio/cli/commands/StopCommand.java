@@ -1,5 +1,6 @@
 package com.musio.cli.commands;
 
+import com.musio.cli.process.LocalProcessManager;
 import picocli.CommandLine.Command;
 
 import java.util.concurrent.Callable;
@@ -8,7 +9,6 @@ import java.util.concurrent.Callable;
 public class StopCommand implements Callable<Integer> {
     @Override
     public Integer call() {
-        System.out.println("Stop command is reserved for the local process manager.");
-        return 0;
+        return new LocalProcessManager().stopServices();
     }
 }

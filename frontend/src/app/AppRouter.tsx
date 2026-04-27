@@ -17,6 +17,7 @@ export function AppRouter() {
   const [events, setEvents] = useState<EventLog[]>([]);
   const [songs, setSongs] = useState<Song[]>([]);
   const [busy, setBusy] = useState(false);
+  const selectedSources = useMemo(() => selectedSourcesFromUrl(), []);
   const player = usePlayerStore();
 
   useEffect(() => {
@@ -82,7 +83,12 @@ export function AppRouter() {
         ) : (
           <div className="grid">
             <AgentChatPanel busy={busy} onBusyChange={setBusy} onEvent={addEvent} onSongs={setSongs} />
-            <SourceSetupPage busy={busy} onBusyChange={setBusy} onEvent={addEvent} />
+            <SourceSetupPage
+              busy={busy}
+              selectedSources={selectedSources}
+              onBusyChange={setBusy}
+              onEvent={addEvent}
+            />
             <SongCards
               busy={busy}
               songs={songs}
@@ -97,4 +103,15 @@ export function AppRouter() {
       </section>
     </main>
   );
+}
+
+function selectedSourcesFromUrl(): string[] {
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get("sources");
+  if (!raw) {
+    return ["qqmusic"];
+  }
+  return raw.split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
 }

@@ -401,6 +401,55 @@ textarea {
   background: var(--cobalt);
 }
 
+.source-setup-stack {
+  display: grid;
+  gap: 18px;
+}
+
+.source-summary-panel {
+  min-height: auto;
+}
+
+.source-option-list {
+  display: grid;
+  gap: 10px;
+}
+
+.source-option {
+  min-height: 54px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbf7ed;
+}
+
+.source-option strong,
+.source-option span {
+  overflow-wrap: anywhere;
+}
+
+.source-option span {
+  color: var(--muted);
+  font-family: "Cascadia Code", monospace;
+  font-size: 12px;
+}
+
+.source-option.selected {
+  border-color: var(--cobalt);
+}
+
+.source-option.selected span {
+  color: var(--cobalt);
+}
+
+.source-option.disabled {
+  opacity: 0.62;
+}
+
 .search-form {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
