@@ -176,6 +176,150 @@ h2 {
   min-height: 260px;
 }
 
+.player-panel {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.player-art {
+  width: 96px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbf7ed;
+  color: var(--muted);
+  font-family: "Cascadia Code", monospace;
+  overflow: hidden;
+}
+
+.player-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.player-main {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.player-title-row {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.player-title-row p,
+.player-title-row span,
+.lyric-line,
+.empty-copy {
+  color: var(--muted);
+}
+
+.player-title-row p,
+.lyric-line {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.player-title-row span {
+  font-family: "Cascadia Code", monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.progress-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-family: "Cascadia Code", monospace;
+  font-size: 12px;
+}
+
+.progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: #e3dac8;
+  overflow: hidden;
+}
+
+.progress-track div {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--cobalt);
+}
+
+.player-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: end;
+}
+
+.player-controls button {
+  min-height: 38px;
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbf5e8;
+  color: var(--ink);
+}
+
+.player-controls span {
+  color: var(--muted);
+  font-family: "Cascadia Code", monospace;
+  font-size: 11px;
+}
+
+.musio-playlists-panel {
+  min-height: 460px;
+}
+
+.musio-playlists-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 18px;
+}
+
+.musio-playlist-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.musio-playlist-list button {
+  min-height: 42px;
+  padding: 0 12px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbf7ed;
+  color: var(--ink);
+}
+
+.musio-playlist-list button.selected {
+  border-color: var(--cobalt);
+  color: var(--cobalt);
+}
+
+.empty-copy {
+  padding: 12px 0;
+  font-size: 14px;
+}
+
 .panel-heading {
   display: flex;
   align-items: center;
@@ -382,6 +526,15 @@ textarea {
 
   .grid {
     grid-template-columns: 1fr;
+  }
+
+  .player-panel,
+  .musio-playlists-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .player-controls {
+    justify-content: start;
   }
 
   .event-panel {

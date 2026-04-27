@@ -1,0 +1,113 @@
+export type SystemStatus = {
+  backend: string;
+  qqMusicSidecarBaseUrl: string;
+  configPath: string;
+  aiProvider: string;
+  aiModel: string;
+  aiApiKeyConfigured: boolean;
+  checkedAt: string;
+};
+
+export type LoginStartResult = {
+  sessionId: string;
+  provider: string;
+  state: string;
+  qrCodeDataUrl: string | null;
+  message: string;
+};
+
+export type LoginStatus = {
+  sessionId: string;
+  provider: string;
+  state: string;
+  credentialStored: boolean;
+  message: string;
+};
+
+export type ChatRunResponse = {
+  runId: string;
+  state: string;
+  message: string;
+};
+
+export type Song = {
+  id: string;
+  provider?: string;
+  title: string;
+  artists: string[];
+  album?: string | null;
+  durationSeconds?: number | null;
+  artworkUrl?: string | null;
+};
+
+export type SongUrl = {
+  songId: string;
+  provider: string;
+  url: string | null;
+  expiresInSeconds: number | null;
+};
+
+export type Playlist = {
+  id: string;
+  provider: string;
+  name: string;
+  songCount?: number | null;
+  artworkUrl?: string | null;
+};
+
+export type EventLog = {
+  id: string;
+  name: string;
+  detail: string;
+};
+
+export type AgentEvent = {
+  type: string;
+  data?: Record<string, unknown>;
+  createdAt?: string;
+};
+
+export type ProviderStatus = {
+  provider: string;
+  displayName: string;
+  available: boolean;
+  authenticated: boolean;
+  loginMethod: string;
+  message: string;
+};
+
+export type PlaybackMode = "SEQUENTIAL" | "REPEAT_ONE" | "REPEAT_ALL" | "SHUFFLE";
+
+export type PlayerState = {
+  currentSong: Song | null;
+  queue: Song[];
+  paused: boolean;
+  positionSeconds: number;
+  durationSeconds: number | null;
+  playbackMode: PlaybackMode;
+  lyricLine: string;
+};
+
+export type MusioPlaylistItem = {
+  id: string;
+  playlistId: string;
+  provider: string;
+  providerTrackId: string;
+  title: string;
+  artists: string[];
+  album?: string | null;
+  durationSeconds?: number | null;
+  artworkUrl?: string | null;
+  sourceUrl?: string | null;
+  sortOrder: number;
+  createdAt: string;
+};
+
+export type MusioPlaylist = {
+  id: string;
+  name: string;
+  description?: string | null;
+  items: MusioPlaylistItem[];
+  createdAt: string;
+  updatedAt: string;
+};
