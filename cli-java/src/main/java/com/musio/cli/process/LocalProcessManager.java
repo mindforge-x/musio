@@ -1,5 +1,7 @@
 package com.musio.cli.process;
 
+import com.musio.cli.ui.CliTimeline;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +20,7 @@ public class LocalProcessManager {
 
     public boolean startRequiredServices() {
         createRunDirectory();
+        CliTimeline.step("启动本地服务");
         boolean sidecarReady = startIfNeeded(LocalService.QQMUSIC_SIDECAR);
         boolean backendReady = startIfNeeded(LocalService.BACKEND);
         boolean frontendReady = startIfNeeded(LocalService.FRONTEND);
@@ -44,28 +47,29 @@ public class LocalProcessManager {
     }
 
     private boolean startIfNeeded(LocalService service) {
+        CliTimeline.branch(service.displayName());
         if (httpProbe.isReady(service.healthUri())) {
-            System.out.println(service.displayName() + " already running: " + service.healthUri());
+            CliTimeline.success("已在运行：" + service.healthUri());
             return true;
         }
 
-        System.out.println("Starting " + service.displayName() + "...");
+        CliTimeline.pending("正在启动");
         Process process = launch(service);
         writePid(service, process);
         if (service == LocalService.BACKEND) {
-            System.out.println("Spring 首次启动可能会下载 Maven 依赖，最长等待 "
-                    + service.timeout().toSeconds() + "s。");
+            CliTimeline.muted("Spring 首次启动可能会下载 Maven 依赖，最长等待 "
+                    + service.timeout().toSeconds() + "s");
         }
 
         if (httpProbe.waitUntilReady(service.healthUri(), service.timeout())) {
-            System.out.println(service.displayName() + " ready: " + service.healthUri());
+            CliTimeline.success("ready: " + service.healthUri());
             return true;
         } else {
             if (!process.isAlive()) {
-                System.out.println(service.displayName() + " exited before ready, exit code: " + process.exitValue());
+                CliTimeline.error("进程在 ready 前退出，exit code: " + process.exitValue());
             }
-            System.out.println(service.displayName() + " did not become ready within " + service.timeout().toSeconds() + "s.");
-            System.out.println("Check log: " + logPath(service));
+            CliTimeline.error("未在 " + service.timeout().toSeconds() + "s 内 ready");
+            CliTimeline.detail("日志：" + logPath(service));
             return false;
         }
     }

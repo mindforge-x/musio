@@ -2,6 +2,7 @@ package com.musio.cli.setup;
 
 import com.musio.cli.process.BrowserLauncher;
 import com.musio.cli.process.LocalProcessManager;
+import com.musio.cli.ui.CliTimeline;
 
 import java.net.URI;
 import java.util.List;
@@ -17,30 +18,34 @@ public class StartupWorkflow {
             return 1;
         }
 
-        System.out.println("已选择音乐源：" + selectedSources.stream()
+        String selectedSourceNames = selectedSources.stream()
                 .map(MusicSourceOption::displayName)
-                .collect(Collectors.joining(", ")));
-        System.out.println();
+                .collect(Collectors.joining(", "));
+        CliTimeline.step("已选择音乐源");
+        CliTimeline.success(selectedSourceNames);
+
         LocalProcessManager processManager = new LocalProcessManager();
-        System.out.println("项目目录：" + processManager.root());
+        CliTimeline.step("项目目录");
+        CliTimeline.detail(processManager.root().toString());
+
         boolean servicesReady = processManager.startRequiredServices();
-        System.out.println();
         if (!servicesReady) {
-            System.out.println("部分服务尚未 ready，请查看 .musio/run 下的日志。");
-            System.out.println();
+            CliTimeline.warning("部分服务尚未 ready，请查看 .musio/run 下的日志");
         }
-        System.out.println("Backend: http://127.0.0.1:18765");
-        System.out.println("Web:     " + WEB_URL);
-        System.out.println();
+
+        CliTimeline.step("访问入口");
+        CliTimeline.detail("Backend  http://127.0.0.1:18765");
+        CliTimeline.detail("Web      " + WEB_URL);
+
         URI loginUri = URI.create(WEB_URL + "/?sources=" + sourceIds(selectedSources));
-        System.out.println("登录页面：");
-        System.out.println(loginUri);
-        System.out.println();
+        CliTimeline.step("登录页面");
+        CliTimeline.detail(loginUri.toString());
         if (new BrowserLauncher().open(loginUri)) {
-            System.out.println("已尝试在浏览器中打开登录页面。");
+            CliTimeline.success("已尝试在浏览器中打开登录页面");
         } else {
-            System.out.println("未能自动打开浏览器，请手动复制上面的登录页面地址。");
+            CliTimeline.warning("未能自动打开浏览器，请手动复制上面的登录页面地址");
         }
+        CliTimeline.end("Musio 启动流程完成");
         return 0;
     }
 

@@ -15,6 +15,23 @@ public class SourceSelectionPrompt {
     private static final int KEY_ENTER = 13;
     private static final int KEY_LINE_FEED = 10;
     private static final int KEY_SPACE = 32;
+    private static final String RESET = "\033[0m";
+    private static final String BOLD = "\033[1m";
+    private static final String DIM = "\033[2m";
+    private static final String BLUE = "\033[34m";
+    private static final String GREEN = "\033[32m";
+    private static final String YELLOW = "\033[33m";
+    private static final String GRAY = "\033[90m";
+    private static final String WHITE = "\033[97m";
+    private static final String CYAN = "\033[36m";
+    private static final String[] LOGO_LINES = {
+            "███╗   ███╗██╗   ██╗███████╗██╗ ██████╗",
+            "████╗ ████║██║   ██║██╔════╝██║██╔═══██╗",
+            "██╔████╔██║██║   ██║███████╗██║██║   ██║",
+            "██║╚██╔╝██║██║   ██║╚════██║██║██║   ██║",
+            "██║ ╚═╝ ██║╚██████╔╝███████║██║╚██████╔╝",
+            "╚═╝     ╚═╝ ╚═════╝ ╚══════╝╚═╝ ╚═════╝"
+    };
 
     public List<MusicSourceOption> select() {
         try (Terminal terminal = TerminalBuilder.builder().system(true).build()) {
@@ -96,14 +113,7 @@ public class SourceSelectionPrompt {
     }
 
     private int move(MusicSourceOption[] options, int cursor, int delta) {
-        int next = cursor;
-        for (int i = 0; i < options.length; i++) {
-            next = (next + delta + options.length) % options.length;
-            if (options[next].enabled()) {
-                return next;
-            }
-        }
-        return cursor;
+        return (cursor + delta + options.length) % options.length;
     }
 
     private List<MusicSourceOption> orderedSelection(MusicSourceOption[] options, Set<MusicSourceOption> selected) {
@@ -124,30 +134,83 @@ public class SourceSelectionPrompt {
             String warning
     ) {
         clear(terminal);
-        terminal.writer().println("Musio 启动工作流");
+        renderHeader(terminal);
         terminal.writer().println();
-        terminal.writer().println("请选择要连接的音乐源：");
-        terminal.writer().println("  空格 = 选择/取消   回车 = 确认   上/下方向键或 j/k = 移动   q = 取消");
+        terminal.writer().println(GRAY + "  │" + RESET);
+        terminal.writer().println(BLUE + "  ◆" + RESET + " 选择音乐源");
+        terminal.writer().println(GRAY + "  │" + RESET + " " + DIM
+                + "空格 选择/取消   回车 确认   ↑/↓ 或 j/k 移动   q 取消" + RESET);
         terminal.writer().println();
+        terminal.writer().println(GRAY + "  ├─" + RESET + " 可连接渠道 " + GRAY + "────────────────────────" + RESET);
         for (int i = 0; i < options.length; i++) {
             MusicSourceOption option = options[i];
-            String pointer = i == cursor ? ">" : " ";
-            String checkbox = selected.contains(option) ? "[x]" : "[ ]";
-            String state = option.enabled() ? "" : "（暂未开放）";
-            terminal.writer().printf(
-                    "%s %s %-22s %s%s%n",
-                    pointer,
-                    checkbox,
-                    option.displayName(),
-                    option.description(),
-                    state
-            );
+            renderOption(terminal, option, i == cursor, selected.contains(option), i == options.length - 1);
+        }
+        terminal.writer().println();
+        terminal.writer().println(GRAY + "  └─" + RESET + " 下一步：打开登录页面并进入播放器工作台");
+        if (selected.isEmpty()) {
+            terminal.writer().println(YELLOW + "     未选择音乐源" + RESET);
+        } else {
+            terminal.writer().println(GREEN + "     已选择：" + selectedNames(options, selected) + RESET);
         }
         if (!warning.isBlank()) {
             terminal.writer().println();
-            terminal.writer().println("提示：" + warning);
+            terminal.writer().println(YELLOW + "  提示：" + warning + RESET);
         }
         terminal.writer().flush();
+    }
+
+    private void renderHeader(Terminal terminal) {
+        terminal.writer().println();
+        for (int i = 0; i < LOGO_LINES.length; i++) {
+            String color = i < 2 ? WHITE : i < 5 ? "\033[37m" : GRAY;
+            terminal.writer().println("  " + color + LOGO_LINES[i] + RESET);
+        }
+        terminal.writer().println("  " + CYAN + BOLD + "LOCAL MUSIC AGENT" + RESET
+                + GRAY + "  ·  启动工作流" + RESET);
+    }
+
+    private void renderOption(
+            Terminal terminal,
+            MusicSourceOption option,
+            boolean current,
+            boolean selected,
+            boolean last
+    ) {
+        String branch = last ? "  └─" : "  ├─";
+        String continuation = last ? "    " : "  │ ";
+        String cursorMarker = current ? BLUE + "›" + RESET : " ";
+        String statusMarker = selected ? GREEN + "●" + RESET : option.enabled() ? "○" : GRAY + "○" + RESET;
+        String checkbox = selected ? GREEN + "[x]" + RESET : option.enabled() ? "[ ]" : GRAY + "[ ]" + RESET;
+        String title = option.enabled() ? option.displayName() : GRAY + option.displayName() + RESET;
+        String description = option.enabled()
+                ? DIM + option.description() + RESET
+                : GRAY + option.description() + " · 暂未开放" + RESET;
+
+        terminal.writer().printf(
+                "%s %s %s %s %s%n",
+                GRAY + branch + RESET,
+                cursorMarker,
+                statusMarker,
+                checkbox,
+                current ? BOLD + title + RESET : title
+        );
+        terminal.writer().printf(
+                "%s   %s%n",
+                GRAY + continuation + RESET,
+                description
+        );
+        terminal.writer().println(GRAY + continuation + RESET);
+    }
+
+    private String selectedNames(MusicSourceOption[] options, Set<MusicSourceOption> selected) {
+        List<String> names = new ArrayList<>();
+        for (MusicSourceOption option : options) {
+            if (selected.contains(option)) {
+                names.add(option.displayName());
+            }
+        }
+        return String.join(", ", names);
     }
 
     private void clear(Terminal terminal) {
