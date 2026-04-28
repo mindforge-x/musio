@@ -8,8 +8,15 @@ import com.musio.model.AgentEvent;
 import com.musio.model.ChatRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -21,36 +28,44 @@ public class AgentRuntime {
     private final SpringAiChatModelFactory chatModelFactory;
     private final ToolRegistry toolRegistry;
     private final AgentEventBus eventBus;
+    private final ConversationHistoryService conversationHistoryService;
 
     public AgentRuntime(
             AgentPrompts prompts,
             MusioConfigService configService,
             SpringAiChatModelFactory chatModelFactory,
             ToolRegistry toolRegistry,
-            AgentEventBus eventBus
+            AgentEventBus eventBus,
+            ConversationHistoryService conversationHistoryService
     ) {
         this.prompts = prompts;
         this.configService = configService;
         this.chatModelFactory = chatModelFactory;
         this.toolRegistry = toolRegistry;
         this.eventBus = eventBus;
+        this.conversationHistoryService = conversationHistoryService;
     }
 
     public void start(String runId, ChatRequest request) {
         MusioConfig.Ai ai = configService.config().ai();
         AgentRunContext.setRunId(runId);
         try {
+            String userId = conversationHistoryService.normalizeUserId(request.userId());
+            List<ConversationHistoryMessage> history = conversationHistoryService.load(userId);
+            Prompt prompt = conversationPrompt(history, request.message());
+
             String answer = chatModelFactory.chatClient(ai)
-                    .prompt()
-                    .system(agentSystemPrompt())
-                    .user(request.message())
+                    .prompt(prompt)
                     .toolCallbacks(toolRegistry.readOnlyToolCallbacks())
                     .call()
                     .content();
+            String answerText = answer == null ? "" : answer;
+
+            conversationHistoryService.appendTurn(userId, request.message(), answerText);
 
             eventBus.publish(runId, AgentEvent.of("agent_message_delta", Map.of(
                     "runId", runId,
-                    "text", answer == null ? "" : answer,
+                    "text", answerText,
                     "aiProvider", ai.provider(),
                     "aiModel", ai.model(),
                     "systemPromptLoaded", !prompts.systemPrompt().isBlank()
@@ -67,6 +82,20 @@ public class AgentRuntime {
         } finally {
             AgentRunContext.clear();
         }
+    }
+
+    private Prompt conversationPrompt(List<ConversationHistoryMessage> history, String userMessage) {
+        List<Message> messages = new ArrayList<>();
+        messages.add(new SystemMessage(agentSystemPrompt()));
+        for (ConversationHistoryMessage message : history) {
+            if ("user".equals(message.role())) {
+                messages.add(new UserMessage(message.content()));
+            } else if ("assistant".equals(message.role())) {
+                messages.add(new AssistantMessage(message.content()));
+            }
+        }
+        messages.add(new UserMessage(userMessage));
+        return new Prompt(messages);
     }
 
     public AgentEvent describeConfiguration(String runId, ChatRequest request) {

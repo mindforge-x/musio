@@ -5,6 +5,7 @@ import com.musio.model.ChatRequest;
 import com.musio.model.ChatRunResponse;
 import com.musio.model.PendingConfirmation;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -40,5 +41,10 @@ public class ChatController {
     @PostMapping("/runs/{runId}/cancel")
     public ChatRunResponse cancel(@PathVariable String runId) {
         return agentRunService.cancel(runId);
+    }
+
+    @DeleteMapping("/history/{userId}")
+    public ChatRunResponse clearHistory(@PathVariable String userId) {
+        return agentRunService.clearHistory(userId);
     }
 }

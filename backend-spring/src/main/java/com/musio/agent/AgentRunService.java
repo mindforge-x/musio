@@ -22,14 +22,21 @@ public class AgentRunService {
     private final AgentRuntime agentRuntime;
     private final SseEventPublisher eventPublisher;
     private final AgentEventBus eventBus;
+    private final ConversationHistoryService conversationHistoryService;
     private final ExecutorService executorService = Executors.newCachedThreadPool();
     private final Map<String, ChatRequest> pendingRuns = new ConcurrentHashMap<>();
     private final Map<String, Future<?>> runningRuns = new ConcurrentHashMap<>();
 
-    public AgentRunService(AgentRuntime agentRuntime, SseEventPublisher eventPublisher, AgentEventBus eventBus) {
+    public AgentRunService(
+            AgentRuntime agentRuntime,
+            SseEventPublisher eventPublisher,
+            AgentEventBus eventBus,
+            ConversationHistoryService conversationHistoryService
+    ) {
         this.agentRuntime = agentRuntime;
         this.eventPublisher = eventPublisher;
         this.eventBus = eventBus;
+        this.conversationHistoryService = conversationHistoryService;
     }
 
     public ChatRunResponse startRun(ChatRequest request) {
@@ -75,6 +82,12 @@ public class AgentRunService {
         eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId, "state", "cancelled")));
         eventBus.unsubscribe(runId);
         return new ChatRunResponse(runId, "cancelled", "Agent run cancelled.");
+    }
+
+    public ChatRunResponse clearHistory(String userId) {
+        String normalizedUserId = conversationHistoryService.normalizeUserId(userId);
+        conversationHistoryService.clear(normalizedUserId);
+        return new ChatRunResponse(normalizedUserId, "cleared", "Conversation history cleared.");
     }
 
     @PreDestroy
