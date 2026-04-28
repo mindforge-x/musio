@@ -8,7 +8,10 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $RunDir = Join-Path $Root ".musio\run"
 $FrontendDir = Join-Path $Root "frontend"
-$FrontendUrl = "http://127.0.0.1:18766/"
+$FrontendHost = if ($env:MUSIO_WEB_HOST) { $env:MUSIO_WEB_HOST } else { "127.0.0.1" }
+$FrontendPort = if ($env:MUSIO_WEB_PORT) { [int]$env:MUSIO_WEB_PORT } else { 18766 }
+$BackendBaseUrl = if ($env:MUSIO_BACKEND_BASE_URL) { $env:MUSIO_BACKEND_BASE_URL } else { "http://127.0.0.1:18765" }
+$FrontendUrl = "http://$($FrontendHost):$($FrontendPort)/"
 
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 
@@ -52,15 +55,15 @@ if (-not (Test-Path $viteCmd)) {
     }
 }
 
-if (Test-PortListening -Port 18766) {
-    Write-Host "musio-frontend already appears to be listening on port 18766"
+if (Test-PortListening -Port $FrontendPort) {
+    Write-Host "musio-frontend already appears to be listening on port $FrontendPort"
     if (-not $NoBrowser) {
         Start-Process $FrontendUrl
     }
     exit 0
 }
 
-$command = "Write-Host 'Starting musio-frontend'; & npm.cmd run dev -- --host 127.0.0.1 --port 18766 --strictPort"
+$command = "`$env:VITE_MUSIO_BACKEND_URL='$BackendBaseUrl'; Write-Host 'Starting musio-frontend'; & npm.cmd run dev -- --host $FrontendHost --port $FrontendPort --strictPort"
 $process = Start-Process -FilePath "powershell.exe" -WorkingDirectory $FrontendDir -ArgumentList @("-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $command) -PassThru
 Set-Content -Path (Join-Path $RunDir "musio-frontend.pid") -Value $process.Id
 Write-Host "musio-frontend launched, pid=$($process.Id)"

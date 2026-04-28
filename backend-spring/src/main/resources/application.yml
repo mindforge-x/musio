@@ -1,6 +1,6 @@
 server:
-  port: 18765
-  address: 127.0.0.1
+  port: "${MUSIO_SERVER_PORT:18765}"
+  address: "${MUSIO_SERVER_HOST:127.0.0.1}"
 
 management:
   endpoints:
@@ -19,9 +19,9 @@ musio:
     temperature: "${MUSIO_AI_TEMPERATURE:0.7}"
     max-tokens: "${MUSIO_AI_MAX_TOKENS:2048}"
   cors:
-    allowed-origins: "http://127.0.0.1:18766,http://localhost:18766"
+    allowed-origins: "${MUSIO_CORS_ALLOWED_ORIGINS:http://127.0.0.1:18766,http://localhost:18766}"
   providers:
     qqmusic:
-      sidecar-base-url: "http://127.0.0.1:18767"
+      sidecar-base-url: "${MUSIO_QQMUSIC_SIDECAR_BASE_URL:http://127.0.0.1:18767}"
   storage:
     home: "${user.home}/.musio"

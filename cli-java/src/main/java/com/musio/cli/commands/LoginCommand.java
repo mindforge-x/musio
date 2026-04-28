@@ -1,5 +1,7 @@
 package com.musio.cli.commands;
 
+import com.musio.cli.config.MusioCliConfig;
+import com.musio.cli.config.MusioCliConfigStore;
 import picocli.CommandLine.Command;
 
 import java.util.concurrent.Callable;
@@ -8,7 +10,8 @@ import java.util.concurrent.Callable;
 public class LoginCommand implements Callable<Integer> {
     @Override
     public Integer call() {
-        System.out.println("QQ Music login endpoint: GET http://127.0.0.1:18765/api/auth/qqmusic/qr");
+        MusioCliConfig config = new MusioCliConfigStore().load();
+        System.out.println("QQ Music login endpoint: GET " + config.qqMusicLoginUri());
         return 0;
     }
 }

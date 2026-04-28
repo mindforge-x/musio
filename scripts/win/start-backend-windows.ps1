@@ -7,7 +7,9 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $RunDir = Join-Path $Root ".musio\run"
 $BackendDir = Join-Path $Root "backend-spring"
-$BackendUrl = "http://127.0.0.1:18765/actuator/health"
+$BackendHost = if ($env:MUSIO_SERVER_HOST) { $env:MUSIO_SERVER_HOST } else { "127.0.0.1" }
+$BackendPort = if ($env:MUSIO_SERVER_PORT) { [int]$env:MUSIO_SERVER_PORT } else { 18765 }
+$BackendUrl = "http://$($BackendHost):$($BackendPort)/actuator/health"
 
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 
@@ -54,8 +56,8 @@ function Assert-Java21 {
 Assert-Java21
 Assert-Command -Command "mvn" -InstallHint "Install Maven and ensure mvn is available in PATH."
 
-if (Test-PortListening -Port 18765) {
-    Write-Host "musio-backend already appears to be listening on port 18765"
+if (Test-PortListening -Port $BackendPort) {
+    Write-Host "musio-backend already appears to be listening on port $BackendPort"
     exit 0
 }
 

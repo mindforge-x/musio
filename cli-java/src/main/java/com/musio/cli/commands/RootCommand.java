@@ -14,7 +14,8 @@ import java.util.concurrent.Callable;
                 LoginCommand.class,
                 StatusCommand.class,
                 StopCommand.class,
-                DoctorCommand.class
+                DoctorCommand.class,
+                ConfigCommand.class
         }
 )
 public class RootCommand implements Callable<Integer> {

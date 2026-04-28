@@ -7,9 +7,17 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $RunDir = Join-Path $Root ".musio\run"
 
-$BackendUrl = "http://127.0.0.1:18765/actuator/health"
-$FrontendUrl = "http://127.0.0.1:18766/"
-$SidecarUrl = "http://127.0.0.1:18767/health"
+$BackendHost = if ($env:MUSIO_SERVER_HOST) { $env:MUSIO_SERVER_HOST } else { "127.0.0.1" }
+$BackendPort = if ($env:MUSIO_SERVER_PORT) { [int]$env:MUSIO_SERVER_PORT } else { 18765 }
+$FrontendHost = if ($env:MUSIO_WEB_HOST) { $env:MUSIO_WEB_HOST } else { "127.0.0.1" }
+$FrontendPort = if ($env:MUSIO_WEB_PORT) { [int]$env:MUSIO_WEB_PORT } else { 18766 }
+$SidecarHost = if ($env:MUSIO_QQMUSIC_HOST) { $env:MUSIO_QQMUSIC_HOST } else { "127.0.0.1" }
+$SidecarPort = if ($env:MUSIO_QQMUSIC_PORT) { [int]$env:MUSIO_QQMUSIC_PORT } else { 18767 }
+
+$BackendUrl = "http://$($BackendHost):$($BackendPort)/actuator/health"
+$BackendBaseUrl = "http://$($BackendHost):$($BackendPort)"
+$FrontendUrl = "http://$($FrontendHost):$($FrontendPort)/"
+$SidecarUrl = "http://$($SidecarHost):$($SidecarPort)/health"
 
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 
@@ -212,11 +220,11 @@ $PythonExe = Prepare-SidecarPython -SidecarDirectory $SidecarDir
 
 $SidecarCommand = "& '$PythonExe' -m app.main"
 $BackendCommand = "& mvn spring-boot:run"
-$FrontendCommand = "& npm.cmd run dev -- --host 127.0.0.1 --port 18766 --strictPort"
+$FrontendCommand = "`$env:VITE_MUSIO_BACKEND_URL='$BackendBaseUrl'; & npm.cmd run dev -- --host $FrontendHost --port $FrontendPort --strictPort"
 
-Start-ServiceWindow -Name "musio-sidecar" -WorkingDirectory $SidecarDir -Command $SidecarCommand -Port 18767
-Start-ServiceWindow -Name "musio-backend" -WorkingDirectory $BackendDir -Command $BackendCommand -Port 18765
-Start-ServiceWindow -Name "musio-frontend" -WorkingDirectory $FrontendDir -Command $FrontendCommand -Port 18766
+Start-ServiceWindow -Name "musio-sidecar" -WorkingDirectory $SidecarDir -Command $SidecarCommand -Port $SidecarPort
+Start-ServiceWindow -Name "musio-backend" -WorkingDirectory $BackendDir -Command $BackendCommand -Port $BackendPort
+Start-ServiceWindow -Name "musio-frontend" -WorkingDirectory $FrontendDir -Command $FrontendCommand -Port $FrontendPort
 
 Wait-Http -Name "QQMusic sidecar" -Url $SidecarUrl -TimeoutSeconds 30
 Wait-Http -Name "Spring backend" -Url $BackendUrl -TimeoutSeconds 90

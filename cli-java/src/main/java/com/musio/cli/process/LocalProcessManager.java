@@ -1,5 +1,7 @@
 package com.musio.cli.process;
 
+import com.musio.cli.config.MusioCliConfig;
+import com.musio.cli.config.MusioCliConfigStore;
 import com.musio.cli.ui.CliTimeline;
 
 import java.io.IOException;
@@ -7,13 +9,20 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Locale;
+import java.util.Map;
 
 public class LocalProcessManager {
     private final Path root;
     private final Path runDirectory;
+    private final MusioCliConfig config;
     private final HttpProbe httpProbe = new HttpProbe();
 
     public LocalProcessManager() {
+        this(new MusioCliConfigStore().load());
+    }
+
+    public LocalProcessManager(MusioCliConfig config) {
+        this.config = config;
         this.root = new ProjectRootResolver().resolve();
         this.runDirectory = root.resolve(".musio").resolve("run");
     }
@@ -47,10 +56,16 @@ public class LocalProcessManager {
     }
 
     private boolean startIfNeeded(LocalService service) {
+        var healthUri = service.healthUri(config);
         CliTimeline.branch(service.displayName());
-        if (httpProbe.isReady(service.healthUri())) {
-            CliTimeline.success("已在运行：" + service.healthUri());
+        if (httpProbe.isReady(healthUri)) {
+            CliTimeline.success("已在运行：" + healthUri);
             return true;
+        }
+        if (httpProbe.canConnect(healthUri)) {
+            CliTimeline.error("端口已被其他服务占用：" + healthUri.getHost() + ":" + healthUri.getPort());
+            CliTimeline.detail("可修改端口：musio config set " + service.portConfigKey() + " <port>");
+            return false;
         }
 
         CliTimeline.pending("正在启动");
@@ -61,8 +76,8 @@ public class LocalProcessManager {
                     + service.timeout().toSeconds() + "s");
         }
 
-        if (httpProbe.waitUntilReady(service.healthUri(), service.timeout())) {
-            CliTimeline.success("ready: " + service.healthUri());
+        if (httpProbe.waitUntilReady(healthUri, service.timeout())) {
+            CliTimeline.success("ready: " + healthUri);
             return true;
         } else {
             if (!process.isAlive()) {
@@ -77,6 +92,7 @@ public class LocalProcessManager {
     private Process launch(LocalService service) {
         ProcessBuilder builder = isWindows() ? windowsProcess(service) : unixProcess(service);
         builder.directory(root.toFile());
+        configureEnvironment(builder.environment());
         builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logPath(service).toFile()));
         builder.redirectErrorStream(true);
         try {
@@ -84,6 +100,19 @@ public class LocalProcessManager {
         } catch (IOException e) {
             throw new IllegalStateException("Failed to start " + service.displayName() + " from " + root, e);
         }
+    }
+
+    private void configureEnvironment(Map<String, String> environment) {
+        environment.put("MUSIO_CONFIG", config.configPath().toString());
+        environment.put("MUSIO_SERVER_HOST", config.serverHost());
+        environment.put("MUSIO_SERVER_PORT", Integer.toString(config.serverPort()));
+        environment.put("MUSIO_WEB_HOST", config.webHost());
+        environment.put("MUSIO_WEB_PORT", Integer.toString(config.webPort()));
+        environment.put("MUSIO_BACKEND_BASE_URL", config.backendBaseUrl());
+        environment.put("MUSIO_CORS_ALLOWED_ORIGINS", config.corsAllowedOrigins());
+        environment.put("MUSIO_QQMUSIC_HOST", config.qqMusicSidecarHost());
+        environment.put("MUSIO_QQMUSIC_PORT", Integer.toString(config.qqMusicSidecarPort()));
+        environment.put("MUSIO_QQMUSIC_SIDECAR_BASE_URL", config.qqMusicSidecarBaseUrl());
     }
 
     private ProcessBuilder unixProcess(LocalService service) {
@@ -121,7 +150,13 @@ public class LocalProcessManager {
     }
 
     private ProcessBuilder unixStopProcess() {
-        return new ProcessBuilder("/bin/bash", root.resolve("scripts/stop-dev.sh").toString());
+        return new ProcessBuilder(
+                "/bin/bash",
+                root.resolve("scripts/stop-dev.sh").toString(),
+                Integer.toString(config.serverPort()),
+                Integer.toString(config.webPort()),
+                Integer.toString(config.qqMusicSidecarPort())
+        );
     }
 
     private ProcessBuilder windowsStopProcess() {
@@ -130,7 +165,9 @@ public class LocalProcessManager {
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                root.resolve("scripts\\win\\stop-windows.ps1").toString()
+                root.resolve("scripts\\win\\stop-windows.ps1").toString(),
+                "-Ports",
+                config.serverPort() + "," + config.webPort() + "," + config.qqMusicSidecarPort()
         );
     }
 

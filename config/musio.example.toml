@@ -34,7 +34,17 @@ model = "qwen2.5:7b"
 temperature = 0.7
 max_tokens = 2048
 
+[server]
+host = "127.0.0.1"
+port = 18765
+
+[web]
+host = "127.0.0.1"
+port = 18766
+
 [providers.qqmusic]
+sidecar_host = "127.0.0.1"
+sidecar_port = 18767
 sidecar_base_url = "http://127.0.0.1:18767"
 
 [storage]

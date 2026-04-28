@@ -2,6 +2,7 @@ package com.musio.cli.process;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.Socket;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -41,6 +42,16 @@ public class HttpProbe {
                 .isPresent();
     }
 
+    public boolean canConnect(URI uri) {
+        int port = uri.getPort() > 0 ? uri.getPort() : defaultPort(uri);
+        try (Socket socket = new Socket()) {
+            socket.connect(new java.net.InetSocketAddress(uri.getHost(), port), 1000);
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     public boolean waitUntilReady(URI uri, Duration timeout) {
         Instant deadline = Instant.now().plus(timeout);
         while (Instant.now().isBefore(deadline)) {
@@ -55,5 +66,12 @@ public class HttpProbe {
             }
         }
         return false;
+    }
+
+    private int defaultPort(URI uri) {
+        if ("https".equalsIgnoreCase(uri.getScheme())) {
+            return 443;
+        }
+        return 80;
     }
 }

@@ -40,9 +40,19 @@ public class MusioConfigService {
                 intValue(value(fileValues, "ai.max_tokens", environment.getProperty("musio.ai.max-tokens", "2048")), 2048)
         );
 
-        MusioConfig.QQMusic qqMusic = new MusioConfig.QQMusic(
-                value(fileValues, "providers.qqmusic.sidecar_base_url", environment.getProperty("musio.providers.qqmusic.sidecar-base-url", "http://127.0.0.1:18767"))
-        );
+        String qqMusicSidecarHost = value(fileValues, "providers.qqmusic.sidecar_host", "127.0.0.1");
+        String qqMusicSidecarPort = value(fileValues, "providers.qqmusic.sidecar_port", "18767");
+        String derivedQQMusicSidecarBaseUrl = "http://" + qqMusicSidecarHost + ":" + qqMusicSidecarPort;
+        String qqMusicSidecarBaseUrl = hasValue(fileValues, "providers.qqmusic.sidecar_host")
+                || hasValue(fileValues, "providers.qqmusic.sidecar_port")
+                ? derivedQQMusicSidecarBaseUrl
+                : value(
+                        fileValues,
+                        "providers.qqmusic.sidecar_base_url",
+                        environment.getProperty("musio.providers.qqmusic.sidecar-base-url", derivedQQMusicSidecarBaseUrl)
+                );
+
+        MusioConfig.QQMusic qqMusic = new MusioConfig.QQMusic(qqMusicSidecarBaseUrl);
 
         MusioConfig.Storage storage = new MusioConfig.Storage(
                 expandHome(value(fileValues, "storage.home", storageHome.toString()))
@@ -90,6 +100,11 @@ public class MusioConfigService {
 
     private static String valueAllowBlank(Map<String, String> values, String key, String defaultValue) {
         return values.containsKey(key) ? values.get(key) : defaultValue;
+    }
+
+    private static boolean hasValue(Map<String, String> values, String key) {
+        String value = values.get(key);
+        return value != null && !value.isBlank();
     }
 
     private static String stripComment(String line) {

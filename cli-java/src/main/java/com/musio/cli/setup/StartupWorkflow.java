@@ -1,5 +1,7 @@
 package com.musio.cli.setup;
 
+import com.musio.cli.config.MusioCliConfig;
+import com.musio.cli.config.MusioCliConfigStore;
 import com.musio.cli.process.BrowserLauncher;
 import com.musio.cli.process.LocalProcessManager;
 import com.musio.cli.ui.CliTimeline;
@@ -9,9 +11,8 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 public class StartupWorkflow {
-    private static final String WEB_URL = "http://127.0.0.1:18766";
-
     public int run() {
+        MusioCliConfig config = new MusioCliConfigStore().load();
         List<MusicSourceOption> selectedSources = new SourceSelectionPrompt().select();
         if (selectedSources.isEmpty()) {
             System.out.println("Musio 启动已取消。");
@@ -24,7 +25,7 @@ public class StartupWorkflow {
         CliTimeline.step("已选择音乐源");
         CliTimeline.success(selectedSourceNames);
 
-        LocalProcessManager processManager = new LocalProcessManager();
+        LocalProcessManager processManager = new LocalProcessManager(config);
         CliTimeline.step("项目目录");
         CliTimeline.detail(processManager.root().toString());
 
@@ -34,10 +35,10 @@ public class StartupWorkflow {
         }
 
         CliTimeline.step("访问入口");
-        CliTimeline.detail("Backend  http://127.0.0.1:18765");
-        CliTimeline.detail("Web      " + WEB_URL);
+        CliTimeline.detail("Backend  " + config.backendBaseUrl());
+        CliTimeline.detail("Web      " + config.webBaseUrl());
 
-        URI loginUri = URI.create(WEB_URL + "/?sources=" + sourceIds(selectedSources));
+        URI loginUri = URI.create(config.webBaseUrl() + "/?sources=" + sourceIds(selectedSources));
         CliTimeline.step("登录页面");
         CliTimeline.detail(loginUri.toString());
         if (new BrowserLauncher().open(loginUri)) {

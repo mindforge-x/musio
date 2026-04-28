@@ -7,7 +7,9 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $RunDir = Join-Path $Root ".musio\run"
 $SidecarDir = Join-Path $Root "providers\qqmusic-python-sidecar"
-$SidecarUrl = "http://127.0.0.1:18767/health"
+$SidecarHost = if ($env:MUSIO_QQMUSIC_HOST) { $env:MUSIO_QQMUSIC_HOST } else { "127.0.0.1" }
+$SidecarPort = if ($env:MUSIO_QQMUSIC_PORT) { [int]$env:MUSIO_QQMUSIC_PORT } else { 18767 }
+$SidecarUrl = "http://$($SidecarHost):$($SidecarPort)/health"
 
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 
@@ -105,8 +107,8 @@ function Prepare-SidecarPython {
     Write-Output $pythonExe
 }
 
-if (Test-PortListening -Port 18767) {
-    Write-Host "musio-sidecar already appears to be listening on port 18767"
+if (Test-PortListening -Port $SidecarPort) {
+    Write-Host "musio-sidecar already appears to be listening on port $SidecarPort"
     exit 0
 }
 
