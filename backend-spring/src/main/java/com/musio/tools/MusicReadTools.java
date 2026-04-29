@@ -7,9 +7,11 @@ import com.musio.events.AgentEventBus;
 import com.musio.model.AgentEvent;
 import com.musio.model.Comment;
 import com.musio.model.Lyrics;
+import com.musio.model.MusicProfileMemory;
 import com.musio.model.Playlist;
 import com.musio.model.Song;
 import com.musio.model.SongDetail;
+import com.musio.memory.MusicProfileService;
 import com.musio.providers.MusicProviderGateway;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -23,11 +25,18 @@ import java.util.function.Supplier;
 @Component
 public class MusicReadTools {
     private final MusicProviderGateway providerGateway;
+    private final MusicProfileService musicProfileService;
     private final AgentEventBus eventBus;
     private final ObjectMapper objectMapper;
 
-    public MusicReadTools(MusicProviderGateway providerGateway, AgentEventBus eventBus, ObjectMapper objectMapper) {
+    public MusicReadTools(
+            MusicProviderGateway providerGateway,
+            MusicProfileService musicProfileService,
+            AgentEventBus eventBus,
+            ObjectMapper objectMapper
+    ) {
         this.providerGateway = providerGateway;
+        this.musicProfileService = musicProfileService;
         this.eventBus = eventBus;
         this.objectMapper = objectMapper.findAndRegisterModules();
     }
@@ -42,6 +51,16 @@ public class MusicReadTools {
             publish("song_cards", Map.of("songs", songs));
             return Map.of("success", true, "count", songs.size(), "songs", songs);
         });
+    }
+
+    @Tool(name = "get_user_music_profile", description = "Read the current user's summarized Musio music profile memory. Use this before personalized recommendations based on the user's taste.")
+    public String getUserMusicProfile() {
+        return runTool("get_user_music_profile", Map.of(), () -> musicProfileService.readOrCreate()
+                .map(this::musicProfileResult)
+                .orElseGet(() -> Map.of(
+                        "success", false,
+                        "message", "音乐画像记忆还没有生成。请先让用户登录 QQ 音乐并生成音乐基因。"
+                )));
     }
 
     @Tool(name = "get_song_detail", description = "Get details for one QQ Music song by provider-prefixed song id.")
@@ -128,6 +147,9 @@ public class MusicReadTools {
     }
 
     private String summary(String toolName, Map<String, Object> result) {
+        if ("get_user_music_profile".equals(toolName)) {
+            return Boolean.TRUE.equals(result.get("success")) ? "已读取音乐画像记忆" : "音乐画像记忆不可用";
+        }
         Object count = result.get("count");
         if (count != null) {
             return toolName + " returned " + count + " item(s)";
@@ -146,5 +168,23 @@ public class MusicReadTools {
     private int clamp(Integer value, int defaultValue, int min, int max) {
         int actual = value == null ? defaultValue : value;
         return Math.max(min, Math.min(max, actual));
+    }
+
+    private Map<String, Object> musicProfileResult(MusicProfileMemory profile) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("provider", profile.provider());
+        result.put("userId", profile.userId());
+        result.put("generatedAt", profile.generatedAt());
+        result.put("sourceGeneGeneratedAt", profile.sourceGeneGeneratedAt());
+        result.put("summary", profile.summary());
+        result.put("strongPreferences", profile.strongPreferences());
+        result.put("favoriteArtists", profile.favoriteArtists());
+        result.put("favoriteAlbums", profile.favoriteAlbums());
+        result.put("likedSongExamples", profile.likedSongExamples());
+        result.put("recommendationHints", profile.recommendationHints());
+        result.put("avoid", profile.avoid());
+        result.put("sourceStats", profile.sourceStats());
+        return result;
     }
 }

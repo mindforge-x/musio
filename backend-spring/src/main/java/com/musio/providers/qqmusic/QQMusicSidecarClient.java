@@ -2,10 +2,12 @@ package com.musio.providers.qqmusic;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.config.MusioConfigService;
 import com.musio.model.Comment;
 import com.musio.model.Lyrics;
+import com.musio.model.MusicGeneSnapshot;
 import com.musio.model.Playlist;
 import com.musio.model.ProviderType;
 import com.musio.model.Song;
@@ -22,6 +24,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @Component
@@ -32,7 +35,9 @@ public class QQMusicSidecarClient {
 
     public QQMusicSidecarClient(MusioConfigService configService) {
         this.configService = configService;
-        this.objectMapper = new ObjectMapper().findAndRegisterModules();
+        this.objectMapper = new ObjectMapper()
+                .findAndRegisterModules()
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(3, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
@@ -42,6 +47,30 @@ public class QQMusicSidecarClient {
     public UserProfile profile() {
         SidecarUserProfile profile = get("/users/me", SidecarUserProfile.class);
         return new UserProfile(profile.id(), ProviderType.QQMUSIC, profile.displayName(), profile.avatarUrl());
+    }
+
+    public QQMusicConnectionStatus connectionStatus() {
+        SidecarConnectionStatus status = get("/users/me/status", SidecarConnectionStatus.class);
+        return new QQMusicConnectionStatus(
+                status.state(),
+                status.credentialStored(),
+                status.authenticated(),
+                status.userId(),
+                status.displayName(),
+                status.message(),
+                parseInstant(status.checkedAt())
+        );
+    }
+
+    public MusicGeneSnapshot musicGene() {
+        SidecarMusicGene musicGene = get("/users/me/music-gene", SidecarMusicGene.class);
+        return new MusicGeneSnapshot(
+                ProviderType.QQMUSIC,
+                musicGene.userId(),
+                musicGene.euin(),
+                parseInstant(musicGene.generatedAt()),
+                musicGene.data() == null ? Map.of() : musicGene.data()
+        );
     }
 
     public List<Playlist> playlists() {
@@ -249,6 +278,36 @@ public class QQMusicSidecarClient {
             String id,
             @JsonProperty("display_name") String displayName,
             @JsonProperty("avatar_url") String avatarUrl
+    ) {
+    }
+
+    private record SidecarConnectionStatus(
+            String state,
+            @JsonProperty("credential_stored") boolean credentialStored,
+            boolean authenticated,
+            @JsonProperty("user_id") String userId,
+            @JsonProperty("display_name") String displayName,
+            String message,
+            @JsonProperty("checked_at") String checkedAt
+    ) {
+    }
+
+    private record SidecarMusicGene(
+            @JsonProperty("user_id") String userId,
+            String euin,
+            @JsonProperty("generated_at") String generatedAt,
+            Map<String, Object> data
+    ) {
+    }
+
+    public record QQMusicConnectionStatus(
+            String state,
+            boolean credentialStored,
+            boolean authenticated,
+            String userId,
+            String displayName,
+            String message,
+            Instant checkedAt
     ) {
     }
 }

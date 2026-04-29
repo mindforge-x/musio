@@ -3,21 +3,25 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable
 from urllib.parse import urljoin
 
 from qqmusic_api import Client, Credential
 from qqmusic_api.modules.song import SongFileInfo, SongFileType
 
-from .schemas import Comment, Lyrics, Playlist, Song, SongDetail, SongUrl, UserProfile
+from .schemas import Comment, Lyrics, Playlist, Song, SongDetail, SongUrl, UserConnectionStatus, UserMusicGene, UserProfile
 
 _SONG_ID_PREFIX = "qqmusic:"
 _DEFAULT_STREAM_DOMAIN = "https://isure.stream.qqmusic.qq.com/"
 _LRC_TIMESTAMP_PATTERN = re.compile(r"\[[0-9:.]+\]")
 _WINDOWS_DRIVE_PATTERN = re.compile(r"^([A-Za-z]):[\\/](.*)$")
+_MUSIC_GENE_LIKED_SONG_LIMIT = 80
+_MUSIC_GENE_LIST_LIMIT = 30
+_MUSIC_GENE_SIGNAL_LIMIT = 50
 
 
 class QQMusicClient:
@@ -100,6 +104,58 @@ class QQMusicClient:
                 display_name="QQ Music user",
             )
 
+    async def connection_status(self) -> UserConnectionStatus:
+        credential = self._credential()
+        checked_at = self._now_iso()
+        if credential is None:
+            return UserConnectionStatus(
+                state="NOT_LOGGED_IN",
+                credential_stored=False,
+                authenticated=False,
+                message="QQ Music credential is not stored.",
+                checked_at=checked_at,
+            )
+
+        user_id = str(credential.musicid or credential.str_musicid or "local")
+        try:
+            async with self._client(credential) as client:
+                await client.user.get_vip_info(credential=credential)
+                profile = await self._profile_from_credential(client, credential)
+                return UserConnectionStatus(
+                    state="CONNECTED",
+                    credential_stored=True,
+                    authenticated=True,
+                    user_id=profile.id,
+                    display_name=profile.display_name,
+                    message="QQ Music credential is valid.",
+                    checked_at=checked_at,
+                )
+        except Exception as error:
+            return UserConnectionStatus(
+                state="EXPIRED",
+                credential_stored=True,
+                authenticated=False,
+                user_id=user_id,
+                message=f"QQ Music credential validation failed: {type(error).__name__}",
+                checked_at=checked_at,
+            )
+
+    async def music_gene(self) -> UserMusicGene:
+        credential = self._credential()
+        if credential is None:
+            raise PermissionError("QQ Music credential is not stored.")
+        if not credential.encrypt_uin:
+            raise PermissionError("QQ Music credential does not contain encrypted UIN.")
+
+        async with self._client(credential) as client:
+            data = await self._build_music_gene(client, credential)
+            return UserMusicGene(
+                user_id=str(credential.musicid or credential.str_musicid or "local"),
+                euin=credential.encrypt_uin,
+                generated_at=self._now_iso(),
+                data=data,
+            )
+
     async def playlists(self) -> list[Playlist]:
         credential = self._credential()
         if credential is None or not credential.musicid:
@@ -113,6 +169,353 @@ class QQMusicClient:
         async with self._client() as client:
             result = await client.songlist.get_detail(int(self._qqmusic_value(playlist_id)), num=100, onlysong=True)
             return [self._to_song(song) for song in result.songs]
+
+    async def _build_music_gene(self, client: Client, credential: Credential) -> dict[str, Any]:
+        euin = credential.encrypt_uin
+        errors: list[dict[str, str]] = []
+
+        raw_report = await self._optional_music_gene_source(
+            "qq_music_gene_report",
+            errors,
+            lambda: client.user.get_music_gene(euin, credential=credential),
+        )
+        liked_result = await self._optional_music_gene_source(
+            "liked_songs",
+            errors,
+            lambda: client.user.get_fav_song(
+                euin,
+                page=1,
+                num=_MUSIC_GENE_LIKED_SONG_LIMIT,
+                credential=credential,
+            ),
+        )
+        favorite_songlist_result = await self._optional_music_gene_source(
+            "favorite_playlists",
+            errors,
+            lambda: client.user.get_fav_songlist(
+                euin,
+                page=1,
+                num=_MUSIC_GENE_LIST_LIMIT,
+                credential=credential,
+            ),
+        )
+        favorite_album_result = await self._optional_music_gene_source(
+            "favorite_albums",
+            errors,
+            lambda: client.user.get_fav_album(
+                euin,
+                page=1,
+                num=_MUSIC_GENE_LIST_LIMIT,
+                credential=credential,
+            ),
+        )
+        follow_singer_result = await self._optional_music_gene_source(
+            "follow_singers",
+            errors,
+            lambda: client.user.get_follow_singers(
+                euin,
+                page=1,
+                num=_MUSIC_GENE_LIST_LIMIT,
+                credential=credential,
+            ),
+        )
+
+        created_result = None
+        if credential.musicid:
+            created_result = await self._optional_music_gene_source(
+                "created_playlists",
+                errors,
+                lambda: client.user.get_created_songlist(credential.musicid, credential=credential),
+            )
+
+        liked_songs = list(getattr(liked_result, "songs", []) or [])
+        created_playlists = list(getattr(created_result, "playlists", []) or [])
+        favorite_playlists = list(getattr(favorite_songlist_result, "playlists", []) or [])
+        favorite_albums = list(getattr(favorite_album_result, "albums", []) or [])
+        follow_singers = list(getattr(follow_singer_result, "users", []) or [])
+
+        top_artists = self._rank_top_artists(liked_songs, favorite_albums, follow_singers)
+        top_albums = self._rank_top_albums(liked_songs, favorite_albums)
+        source_signal_count = len(liked_songs) + len(favorite_albums) + len(follow_singers)
+
+        raw: dict[str, Any] = {}
+        if raw_report is not None:
+            raw["qq_music_gene_report"] = self._jsonable(raw_report)
+
+        return {
+            "schema_version": "musio.music_gene.v1",
+            "generated_from": [
+                "qq_music_gene_report",
+                "liked_songs",
+                "created_playlists",
+                "favorite_playlists",
+                "favorite_albums",
+                "follow_singers",
+            ],
+            "summary": {
+                "confidence": self._music_gene_confidence(source_signal_count),
+                "top_artists": top_artists,
+                "top_albums": top_albums,
+                "top_genre_ids": self._rank_numeric_song_attr(liked_songs, "genre"),
+                "top_language_ids": self._rank_numeric_song_attr(liked_songs, "language"),
+                "liked_song_count": self._response_total(liked_result, len(liked_songs)),
+                "created_playlist_count": self._response_total(created_result, len(created_playlists)),
+                "favorite_playlist_count": self._response_total(favorite_songlist_result, len(favorite_playlists)),
+                "favorite_album_count": self._response_total(favorite_album_result, len(favorite_albums)),
+                "follow_singer_count": self._response_total(follow_singer_result, len(follow_singers)),
+            },
+            "signals": {
+                "liked_songs": [
+                    self._compact_song_signal(song)
+                    for song in liked_songs[:_MUSIC_GENE_SIGNAL_LIMIT]
+                ],
+                "created_playlists": [
+                    self._compact_playlist_signal(playlist, "created")
+                    for playlist in created_playlists[:_MUSIC_GENE_LIST_LIMIT]
+                ],
+                "favorite_playlists": [
+                    self._compact_playlist_signal(playlist, "favorite")
+                    for playlist in favorite_playlists[:_MUSIC_GENE_LIST_LIMIT]
+                ],
+                "favorite_albums": [
+                    self._compact_album_signal(album)
+                    for album in favorite_albums[:_MUSIC_GENE_LIST_LIMIT]
+                ],
+                "follow_singers": [
+                    self._compact_relation_user_signal(user)
+                    for user in follow_singers[:_MUSIC_GENE_LIST_LIMIT]
+                ],
+            },
+            "raw": raw,
+            "errors": errors,
+        }
+
+    async def _optional_music_gene_source(
+        self,
+        source: str,
+        errors: list[dict[str, str]],
+        factory: Callable[[], Awaitable[Any]],
+    ) -> Any | None:
+        try:
+            return await factory()
+        except Exception as error:
+            errors.append(
+                {
+                    "source": source,
+                    "type": type(error).__name__,
+                    "message": str(error)[:240],
+                },
+            )
+            return None
+
+    def _compact_song_signal(self, song: Any) -> dict[str, Any]:
+        data = self._jsonable(self._to_song(song))
+        if isinstance(data, dict):
+            return data
+        return {"value": data}
+
+    def _compact_playlist_signal(self, playlist: Any, source: str) -> dict[str, Any]:
+        return self._compact_dict(
+            {
+                "id": f"{_SONG_ID_PREFIX}{getattr(playlist, 'id', '')}",
+                "name": self._text(getattr(playlist, "title", "")),
+                "source": source,
+                "song_count": self._positive_int(getattr(playlist, "songnum", 0)),
+                "play_count": self._positive_int(
+                    getattr(playlist, "play_cnt", getattr(playlist, "listennum", 0)),
+                ),
+                "favorite_count": self._positive_int(getattr(playlist, "create_fav_cnt", 0)),
+                "comment_count": self._positive_int(getattr(playlist, "comment_cnt", 0)),
+                "owner_name": self._text(
+                    getattr(playlist, "nick", None) or getattr(playlist, "nickname", None),
+                ),
+                "artwork_url": self._text(getattr(playlist, "picurl", "")),
+            },
+        )
+
+    def _compact_album_signal(self, album: Any) -> dict[str, Any]:
+        name = self._album_name(album)
+        return self._compact_dict(
+            {
+                "id": f"qqmusic:album:{getattr(album, 'mid', '') or getattr(album, 'id', '')}",
+                "mid": self._text(getattr(album, "mid", "")),
+                "name": name,
+                "artists": self._album_artist_names(album),
+                "song_count": self._positive_int(getattr(album, "songnum", 0)),
+                "published_at": self._text(
+                    getattr(album, "time_public", None) or getattr(album, "pubtime", None),
+                ),
+                "artwork_url": self._cover_url(album),
+            },
+        )
+
+    def _compact_relation_user_signal(self, user: Any) -> dict[str, Any]:
+        return self._compact_dict(
+            {
+                "id": self._text(getattr(user, "mid", None) or getattr(user, "enc_uin", None)),
+                "name": self._text(getattr(user, "name", "")),
+                "description": self._text(getattr(user, "desc", "")),
+                "avatar_url": self._text(getattr(user, "avatar_url", "")),
+                "fan_count": self._positive_int(getattr(user, "fan_num", 0)),
+            },
+        )
+
+    def _rank_top_artists(
+        self,
+        songs: list[Any],
+        albums: list[Any],
+        follow_singers: list[Any],
+    ) -> list[dict[str, Any]]:
+        scores: Counter[str] = Counter()
+        evidence_counts: Counter[str] = Counter()
+
+        for song in songs:
+            for name in self._song_artist_names(song):
+                scores[name] += 3
+                evidence_counts[name] += 1
+        for album in albums:
+            for name in self._album_artist_names(album):
+                scores[name] += 2
+                evidence_counts[name] += 1
+        for user in follow_singers:
+            name = self._text(getattr(user, "name", ""))
+            if name:
+                scores[name] += 4
+                evidence_counts[name] += 1
+
+        return [
+            {
+                "name": name,
+                "score": int(score),
+                "evidence_count": int(evidence_counts[name]),
+            }
+            for name, score in scores.most_common(20)
+        ]
+
+    def _rank_top_albums(self, songs: list[Any], albums: list[Any]) -> list[dict[str, Any]]:
+        scores: Counter[str] = Counter()
+        metadata: dict[str, dict[str, Any]] = {}
+
+        for album in albums:
+            name = self._album_name(album)
+            if not name:
+                continue
+            scores[name] += 3
+            metadata.setdefault(
+                name,
+                {
+                    "name": name,
+                    "artists": self._album_artist_names(album),
+                    "artwork_url": self._cover_url(album),
+                },
+            )
+
+        for song in songs:
+            album = getattr(song, "album", None)
+            name = self._album_name(album)
+            if not name:
+                continue
+            scores[name] += 1
+            metadata.setdefault(
+                name,
+                {
+                    "name": name,
+                    "artists": self._album_artist_names(album),
+                    "artwork_url": self._cover_url(album),
+                },
+            )
+
+        return [
+            {
+                **metadata[name],
+                "score": int(score),
+            }
+            for name, score in scores.most_common(20)
+        ]
+
+    def _rank_numeric_song_attr(self, songs: list[Any], attr: str) -> list[dict[str, int]]:
+        counts: Counter[int] = Counter()
+        for song in songs:
+            value = getattr(song, attr, 0)
+            if isinstance(value, int) and value > 0:
+                counts[value] += 1
+        return [{"id": int(value), "count": int(count)} for value, count in counts.most_common(15)]
+
+    def _song_artist_names(self, song: Any) -> list[str]:
+        return [
+            name
+            for artist in getattr(song, "singer", []) or []
+            if (name := self._text(getattr(artist, "name", "")))
+        ]
+
+    def _album_artist_names(self, album: Any) -> list[str]:
+        return [
+            name
+            for artist in getattr(album, "singers", []) or []
+            if (name := self._text(getattr(artist, "name", "")))
+        ]
+
+    def _album_name(self, album: Any) -> str:
+        if album is None:
+            return ""
+        return self._text(getattr(album, "name", None) or getattr(album, "title", None))
+
+    def _cover_url(self, value: Any) -> str | None:
+        if hasattr(value, "cover_url"):
+            try:
+                return value.cover_url() or None
+            except Exception:
+                return None
+        return None
+
+    def _response_total(self, response: Any | None, fallback: int) -> int:
+        if response is None:
+            return fallback
+        value = getattr(response, "total", None)
+        if isinstance(value, int) and value >= 0:
+            return value
+        return fallback
+
+    def _music_gene_confidence(self, source_signal_count: int) -> str:
+        if source_signal_count >= 50:
+            return "high"
+        if source_signal_count >= 10:
+            return "medium"
+        return "low"
+
+    def _compact_dict(self, data: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in data.items()
+            if value is not None and value != "" and value != [] and value != {}
+        }
+
+    def _positive_int(self, value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
+
+    def _text(self, value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    async def _profile_from_credential(self, client: Client, credential: Credential) -> UserProfile:
+        if credential.encrypt_uin:
+            homepage = await client.user.get_homepage(credential.encrypt_uin, credential=credential)
+            return UserProfile(
+                id=str(credential.musicid or credential.str_musicid or "local"),
+                display_name=homepage.base_info.name or "QQ Music user",
+                avatar_url=homepage.base_info.avatar or None,
+            )
+        return UserProfile(
+            id=str(credential.musicid or credential.str_musicid or "local"),
+            display_name="QQ Music user",
+        )
 
     @asynccontextmanager
     async def _client(self, credential: Credential | None = None) -> AsyncIterator[Client]:
@@ -264,6 +667,22 @@ class QQMusicClient:
         if not value:
             return None
         return datetime.fromtimestamp(value, UTC).isoformat().replace("+00:00", "Z")
+
+    def _now_iso(self) -> str:
+        return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+    def _jsonable(self, value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json", by_alias=True)
+        if isinstance(value, dict):
+            return {str(key): self._jsonable(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._jsonable(item) for item in value]
+        if isinstance(value, tuple):
+            return [self._jsonable(item) for item in value]
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return value
 
     def _int_value(self, value: Any) -> int:
         if value is None or value == "":

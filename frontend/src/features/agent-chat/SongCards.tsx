@@ -5,6 +5,7 @@ import { EventLog, Song } from "../../shared/types";
 
 type SongCardsProps = {
   busy: boolean;
+  disabledReason?: string | null;
   songs: Song[];
   onSongs: (songs: Song[]) => void;
   onBusyChange: (busy: boolean) => void;
@@ -12,11 +13,15 @@ type SongCardsProps = {
   onPlaySong: (song: Song) => void;
 };
 
-export function SongCards({ busy, songs, onSongs, onBusyChange, onEvent, onPlaySong }: SongCardsProps) {
+export function SongCards({ busy, disabledReason, songs, onSongs, onBusyChange, onEvent, onPlaySong }: SongCardsProps) {
   const [searchKeyword, setSearchKeyword] = useState("周杰伦");
 
   async function search(event: FormEvent) {
     event.preventDefault();
+    if (disabledReason) {
+      onEvent({ id: crypto.randomUUID(), name: "source", detail: disabledReason });
+      return;
+    }
     if (!searchKeyword.trim()) {
       return;
     }
@@ -37,10 +42,11 @@ export function SongCards({ busy, songs, onSongs, onBusyChange, onEvent, onPlayS
         <h2>歌曲结果</h2>
         <span>{songs.length} 条结果</span>
       </div>
+      {disabledReason ? <p className="access-note">{disabledReason}</p> : null}
       <form onSubmit={search} className="search-form">
         <Search size={18} />
         <input value={searchKeyword} onChange={(event) => setSearchKeyword(event.target.value)} />
-        <button type="submit" disabled={busy || !searchKeyword.trim()}>
+        <button type="submit" disabled={busy || Boolean(disabledReason) || !searchKeyword.trim()}>
           搜索
         </button>
       </form>

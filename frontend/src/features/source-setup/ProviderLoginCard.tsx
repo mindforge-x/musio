@@ -7,9 +7,13 @@ type ProviderLoginCardProps = {
   loginStatus: LoginStatus | null;
   authenticated: boolean;
   skipped: boolean;
+  connectionState?: string;
+  musicGeneState?: string;
   busy: boolean;
+  musicGeneBusy: boolean;
   onStartLogin: () => void;
   onSkip: () => void;
+  onGenerateMusicGene: () => void;
 };
 
 export function ProviderLoginCard({
@@ -18,11 +22,15 @@ export function ProviderLoginCard({
   loginStatus,
   authenticated,
   skipped,
+  connectionState,
+  musicGeneState,
   busy,
+  musicGeneBusy,
   onStartLogin,
-  onSkip
+  onSkip,
+  onGenerateMusicGene
 }: ProviderLoginCardProps) {
-  const state = authenticated || loginStatus?.state === "DONE" ? "已连接" : skipped ? "已跳过" : loginStateLabel(loginStatus?.state);
+  const state = providerStateLabel(connectionState, musicGeneState, authenticated, skipped, loginStatus?.state);
   const hasQr = Boolean(login?.qrCodeDataUrl);
 
   return (
@@ -34,12 +42,19 @@ export function ProviderLoginCard({
       <div className="qr-box">
         {hasQr ? <img src={login?.qrCodeDataUrl ?? ""} alt={`${providerLabel} 登录二维码`} /> : <QrCode size={96} />}
       </div>
-      <p className="auth-copy">{loginCopy(loginStatus?.state)}</p>
+      <p className="auth-copy">{loginCopy(connectionState, musicGeneState, loginStatus?.state)}</p>
       <div className="auth-actions">
-        <button className="primary-action" type="button" onClick={onStartLogin} disabled={busy}>
-          {hasQr ? <RotateCcw size={18} /> : <QrCode size={18} />}
-          {hasQr ? "刷新二维码" : "开始扫码登录"}
-        </button>
+        {authenticated && musicGeneState !== "READY" ? (
+          <button className="primary-action" type="button" onClick={onGenerateMusicGene} disabled={busy || musicGeneBusy}>
+            <RotateCcw size={18} />
+            {musicGeneBusy ? "生成中" : "生成音乐基因"}
+          </button>
+        ) : (
+          <button className="primary-action" type="button" onClick={onStartLogin} disabled={busy || authenticated}>
+            {hasQr ? <RotateCcw size={18} /> : <QrCode size={18} />}
+            {hasQr ? "刷新二维码" : "开始扫码登录"}
+          </button>
+        )}
         <button className="ghost-action" type="button" onClick={onSkip} disabled={busy || authenticated}>
           <SkipForward size={16} />
           跳过
@@ -47,6 +62,28 @@ export function ProviderLoginCard({
       </div>
     </section>
   );
+}
+
+function providerStateLabel(
+  connectionState: string | undefined,
+  musicGeneState: string | undefined,
+  authenticated: boolean,
+  skipped: boolean,
+  loginState?: string
+) {
+  if (authenticated) {
+    return musicGeneState === "READY" ? "已连接 / 基因已就绪" : "已连接 / 待生成音乐基因";
+  }
+  if (connectionState === "EXPIRED") {
+    return "登录已过期";
+  }
+  if (connectionState === "UNVERIFIED") {
+    return "等待校验";
+  }
+  if (skipped) {
+    return "已跳过";
+  }
+  return loginStateLabel(loginState);
 }
 
 function loginStateLabel(state?: string) {
@@ -70,7 +107,19 @@ function loginStateLabel(state?: string) {
   }
 }
 
-function loginCopy(state?: string) {
+function loginCopy(connectionState?: string, musicGeneState?: string, state?: string) {
+  if (connectionState === "EXPIRED") {
+    return "QQ 音乐登录已过期，请重新扫码。";
+  }
+  if (connectionState === "UNVERIFIED") {
+    return "已发现本地凭证，但当前无法完成远端校验。请确认 QQMusic sidecar 已启动。";
+  }
+  if (musicGeneState === "READY") {
+    return "QQ 音乐已连接，音乐基因已生成。";
+  }
+  if (musicGeneState === "MISSING") {
+    return "QQ 音乐已连接，可以生成音乐基因以增强后续推荐。";
+  }
   switch (state) {
     case "CREATED":
     case "NOT_SCANNED":

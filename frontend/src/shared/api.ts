@@ -2,6 +2,7 @@ import {
   ChatRunResponse,
   LoginStartResult,
   LoginStatus,
+  MusicGeneSnapshot,
   MusioPlaylist,
   PlayerState,
   ProviderStatus,
@@ -32,6 +33,7 @@ export const api = {
   status: () => request<SystemStatus>("/api/system/status"),
   providers: () => request<ProviderStatus[]>("/api/providers"),
   providerStatus: (provider: string) => request<ProviderStatus>(`/api/providers/${provider}/status`),
+  providerMusicGene: (provider: string) => request<MusicGeneSnapshot>(`/api/providers/${provider}/music-gene`),
   startProviderLogin: (provider: string) => request<LoginStartResult>(`/api/providers/${provider}/login/start`, { method: "POST" }),
   providerLoginStatus: (provider: string, sessionId: string) =>
     request<LoginStatus>(`/api/providers/${provider}/login/${sessionId}/status`),

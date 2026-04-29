@@ -5,16 +5,21 @@ import { chatClient } from "./chatClient";
 
 type AgentChatPanelProps = {
   busy: boolean;
+  disabledReason?: string | null;
   onBusyChange: (busy: boolean) => void;
   onEvent: (event: EventLog) => void;
   onSongs: (songs: Song[]) => void;
 };
 
-export function AgentChatPanel({ busy, onBusyChange, onEvent, onSongs }: AgentChatPanelProps) {
+export function AgentChatPanel({ busy, disabledReason, onBusyChange, onEvent, onSongs }: AgentChatPanelProps) {
   const [message, setMessage] = useState("给我推荐 5 首适合深夜写代码听的歌。");
 
   async function startChat(event: FormEvent) {
     event.preventDefault();
+    if (disabledReason) {
+      onEvent({ id: crypto.randomUUID(), name: "source", detail: disabledReason });
+      return;
+    }
     if (!message.trim()) {
       return;
     }
@@ -53,9 +58,10 @@ export function AgentChatPanel({ busy, onBusyChange, onEvent, onSongs }: AgentCh
         <h2>Agent 对话</h2>
         <span>{busy ? "运行中" : "空闲"}</span>
       </div>
+      {disabledReason ? <p className="access-note">{disabledReason}</p> : null}
       <form onSubmit={startChat} className="prompt-form">
         <textarea value={message} onChange={(event) => setMessage(event.target.value)} />
-        <button type="submit" disabled={busy || !message.trim()}>
+        <button type="submit" disabled={busy || Boolean(disabledReason) || !message.trim()}>
           <Play size={18} />
           发送
         </button>

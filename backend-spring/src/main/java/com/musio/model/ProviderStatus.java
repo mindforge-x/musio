@@ -5,7 +5,10 @@ public record ProviderStatus(
         String displayName,
         boolean available,
         boolean authenticated,
+        boolean credentialStored,
         String loginMethod,
-        String message
+        String message,
+        String connectionState,
+        String musicGeneState
 ) {
 }

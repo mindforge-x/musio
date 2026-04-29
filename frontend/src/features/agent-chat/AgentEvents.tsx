@@ -50,6 +50,8 @@ function eventNameLabel(name: string) {
       return "登录";
     case "source":
       return "音乐源";
+    case "music_gene":
+      return "音乐基因";
     default:
       return name;
   }
