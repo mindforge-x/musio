@@ -3,10 +3,21 @@ from __future__ import annotations
 import os
 
 import uvicorn
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 
 from .qqmusic_client import QQMusicClient
-from .schemas import Comment, HealthResponse, Lyrics, Playlist, Song, SongDetail, SongUrl, UserProfile
+from .schemas import (
+    Comment,
+    HealthResponse,
+    Lyrics,
+    Playlist,
+    Song,
+    SongDetail,
+    SongUrl,
+    UserConnectionStatus,
+    UserMusicGene,
+    UserProfile,
+)
 
 app = FastAPI(title="Musio QQ Music Sidecar", version="0.1.0")
 client = QQMusicClient()
@@ -45,6 +56,19 @@ async def comments(song_id: str) -> list[Comment]:
 @app.get("/users/me", response_model=UserProfile)
 async def profile() -> UserProfile:
     return await client.profile()
+
+
+@app.get("/users/me/status", response_model=UserConnectionStatus)
+async def profile_status() -> UserConnectionStatus:
+    return await client.connection_status()
+
+
+@app.get("/users/me/music-gene", response_model=UserMusicGene)
+async def music_gene() -> UserMusicGene:
+    try:
+        return await client.music_gene()
+    except PermissionError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
 
 
 @app.get("/users/me/playlists", response_model=list[Playlist])

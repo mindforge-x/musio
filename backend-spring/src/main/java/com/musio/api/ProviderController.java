@@ -3,10 +3,15 @@ package com.musio.api;
 import com.musio.model.LoginStartResult;
 import com.musio.model.LoginState;
 import com.musio.model.LoginStatus;
+import com.musio.model.MusicGeneSnapshot;
+import com.musio.model.MusicProfileMemory;
 import com.musio.model.ProviderStatus;
 import com.musio.model.ProviderType;
+import com.musio.memory.MusicProfileService;
 import com.musio.providers.ProviderStatusService;
+import com.musio.providers.qqmusic.QQMusicGeneStore;
 import com.musio.providers.qqmusic.QQMusicAuthService;
+import com.musio.providers.qqmusic.QQMusicSidecarClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,10 +26,22 @@ import java.util.Locale;
 public class ProviderController {
     private final ProviderStatusService providerStatusService;
     private final QQMusicAuthService qqMusicAuthService;
+    private final QQMusicSidecarClient qqMusicSidecarClient;
+    private final QQMusicGeneStore qqMusicGeneStore;
+    private final MusicProfileService musicProfileService;
 
-    public ProviderController(ProviderStatusService providerStatusService, QQMusicAuthService qqMusicAuthService) {
+    public ProviderController(
+            ProviderStatusService providerStatusService,
+            QQMusicAuthService qqMusicAuthService,
+            QQMusicSidecarClient qqMusicSidecarClient,
+            QQMusicGeneStore qqMusicGeneStore,
+            MusicProfileService musicProfileService
+    ) {
         this.providerStatusService = providerStatusService;
         this.qqMusicAuthService = qqMusicAuthService;
+        this.qqMusicSidecarClient = qqMusicSidecarClient;
+        this.qqMusicGeneStore = qqMusicGeneStore;
+        this.musicProfileService = musicProfileService;
     }
 
     @GetMapping
@@ -62,6 +79,28 @@ public class ProviderController {
             return qqMusicAuthService.logout();
         }
         return new LoginStatus("local", providerType, LoginState.LOGGED_OUT, false, "Provider is not connected.");
+    }
+
+    @GetMapping("/{provider}/music-gene")
+    public MusicGeneSnapshot musicGene(@PathVariable String provider) {
+        ProviderType providerType = providerType(provider);
+        if (providerType == ProviderType.QQMUSIC) {
+            MusicGeneSnapshot snapshot = qqMusicSidecarClient.musicGene();
+            qqMusicGeneStore.write(snapshot);
+            musicProfileService.writeFromGene(snapshot);
+            return snapshot;
+        }
+        throw new IllegalArgumentException("Provider music gene is not available: " + provider);
+    }
+
+    @GetMapping("/{provider}/music-profile")
+    public MusicProfileMemory musicProfile(@PathVariable String provider) {
+        ProviderType providerType = providerType(provider);
+        if (providerType == ProviderType.QQMUSIC) {
+            return musicProfileService.readOrCreate()
+                    .orElseThrow(() -> new IllegalStateException("Music profile memory has not been generated yet."));
+        }
+        throw new IllegalArgumentException("Provider music profile is not available: " + provider);
     }
 
     private ProviderType providerType(String value) {

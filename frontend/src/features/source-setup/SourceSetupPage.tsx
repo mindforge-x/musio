@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Check, CircleDashed, LogIn, SkipForward } from "lucide-react";
 import { EventLog, LoginStartResult, LoginStatus, ProviderStatus } from "../../shared/types";
 import { providerSetupClient } from "./providerSetupClient";
@@ -9,6 +9,7 @@ type SourceSetupPageProps = {
   selectedSources: string[];
   onBusyChange: (busy: boolean) => void;
   onEvent: (event: EventLog) => void;
+  onProviderStatusesChange?: (statuses: ProviderStatus[]) => void;
   onContinue: () => void;
 };
 
@@ -38,19 +39,40 @@ const SOURCE_OPTIONS = [
   }
 ];
 
-export function SourceSetupPage({ busy, selectedSources, onBusyChange, onEvent, onContinue }: SourceSetupPageProps) {
+export function SourceSetupPage({
+  busy,
+  selectedSources,
+  onBusyChange,
+  onEvent,
+  onProviderStatusesChange,
+  onContinue
+}: SourceSetupPageProps) {
   const [login, setLogin] = useState<LoginStartResult | null>(null);
   const [loginStatus, setLoginStatus] = useState<LoginStatus | null>(null);
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([]);
   const [skippedSources, setSkippedSources] = useState<Set<string>>(() => new Set());
+  const [musicGeneBusy, setMusicGeneBusy] = useState(false);
   const selectedSet = new Set(selectedSources);
   const qqMusicSelected = selectedSet.has(QQ_PROVIDER);
 
-  useEffect(() => {
+  const refreshProviderStatuses = useCallback(() => {
     providerSetupClient.providers()
-      .then(setProviderStatuses)
+      .then((statuses) => {
+        setProviderStatuses(statuses);
+        onProviderStatusesChange?.(statuses);
+      })
       .catch(() => setProviderStatuses([]));
-  }, []);
+  }, [onProviderStatusesChange]);
+
+  useEffect(() => {
+    refreshProviderStatuses();
+  }, [refreshProviderStatuses]);
+
+  useEffect(() => {
+    if (loginStatus?.state === "DONE") {
+      refreshProviderStatuses();
+    }
+  }, [loginStatus?.state, refreshProviderStatuses]);
 
   useEffect(() => {
     if (!login?.sessionId) {
@@ -134,6 +156,25 @@ export function SourceSetupPage({ busy, selectedSources, onBusyChange, onEvent, 
     onEvent({ id: crypto.randomUUID(), name: "source", detail: `已跳过：${sourceDisplayName(sourceId)}` });
   }
 
+  async function generateMusicGene() {
+    setMusicGeneBusy(true);
+    onBusyChange(true);
+    try {
+      await providerSetupClient.musicGene(QQ_PROVIDER);
+      onEvent({ id: crypto.randomUUID(), name: "music_gene", detail: "QQ 音乐基因已生成" });
+      refreshProviderStatuses();
+    } catch (error) {
+      onEvent({
+        id: crypto.randomUUID(),
+        name: "music_gene",
+        detail: error instanceof Error ? error.message : "生成音乐基因失败"
+      });
+    } finally {
+      setMusicGeneBusy(false);
+      onBusyChange(false);
+    }
+  }
+
   const statusByProvider = new Map(providerStatuses.map((item) => [providerKey(item.provider), item]));
   const selectedOptions = SOURCE_OPTIONS.filter((source) => selectedSet.has(source.id));
   const displayOptions = selectedOptions.length > 0 ? selectedOptions : SOURCE_OPTIONS.filter((source) => source.id === QQ_PROVIDER);
@@ -181,7 +222,7 @@ export function SourceSetupPage({ busy, selectedSources, onBusyChange, onEvent, 
                     <h3>{source.label}</h3>
                     <span>{readiness.label}</span>
                   </div>
-                  <p>{source.detail}</p>
+                  <p>{providerStatus?.message ?? source.detail}</p>
                   <div className="source-step-meta">
                     <span>{source.loginKind}</span>
                     <span>{selectedSet.has(source.id) ? "已选择" : "未选择"}</span>
@@ -204,9 +245,13 @@ export function SourceSetupPage({ busy, selectedSources, onBusyChange, onEvent, 
             loginStatus={loginStatus}
             authenticated={Boolean(statusByProvider.get(QQ_PROVIDER)?.authenticated)}
             skipped={skippedSources.has(QQ_PROVIDER)}
+            connectionState={statusByProvider.get(QQ_PROVIDER)?.connectionState}
+            musicGeneState={statusByProvider.get(QQ_PROVIDER)?.musicGeneState}
             busy={busy}
+            musicGeneBusy={musicGeneBusy}
             onStartLogin={startLogin}
             onSkip={() => skipSource(QQ_PROVIDER)}
+            onGenerateMusicGene={generateMusicGene}
           />
         ) : (
           <section className="panel auth-panel">
@@ -276,8 +321,20 @@ function sourceReadiness(
   skippedSources: Set<string>
 ) {
   if (sourceId === QQ_PROVIDER) {
+    if (providerStatus?.connectionState === "EXPIRED") {
+      return { label: "登录已过期", ready: false, actionable: true, skipped: false, tone: "error" };
+    }
+    if (providerStatus?.connectionState === "UNVERIFIED") {
+      return { label: "等待校验", ready: false, actionable: true, skipped: false, tone: "pending" };
+    }
     if (providerStatus?.authenticated || loginStatus?.state === "DONE") {
-      return { label: "已连接", ready: true, actionable: true, skipped: false, tone: "ready" };
+      return {
+        label: providerStatus?.musicGeneState === "READY" ? "已连接 / 基因已就绪" : "已连接 / 待生成音乐基因",
+        ready: true,
+        actionable: true,
+        skipped: false,
+        tone: "ready"
+      };
     }
     if (skippedSources.has(sourceId)) {
       return { label: "已跳过", ready: false, actionable: true, skipped: true, tone: "skipped" };

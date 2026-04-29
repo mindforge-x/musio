@@ -72,8 +72,19 @@ export type ProviderStatus = {
   displayName: string;
   available: boolean;
   authenticated: boolean;
+  credentialStored: boolean;
   loginMethod: string;
   message: string;
+  connectionState: string;
+  musicGeneState: string;
+};
+
+export type MusicGeneSnapshot = {
+  provider: string;
+  userId: string;
+  euin: string;
+  generatedAt: string;
+  data: Record<string, unknown>;
 };
 
 export type PlaybackMode = "SEQUENTIAL" | "REPEAT_ONE" | "REPEAT_ALL" | "SHUFFLE";

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, Cable, ListMusic, MessageSquare } from "lucide-react";
 import { api } from "../shared/api";
-import { EventLog, Song, SystemStatus } from "../shared/types";
+import { EventLog, ProviderStatus, Song, SystemStatus } from "../shared/types";
 import { AgentChatPanel } from "../features/agent-chat/AgentChatPanel";
 import { AgentEvents } from "../features/agent-chat/AgentEvents";
 import { SongCards } from "../features/agent-chat/SongCards";
@@ -14,25 +14,41 @@ import { AppRoute } from "./routes";
 export function AppRouter() {
   const [route, setRoute] = useState<AppRoute>(() => initialRouteFromUrl());
   const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([]);
   const [events, setEvents] = useState<EventLog[]>([]);
   const [songs, setSongs] = useState<Song[]>([]);
   const [busy, setBusy] = useState(false);
   const selectedSources = useMemo(() => selectedSourcesFromUrl(), []);
   const player = usePlayerStore();
 
+  const refreshProviderStatuses = useCallback(() => {
+    api.providers()
+      .then(setProviderStatuses)
+      .catch(() => setProviderStatuses([]));
+  }, []);
+
   useEffect(() => {
     api.status()
       .then(setStatus)
       .catch(() => setStatus(null));
-  }, []);
+    refreshProviderStatuses();
+  }, [refreshProviderStatuses]);
 
   const backendLabel = useMemo(() => status?.backend ?? "offline", [status]);
+  const qqMusicStatus = useMemo(
+    () => providerStatuses.find((item) => sourceKey(item.provider) === "qqmusic") ?? null,
+    [providerStatuses]
+  );
   const backendDisplayLabel = backendLabel === "ok" ? "正常" : "离线";
   const selectedSourcesLabel = useMemo(() => selectedSources.map(sourceDisplayName).join(" / "), [selectedSources]);
+  const qqMusicConnectionLabel = qqMusicStatus ? providerConnectionLabel(qqMusicStatus) : "QQ 音乐状态未知";
+  const musicOperationDisabledReason = qqMusicStatus?.authenticated
+    ? null
+    : `${qqMusicConnectionLabel}。需要先连接 QQ 音乐才能搜索和播放。`;
   const pageTitle = route === "setup" ? "音乐源激活" : route === "playlists" ? "Musio 歌单" : "播放控制台";
   const pageSubcopy = route === "setup"
     ? "激活本次启动选择的音乐源。允许部分登录，也可以进入受限模式。"
-    : `${status ? `${status.aiProvider} / ${status.aiModel}` : "模型配置不可用"} · ${selectedSourcesLabel}`;
+    : `${status ? `${status.aiProvider} / ${status.aiModel}` : "模型配置不可用"} · ${selectedSourcesLabel} · ${qqMusicConnectionLabel}`;
   const addEvent = useCallback((event: EventLog) => {
     setEvents((current) => [event, ...current]);
   }, []);
@@ -90,7 +106,11 @@ export function AppRouter() {
             selectedSources={selectedSources}
             onBusyChange={setBusy}
             onEvent={addEvent}
-            onContinue={() => setRoute("workbench")}
+            onProviderStatusesChange={setProviderStatuses}
+            onContinue={() => {
+              refreshProviderStatuses();
+              setRoute("workbench");
+            }}
           />
         ) : route === "playlists" ? (
           <MusioPlaylistsPage />
@@ -98,10 +118,17 @@ export function AppRouter() {
           <>
             <PlayerShell state={player.state} onTogglePaused={player.togglePaused} onNextMode={player.nextMode} />
             <div className="agent-workspace">
-              <AgentChatPanel busy={busy} onBusyChange={setBusy} onEvent={addEvent} onSongs={setSongs} />
+              <AgentChatPanel
+                busy={busy}
+                disabledReason={musicOperationDisabledReason}
+                onBusyChange={setBusy}
+                onEvent={addEvent}
+                onSongs={setSongs}
+              />
               <div className="agent-side-stack">
                 <SongCards
                   busy={busy}
+                  disabledReason={musicOperationDisabledReason}
                   songs={songs}
                   onSongs={setSongs}
                   onBusyChange={setBusy}
@@ -116,6 +143,30 @@ export function AppRouter() {
       </section>
     </main>
   );
+}
+
+function sourceKey(source: string) {
+  const normalized = source.replace(/[_-]/g, "").toLowerCase();
+  if (normalized === "qqmusic" || normalized === "qq") {
+    return "qqmusic";
+  }
+  return normalized;
+}
+
+function providerConnectionLabel(status: ProviderStatus) {
+  if (status.authenticated) {
+    return status.musicGeneState === "READY" ? "QQ 音乐已连接，音乐基因已就绪" : "QQ 音乐已连接，音乐基因待生成";
+  }
+  switch (status.connectionState) {
+    case "EXPIRED":
+      return "QQ 音乐登录已过期";
+    case "UNVERIFIED":
+      return "QQ 音乐等待校验";
+    case "NOT_LOGGED_IN":
+      return "QQ 音乐未连接";
+    default:
+      return "QQ 音乐未连接";
+  }
 }
 
 function sourceDisplayName(source: string) {

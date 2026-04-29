@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -53,3 +55,22 @@ class UserProfile(BaseModel):
     id: str
     display_name: str
     avatar_url: str | None = None
+
+
+class UserConnectionStatus(BaseModel):
+    provider: str = "qqmusic"
+    state: str
+    credential_stored: bool
+    authenticated: bool
+    user_id: str | None = None
+    display_name: str | None = None
+    message: str
+    checked_at: str
+
+
+class UserMusicGene(BaseModel):
+    provider: str = "qqmusic"
+    user_id: str
+    euin: str
+    generated_at: str
+    data: dict[str, Any] = Field(default_factory=dict)
