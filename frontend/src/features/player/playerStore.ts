@@ -10,7 +10,7 @@ const initialPlayerState: PlayerState = {
   positionSeconds: 0,
   durationSeconds: null,
   playbackMode: "SEQUENTIAL",
-  lyricLine: "No lyric loaded"
+  lyricLine: "暂无歌词"
 };
 
 export function usePlayerStore() {
@@ -26,7 +26,7 @@ export function usePlayerStore() {
         paused: false,
         positionSeconds: 0,
         durationSeconds: song.durationSeconds ?? null,
-        lyricLine: "Lyrics will appear here"
+        lyricLine: "歌词会显示在这里"
       }));
     },
     togglePaused: () => {

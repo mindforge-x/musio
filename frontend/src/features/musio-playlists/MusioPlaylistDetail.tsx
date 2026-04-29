@@ -6,7 +6,7 @@ type MusioPlaylistDetailProps = {
 
 export function MusioPlaylistDetail({ playlist }: MusioPlaylistDetailProps) {
   if (!playlist) {
-    return <p className="empty-copy">Select a Musio playlist to inspect its cross-source songs.</p>;
+    return <p className="empty-copy">选择一个 Musio 歌单查看跨音乐源歌曲。</p>;
   }
 
   return (

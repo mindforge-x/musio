@@ -1,1 +1,1 @@
-export type AppRoute = "workbench" | "playlists";
+export type AppRoute = "setup" | "workbench" | "playlists";

@@ -63,10 +63,10 @@ function parseAgentEvent(raw: string): AgentEvent | null {
 
 function formatToolEvent(event: AgentEvent | null): string {
   if (!event?.data) {
-    return "tool event";
+    return "工具事件";
   }
 
-  const tool = typeof event.data.tool === "string" ? event.data.tool : "tool";
+  const tool = typeof event.data.tool === "string" ? event.data.tool : "工具";
   const summary = typeof event.data.summary === "string" ? event.data.summary : "";
   if (summary) {
     return `${tool}: ${summary}`;

@@ -11,19 +11,32 @@ type PlayerControlsProps = {
 export function PlayerControls({ paused, playbackMode, onTogglePaused, onNextMode }: PlayerControlsProps) {
   return (
     <div className="player-controls">
-      <button type="button" aria-label="Previous song">
+      <button type="button" aria-label="上一首">
         <SkipBack size={18} />
       </button>
-      <button type="button" aria-label={paused ? "Play" : "Pause"} onClick={onTogglePaused}>
+      <button type="button" aria-label={paused ? "播放" : "暂停"} onClick={onTogglePaused}>
         {paused ? <Play size={18} /> : <Pause size={18} />}
       </button>
-      <button type="button" aria-label="Next song">
+      <button type="button" aria-label="下一首">
         <SkipForward size={18} />
       </button>
-      <button type="button" aria-label="Playback mode" onClick={onNextMode}>
+      <button type="button" aria-label="播放顺序" onClick={onNextMode}>
         <Repeat size={18} />
-        <span>{playbackMode.toLowerCase()}</span>
+        <span>{playbackModeLabel(playbackMode)}</span>
       </button>
     </div>
   );
+}
+
+function playbackModeLabel(mode: PlaybackMode) {
+  switch (mode) {
+    case "SEQUENTIAL":
+      return "顺序";
+    case "REPEAT_ONE":
+      return "单曲";
+    case "REPEAT_ALL":
+      return "循环";
+    case "SHUFFLE":
+      return "随机";
+  }
 }

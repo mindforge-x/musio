@@ -11,7 +11,7 @@ type AgentChatPanelProps = {
 };
 
 export function AgentChatPanel({ busy, onBusyChange, onEvent, onSongs }: AgentChatPanelProps) {
-  const [message, setMessage] = useState("Recommend five songs for a late-night coding session.");
+  const [message, setMessage] = useState("给我推荐 5 首适合深夜写代码听的歌。");
 
   async function startChat(event: FormEvent) {
     event.preventDefault();
@@ -22,14 +22,14 @@ export function AgentChatPanel({ busy, onBusyChange, onEvent, onSongs }: AgentCh
     onBusyChange(true);
     try {
       const run = await chatClient.startChat(message);
-      onEvent({ id: crypto.randomUUID(), name: "run", detail: `${run.state}: ${run.runId}` });
+      onEvent({ id: crypto.randomUUID(), name: "run", detail: `已创建任务：${run.runId}` });
       chatClient.openRunEvents(run.runId, {
         onMessage: (detail) => onEvent({ id: crypto.randomUUID(), name: "agent", detail }),
         onToolStart: (detail) => onEvent({ id: crypto.randomUUID(), name: "tool_start", detail }),
         onToolResult: (detail) => onEvent({ id: crypto.randomUUID(), name: "tool_result", detail }),
         onSongCards: (songs) => {
           onSongs(songs);
-          onEvent({ id: crypto.randomUUID(), name: "song_cards", detail: `received ${songs.length} songs` });
+          onEvent({ id: crypto.randomUUID(), name: "song_cards", detail: `收到 ${songs.length} 首歌曲` });
         },
         onError: (detail) => {
           onEvent({ id: crypto.randomUUID(), name: "agent_error", detail });
@@ -42,7 +42,7 @@ export function AgentChatPanel({ busy, onBusyChange, onEvent, onSongs }: AgentCh
       onEvent({
         id: crypto.randomUUID(),
         name: "error",
-        detail: error instanceof Error ? error.message : "Unknown error"
+        detail: error instanceof Error ? error.message : "未知错误"
       });
     }
   }
@@ -50,14 +50,14 @@ export function AgentChatPanel({ busy, onBusyChange, onEvent, onSongs }: AgentCh
   return (
     <section className="panel command-panel">
       <div className="panel-heading">
-        <h2>Agent Run</h2>
-        <span>{busy ? "running" : "idle"}</span>
+        <h2>Agent 对话</h2>
+        <span>{busy ? "运行中" : "空闲"}</span>
       </div>
       <form onSubmit={startChat} className="prompt-form">
         <textarea value={message} onChange={(event) => setMessage(event.target.value)} />
         <button type="submit" disabled={busy || !message.trim()}>
           <Play size={18} />
-          Run
+          发送
         </button>
       </form>
     </section>

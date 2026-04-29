@@ -18,10 +18,10 @@ export function PlayerShell({ state, onTogglePaused, onNextMode }: PlayerShellPr
       <div className="player-main">
         <div className="player-title-row">
           <div>
-            <h2>{song?.title || "Nothing playing"}</h2>
-            <p>{song?.artists?.join(", ") || "Choose a song from Agent results or Musio playlists"}</p>
+            <h2>{song?.title || "暂无播放"}</h2>
+            <p>{song?.artists?.join(", ") || "从 Agent 结果或 Musio 歌单中选择一首歌"}</p>
           </div>
-          <span>{state.queue.length} queued</span>
+          <span>{state.queue.length} 首排队中</span>
         </div>
         <ProgressBar positionSeconds={state.positionSeconds} durationSeconds={state.durationSeconds} />
         <LyricLine text={state.lyricLine} />

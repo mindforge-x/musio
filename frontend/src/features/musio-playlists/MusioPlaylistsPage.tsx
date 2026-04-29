@@ -21,13 +21,13 @@ export function MusioPlaylistsPage() {
   return (
     <section className="panel musio-playlists-panel">
       <div className="panel-heading">
-        <h2>Musio Playlists</h2>
-        <span>{playlists.length} lists</span>
+        <h2>Musio 歌单</h2>
+        <span>{playlists.length} 个歌单</span>
       </div>
       <div className="musio-playlists-layout">
         <div className="musio-playlist-list">
           {playlists.length === 0 ? (
-            <p className="empty-copy">No Musio playlists yet.</p>
+            <p className="empty-copy">还没有 Musio 歌单。</p>
           ) : (
             playlists.map((playlist) => (
               <button

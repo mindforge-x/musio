@@ -13,7 +13,7 @@ type SongCardsProps = {
 };
 
 export function SongCards({ busy, songs, onSongs, onBusyChange, onEvent, onPlaySong }: SongCardsProps) {
-  const [searchKeyword, setSearchKeyword] = useState("city pop");
+  const [searchKeyword, setSearchKeyword] = useState("周杰伦");
 
   async function search(event: FormEvent) {
     event.preventDefault();
@@ -25,7 +25,7 @@ export function SongCards({ busy, songs, onSongs, onBusyChange, onEvent, onPlayS
     try {
       const result = await api.search(searchKeyword);
       onSongs(result);
-      onEvent({ id: crypto.randomUUID(), name: "search", detail: `returned ${result.length} songs` });
+      onEvent({ id: crypto.randomUUID(), name: "search", detail: `搜索返回 ${result.length} 首歌曲` });
     } finally {
       onBusyChange(false);
     }
@@ -34,14 +34,14 @@ export function SongCards({ busy, songs, onSongs, onBusyChange, onEvent, onPlayS
   return (
     <section className="panel search-panel">
       <div className="panel-heading">
-        <h2>Catalog</h2>
-        <span>{songs.length} results</span>
+        <h2>歌曲结果</h2>
+        <span>{songs.length} 条结果</span>
       </div>
       <form onSubmit={search} className="search-form">
         <Search size={18} />
         <input value={searchKeyword} onChange={(event) => setSearchKeyword(event.target.value)} />
         <button type="submit" disabled={busy || !searchKeyword.trim()}>
-          Search
+          搜索
         </button>
       </form>
       <div className="song-list">
@@ -49,9 +49,9 @@ export function SongCards({ busy, songs, onSongs, onBusyChange, onEvent, onPlayS
           <article key={song.id} className="song-row">
             <div>
               <strong>{song.title || song.id}</strong>
-              <span>{song.artists?.join(", ") || song.provider || "QQ Music"}</span>
+              <span>{song.artists?.join(", ") || song.provider || "QQ 音乐"}</span>
             </div>
-            <button type="button" aria-label={`Play ${song.title || song.id}`} onClick={() => onPlaySong(song)}>
+            <button type="button" aria-label={`播放 ${song.title || song.id}`} onClick={() => onPlaySong(song)}>
               <Play size={16} />
             </button>
           </article>
