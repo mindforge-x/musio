@@ -3,6 +3,7 @@
 .agents/
 .claude/
 .codex
+/codestable/
 .DS_Store
 skills-lock.json
 
