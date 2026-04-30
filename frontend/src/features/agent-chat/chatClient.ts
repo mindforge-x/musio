@@ -2,7 +2,7 @@ import { api } from "../../shared/api";
 import { AgentEvent, Song } from "../../shared/types";
 
 type AgentRunHandlers = {
-  onMessage: (detail: string) => void;
+  onMessageDelta: (detail: string, runId?: string) => void;
   onToolStart: (detail: string) => void;
   onToolResult: (detail: string) => void;
   onSongCards: (songs: Song[]) => void;
@@ -18,12 +18,13 @@ export const chatClient = {
 function openRunEvents(runId: string, handlers: AgentRunHandlers): EventSource {
   const source = new EventSource(`/api/chat/runs/${runId}/events`);
   source.onmessage = (event) => {
-    handlers.onMessage(event.data);
+    handlers.onMessageDelta(event.data, runId);
   };
   source.addEventListener("agent_message_delta", (event) => {
     const agentEvent = parseAgentEvent((event as MessageEvent).data);
     const text = typeof agentEvent?.data?.text === "string" ? agentEvent.data.text : (event as MessageEvent).data;
-    handlers.onMessage(text);
+    const eventRunId = typeof agentEvent?.data?.runId === "string" ? agentEvent.data.runId : runId;
+    handlers.onMessageDelta(text, eventRunId);
   });
   source.addEventListener("tool_start", (event) => {
     handlers.onToolStart(formatToolEvent(parseAgentEvent((event as MessageEvent).data)));
@@ -47,7 +48,7 @@ function openRunEvents(runId: string, handlers: AgentRunHandlers): EventSource {
     source.close();
   });
   source.onerror = () => {
-    handlers.onDone();
+    handlers.onError("SSE 连接已中断。");
     source.close();
   };
   return source;

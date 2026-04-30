@@ -59,22 +59,18 @@ public class AgentRuntime {
             List<ConversationHistoryMessage> history = conversationHistoryService.load(userId);
             Prompt prompt = conversationPrompt(history, request.message());
 
-            String answer = chatModelFactory.chatClient(ai)
+            StringBuilder answer = new StringBuilder();
+            chatModelFactory.chatClient(ai)
                     .prompt(prompt)
                     .toolCallbacks(toolRegistry.readOnlyToolCallbacks())
-                    .call()
-                    .content();
-            String answerText = answer == null ? "" : answer;
+                    .stream()
+                    .content()
+                    .doOnNext(chunk -> publishAnswerDelta(runId, ai, answer, chunk))
+                    .blockLast();
+            String answerText = answer.toString();
 
             conversationHistoryService.appendTurn(userId, request.message(), answerText);
 
-            eventBus.publish(runId, AgentEvent.of("agent_message_delta", Map.of(
-                    "runId", runId,
-                    "text", answerText,
-                    "aiProvider", ai.provider(),
-                    "aiModel", ai.model(),
-                    "systemPromptLoaded", !prompts.systemPrompt().isBlank()
-            )));
             eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
         } catch (Exception e) {
             log.warn("Agent run {} failed", runId, e);
@@ -87,6 +83,20 @@ public class AgentRuntime {
         } finally {
             AgentRunContext.clear();
         }
+    }
+
+    private void publishAnswerDelta(String runId, MusioConfig.Ai ai, StringBuilder answer, String chunk) {
+        if (chunk == null || chunk.isEmpty()) {
+            return;
+        }
+        answer.append(chunk);
+        eventBus.publish(runId, AgentEvent.of("agent_message_delta", Map.of(
+                "runId", runId,
+                "text", chunk,
+                "aiProvider", ai.provider(),
+                "aiModel", ai.model(),
+                "systemPromptLoaded", !prompts.systemPrompt().isBlank()
+        )));
     }
 
     private Prompt conversationPrompt(List<ConversationHistoryMessage> history, String userMessage) {

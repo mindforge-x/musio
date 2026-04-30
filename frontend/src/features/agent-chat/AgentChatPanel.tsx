@@ -1,7 +1,9 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, useState } from "react";
 import { Play } from "lucide-react";
 import { EventLog, Song } from "../../shared/types";
+import { AgentMessageList } from "./AgentMessageList";
 import { chatClient } from "./chatClient";
+import { ChatMessage } from "./chatTypes";
 
 type AgentChatPanelProps = {
   busy: boolean;
@@ -13,23 +15,53 @@ type AgentChatPanelProps = {
 
 export function AgentChatPanel({ busy, disabledReason, onBusyChange, onEvent, onSongs }: AgentChatPanelProps) {
   const [message, setMessage] = useState("给我推荐 5 首适合深夜写代码听的歌。");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   async function startChat(event: FormEvent) {
     event.preventDefault();
-    if (disabledReason) {
-      onEvent({ id: crypto.randomUUID(), name: "source", detail: disabledReason });
-      return;
-    }
+    await submitMessage();
+  }
+
+  async function submitMessage() {
     if (!message.trim()) {
       return;
     }
 
+    const userText = message.trim();
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: userText,
+      state: "done"
+    };
+
+    setMessages((current) => [...current, userMessage]);
+    setMessage("");
     onBusyChange(true);
     try {
-      const run = await chatClient.startChat(message);
+      const run = await chatClient.startChat(userText);
+      const agentMessageId = crypto.randomUUID();
+      setMessages((current) => [
+        ...current,
+        {
+          id: agentMessageId,
+          role: "agent",
+          content: "",
+          state: "streaming",
+          runId: run.runId
+        }
+      ]);
       onEvent({ id: crypto.randomUUID(), name: "run", detail: `已创建任务：${run.runId}` });
       chatClient.openRunEvents(run.runId, {
-        onMessage: (detail) => onEvent({ id: crypto.randomUUID(), name: "agent", detail }),
+        onMessageDelta: (detail, eventRunId) => {
+          setMessages((current) =>
+            current.map((item) =>
+              item.role === "agent" && item.runId === (eventRunId ?? run.runId)
+                ? { ...item, content: item.content + detail, state: "streaming" }
+                : item
+            )
+          );
+        },
         onToolStart: (detail) => onEvent({ id: crypto.randomUUID(), name: "tool_start", detail }),
         onToolResult: (detail) => onEvent({ id: crypto.randomUUID(), name: "tool_result", detail }),
         onSongCards: (songs) => {
@@ -37,18 +69,53 @@ export function AgentChatPanel({ busy, disabledReason, onBusyChange, onEvent, on
           onEvent({ id: crypto.randomUUID(), name: "song_cards", detail: `收到 ${songs.length} 首歌曲` });
         },
         onError: (detail) => {
+          setMessages((current) =>
+            current.map((item) =>
+              item.role === "agent" && item.runId === run.runId
+                ? { ...item, content: item.content || detail, state: "error" }
+                : item
+            )
+          );
           onEvent({ id: crypto.randomUUID(), name: "agent_error", detail });
           onBusyChange(false);
         },
-        onDone: () => onBusyChange(false)
+        onDone: () => {
+          setMessages((current) =>
+            current.map((item) =>
+              item.role === "agent" && item.runId === run.runId ? { ...item, state: "done" } : item
+            )
+          );
+          onBusyChange(false);
+        }
       });
     } catch (error) {
+      const detail = error instanceof Error ? error.message : "未知错误";
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "agent",
+          content: detail,
+          state: "error"
+        }
+      ]);
       onBusyChange(false);
       onEvent({
         id: crypto.randomUUID(),
         name: "error",
-        detail: error instanceof Error ? error.message : "未知错误"
+        detail
       });
+    }
+  }
+
+  function handleTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
+      return;
+    }
+
+    event.preventDefault();
+    if (!busy && message.trim()) {
+      void submitMessage();
     }
   }
 
@@ -59,9 +126,14 @@ export function AgentChatPanel({ busy, disabledReason, onBusyChange, onEvent, on
         <span>{busy ? "运行中" : "空闲"}</span>
       </div>
       {disabledReason ? <p className="access-note">{disabledReason}</p> : null}
+      <AgentMessageList messages={messages} />
       <form onSubmit={startChat} className="prompt-form">
-        <textarea value={message} onChange={(event) => setMessage(event.target.value)} />
-        <button type="submit" disabled={busy || Boolean(disabledReason) || !message.trim()}>
+        <textarea
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          onKeyDown={handleTextareaKeyDown}
+        />
+        <button type="submit" disabled={busy || !message.trim()}>
           <Play size={18} />
           发送
         </button>
