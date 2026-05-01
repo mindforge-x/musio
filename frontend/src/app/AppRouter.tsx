@@ -88,17 +88,19 @@ export function AppRouter() {
       </aside>
 
       <section className="workspace">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Musio 本地音乐 Agent</p>
-            <h1>{pageTitle}</h1>
-            <p className="config-line">{pageSubcopy}</p>
-          </div>
-          <div className={`status-pill ${backendLabel === "ok" ? "online" : ""}`}>
-            <Activity size={16} />
-            <span>{backendDisplayLabel}</span>
-          </div>
-        </header>
+        {route !== "workbench" ? (
+          <header className="topbar">
+            <div>
+              <p className="eyebrow">Musio 本地音乐 Agent</p>
+              <h1>{pageTitle}</h1>
+              <p className="config-line">{pageSubcopy}</p>
+            </div>
+            <div className={`status-pill ${backendLabel === "ok" ? "online" : ""}`}>
+              <Activity size={16} />
+              <span>{backendDisplayLabel}</span>
+            </div>
+          </header>
+        ) : null}
 
         {route === "setup" ? (
           <SourceSetupPage
@@ -115,8 +117,25 @@ export function AppRouter() {
         ) : route === "playlists" ? (
           <MusioPlaylistsPage />
         ) : (
-          <>
+          <section className="radio-workbench">
+            <header className="radio-header">
+              <div className="radio-brand">
+                <div className="radio-avatar">M</div>
+                <div>
+                  <p>Musio FM</p>
+                  <strong>Musio</strong>
+                </div>
+              </div>
+              <div className="radio-header-actions">
+                <span className={`radio-state ${backendLabel === "ok" ? "online" : ""}`}>{backendDisplayLabel}</span>
+                <span>{status ? status.aiModel : "MODEL OFFLINE"}</span>
+              </div>
+            </header>
             <PlayerShell state={player.state} onTogglePaused={player.togglePaused} onNextMode={player.nextMode} />
+            <div className="radio-queue-strip">
+              <span>QUEUE</span>
+              <span>{player.state.queue.length} TRACKS</span>
+            </div>
             <div className="agent-workspace">
               <AgentChatPanel
                 busy={busy}
@@ -138,7 +157,11 @@ export function AppRouter() {
                 <AgentEvents events={events} onClear={() => setEvents([])} />
               </div>
             </div>
-          </>
+            <footer className="radio-footer">
+              <span>MUSIO FM</span>
+              <span>{qqMusicConnectionLabel}</span>
+            </footer>
+          </section>
         )}
       </section>
     </main>

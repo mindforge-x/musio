@@ -1,5 +1,5 @@
 import { FormEvent, KeyboardEvent, useState } from "react";
-import { Play } from "lucide-react";
+import { ArrowUp } from "lucide-react";
 import { EventLog, Song } from "../../shared/types";
 import { AgentMessageList } from "./AgentMessageList";
 import { chatClient } from "./chatClient";
@@ -122,20 +122,20 @@ export function AgentChatPanel({ busy, disabledReason, onBusyChange, onEvent, on
   return (
     <section className="panel command-panel">
       <div className="panel-heading">
-        <h2>Agent 对话</h2>
+        <h2 className="chat-panel-title">MUSIO</h2>
         <span>{busy ? "运行中" : "空闲"}</span>
       </div>
       {disabledReason ? <p className="access-note">{disabledReason}</p> : null}
       <AgentMessageList messages={messages} />
       <form onSubmit={startChat} className="prompt-form">
         <textarea
+          placeholder="Say something to Musio..."
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           onKeyDown={handleTextareaKeyDown}
         />
         <button type="submit" disabled={busy || !message.trim()}>
-          <Play size={18} />
-          发送
+          <ArrowUp size={18} />
         </button>
       </form>
     </section>
