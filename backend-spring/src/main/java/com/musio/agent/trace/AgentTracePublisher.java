@@ -5,6 +5,7 @@ import com.musio.model.AgentEvent;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -44,6 +45,46 @@ public class AgentTracePublisher {
         ));
     }
 
+    public void publishRecommendationResolveRunning(String runId) {
+        publish(runId, "tool.recommendation-resolve", "tool", "running", "解析可播放歌曲", "正在把推荐候选精确匹配到 QQ 音乐歌曲。", Map.of());
+    }
+
+    public void publishRecommendationResolveDone(String runId, int resolvedCount, int unresolvedCount) {
+        publishRecommendationResolveDone(runId, List.of(), List.of(), resolvedCount, unresolvedCount);
+    }
+
+    public void publishRecommendationResolveDone(String runId, List<String> resolvedTitles, List<String> unresolvedTitles) {
+        publishRecommendationResolveDone(
+                runId,
+                resolvedTitles,
+                unresolvedTitles,
+                resolvedTitles == null ? 0 : resolvedTitles.size(),
+                unresolvedTitles == null ? 0 : unresolvedTitles.size()
+        );
+    }
+
+    private void publishRecommendationResolveDone(
+            String runId,
+            List<String> resolvedTitles,
+            List<String> unresolvedTitles,
+            int resolvedCount,
+            int unresolvedCount
+    ) {
+        List<String> safeResolvedTitles = safeTitles(resolvedTitles);
+        List<String> safeUnresolvedTitles = safeTitles(unresolvedTitles);
+        publish(runId, "tool.recommendation-resolve", "tool", "done", "解析可播放歌曲", recommendationResolveSummary(
+                safeResolvedTitles,
+                safeUnresolvedTitles,
+                resolvedCount,
+                unresolvedCount
+        ), Map.of(
+                "resolvedCount", resolvedCount,
+                "unresolvedCount", unresolvedCount,
+                "resolvedTitles", safeResolvedTitles,
+                "unresolvedTitles", safeUnresolvedTitles
+        ));
+    }
+
     public void publishToolRunning(String runId, String toolName, Map<String, Object> input) {
         publish(runId, "tool." + toolName, "tool", "running", toolTitle(toolName), runningSummary(toolName), toolInputPreview(toolName, input));
     }
@@ -76,7 +117,7 @@ public class AgentTracePublisher {
                 || normalized.contains("歌手")
                 || normalized.contains("qq音乐")
                 || normalized.contains("qq music")
-                || (normalized.contains("推荐") && normalized.contains("听"));
+                || (normalized.contains("推荐") && (normalized.contains("听") || normalized.contains("首")));
     }
 
     public boolean shouldPlanRecommendation(String message) {
@@ -88,6 +129,7 @@ public class AgentTracePublisher {
                 normalized.contains("歌")
                         || normalized.contains("音乐")
                         || normalized.contains("听")
+                        || normalized.contains("首")
         );
     }
 
@@ -188,6 +230,32 @@ public class AgentTracePublisher {
             return cleaned;
         }
         return cleaned.substring(0, SUMMARY_LIMIT) + "...";
+    }
+
+    private String recommendationResolveSummary(List<String> resolvedTitles, List<String> unresolvedTitles, int resolvedCount, int unresolvedCount) {
+        StringBuilder builder = new StringBuilder("已匹配 ")
+                .append(resolvedCount)
+                .append(" 首");
+        if (!resolvedTitles.isEmpty()) {
+            builder.append("：").append(String.join("、", resolvedTitles));
+        }
+        builder.append("；未匹配 ").append(unresolvedCount).append(" 首");
+        if (!unresolvedTitles.isEmpty()) {
+            builder.append("：").append(String.join("、", unresolvedTitles));
+        }
+        builder.append("。");
+        return builder.toString();
+    }
+
+    private List<String> safeTitles(List<String> titles) {
+        if (titles == null || titles.isEmpty()) {
+            return List.of();
+        }
+        return titles.stream()
+                .filter(title -> title != null && !title.isBlank())
+                .map(String::strip)
+                .limit(8)
+                .toList();
     }
 
     private String stripSentence(String value) {

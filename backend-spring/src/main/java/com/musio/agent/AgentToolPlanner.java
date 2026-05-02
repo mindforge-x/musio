@@ -166,6 +166,7 @@ public class AgentToolPlanner {
                 - 搜索类任务应规划 search_songs；keyword 只写正向搜索目标，limit 使用用户要求的数量，没有要求时默认 8。
                 - 如果任务上下文要求避免重复歌曲，把这些歌名放入 search_songs.arguments.excludedTitles，不要拼进 keyword。
                 - 推荐类任务不要把“深夜写代码”“适合睡前”等场景词直接当唯一搜索词；应先挑出具体歌曲查询，规划多个 search_songs，每个 limit=1，查询格式优先“歌曲名 歌手”。
+                - 场景词、风格词可以作为理解推荐需求的依据，但不要只依赖一次泛场景搜索来完成推荐。
                 - 个性化推荐可以先规划 get_user_music_profile，再规划 search_songs。
                 - 歌曲评论、感人评论、听众感受类问题通常需要 get_hot_comments。
                 - 歌曲背景、详情、专辑、时长、歌手信息类问题通常需要 get_song_detail。

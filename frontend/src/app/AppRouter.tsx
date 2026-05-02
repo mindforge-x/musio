@@ -54,8 +54,12 @@ export function AppRouter() {
   }, []);
 
   function playSong(song: Song) {
-    player.playSong(song);
-    addEvent({ id: crypto.randomUUID(), name: "player", detail: `已加入队列：${song.title || song.id}` });
+    void player.playSong(song)
+      .then(() => addEvent({ id: crypto.randomUUID(), name: "player", detail: `正在播放：${song.title || song.id}` }))
+      .catch((error) => {
+        const detail = error instanceof Error && error.message ? error.message : "未知错误";
+        addEvent({ id: crypto.randomUUID(), name: "player", detail: `播放失败：${detail}` });
+      });
   }
 
   return (

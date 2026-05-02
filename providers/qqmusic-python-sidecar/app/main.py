@@ -4,6 +4,8 @@ import os
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse
+from qqmusic_api.core.exceptions import CredentialError, LoginExpiredError, NotLoginError, RatelimitedError
 
 from .qqmusic_client import QQMusicClient
 from .schemas import (
@@ -21,6 +23,26 @@ from .schemas import (
 
 app = FastAPI(title="Musio QQ Music Sidecar", version="0.1.0")
 client = QQMusicClient()
+
+
+@app.exception_handler(LoginExpiredError)
+async def login_expired_handler(_request, _error: LoginExpiredError) -> JSONResponse:
+    return JSONResponse(status_code=401, content={"detail": "QQ 音乐登录已过期，请重新登录。"})
+
+
+@app.exception_handler(NotLoginError)
+async def not_login_handler(_request, _error: NotLoginError) -> JSONResponse:
+    return JSONResponse(status_code=401, content={"detail": "QQ 音乐尚未登录，请先登录。"})
+
+
+@app.exception_handler(CredentialError)
+async def credential_error_handler(_request, _error: CredentialError) -> JSONResponse:
+    return JSONResponse(status_code=401, content={"detail": "QQ 音乐登录状态不可用，请重新登录。"})
+
+
+@app.exception_handler(RatelimitedError)
+async def ratelimited_handler(_request, _error: RatelimitedError) -> JSONResponse:
+    return JSONResponse(status_code=429, content={"detail": "QQ 音乐触发风控，需要登录或完成安全验证后再试。"})
 
 
 @app.get("/health", response_model=HealthResponse)

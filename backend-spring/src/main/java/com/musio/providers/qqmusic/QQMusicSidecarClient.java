@@ -3,6 +3,7 @@ package com.musio.providers.qqmusic;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.config.MusioConfigService;
 import com.musio.model.Comment;
@@ -19,7 +20,9 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -185,9 +188,41 @@ public class QQMusicSidecarClient {
         try (Response response = httpClient.newCall(request).execute()) {
             ResponseBody body = response.body();
             if (!response.isSuccessful() || body == null) {
-                throw new IllegalStateException("QQ Music sidecar returned HTTP " + response.code() + " for " + url);
+                throw sidecarHttpException(response.code(), url, body);
             }
             return reader.read(body);
+        }
+    }
+
+    private RuntimeException sidecarHttpException(int statusCode, HttpUrl url, ResponseBody body) throws IOException {
+        String detail = sidecarErrorDetail(body);
+        if (statusCode == 401) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, detail.isBlank() ? "QQ 音乐登录状态不可用，请重新登录。" : detail);
+        }
+        if (statusCode == 429) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, detail.isBlank() ? "QQ 音乐触发风控，请稍后再试。" : detail);
+        }
+        String message = "QQ Music sidecar returned HTTP " + statusCode + " for " + url;
+        if (!detail.isBlank()) {
+            message += ": " + detail;
+        }
+        throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, message);
+    }
+
+    private String sidecarErrorDetail(ResponseBody body) throws IOException {
+        if (body == null) {
+            return "";
+        }
+        String value = body.string();
+        if (value.isBlank()) {
+            return "";
+        }
+        try {
+            JsonNode root = objectMapper.readTree(value);
+            JsonNode detail = root.path("detail");
+            return detail.isTextual() ? detail.asText().strip() : value.strip();
+        } catch (Exception ignored) {
+            return value.strip();
         }
     }
 

@@ -23,10 +23,29 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(await errorMessage(response));
   }
 
   return (await response.json()) as T;
+}
+
+async function errorMessage(response: Response): Promise<string> {
+  try {
+    const text = await response.text();
+    if (!text) {
+      return `HTTP ${response.status}`;
+    }
+    const json = JSON.parse(text) as { detail?: unknown; message?: unknown };
+    if (typeof json.detail === "string" && json.detail.trim()) {
+      return json.detail.trim();
+    }
+    if (typeof json.message === "string" && json.message.trim()) {
+      return json.message.trim();
+    }
+    return text;
+  } catch {
+    return `HTTP ${response.status}`;
+  }
 }
 
 export const api = {
@@ -47,7 +66,7 @@ export const api = {
     }),
   search: (keyword: string, limit = 8) =>
     request<Song[]>(`/api/music/search?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
-  songUrl: (songId: string) => request<SongUrl>(`/api/music/songs/${songId}/url`),
+  songUrl: (songId: string) => request<SongUrl>(`/api/music/songs/${encodeURIComponent(songId)}/url`),
   playerState: () => request<PlayerState>("/api/player/state"),
   musioPlaylists: () => request<MusioPlaylist[]>("/api/musio/playlists")
 };

@@ -70,6 +70,9 @@ public class AgentTaskContextResolver {
             int searchLimit = cleanSearchLimit(root.path("searchLimit").asInt(0));
             List<String> avoidSongTitles = textArray(root.path("avoidSongTitles"));
             boolean followUp = root.path("followUp").asBoolean(false);
+            String contextMode = cleanContextMode(text(root, "contextMode"), followUp, taskType, targetSongId);
+            AgentTaskMemoryAccess memoryAccess = cleanMemoryAccess(root.path("memoryAccess"), contextMode);
+            followUp = isFollowUpContextMode(contextMode);
             if (!"agent".equals(mode)) {
                 return Optional.of(AgentTaskContext.direct(userMessage, confidence, "model"));
             }
@@ -87,7 +90,9 @@ public class AgentTaskContextResolver {
                     "model",
                     taskType,
                     targetSongId,
-                    targetSongTitle
+                    targetSongTitle,
+                    contextMode,
+                    memoryAccess
             ));
         } catch (Exception e) {
             return Optional.empty();
@@ -142,7 +147,9 @@ public class AgentTaskContextResolver {
                     "heuristic",
                     taskType,
                     "",
-                    ""
+                    "",
+                    "new_task",
+                    AgentTaskMemoryAccess.none("启发式识别的新音乐任务。")
             );
         }
         return AgentTaskContext.direct(userMessage);
@@ -154,14 +161,17 @@ public class AgentTaskContextResolver {
                 你的任务是判断当前用户输入是否应该作为普通聊天处理，还是作为音乐 Agent 任务处理。
 
                 输出格式：
-                {"mode":"chat|agent","taskType":"chat|search|recommend|comments|lyrics|detail|playlist|profile|playback|unknown","followUp":true|false,"effectiveRequest":"用于本轮规划的完整用户请求","searchKeyword":"正向搜索关键词","searchLimit":数量,"targetSongId":"目标歌曲 provider-prefixed id","targetSongTitle":"目标歌曲名","avoidSongTitles":["需要排除的歌名"],"confidence":0.0到1.0}
+                {"mode":"chat|agent","taskType":"chat|search|recommend|comments|lyrics|detail|playlist|profile|playback|unknown","contextMode":"new_task|follow_up|retry|refer_previous_song","followUp":true|false,"memoryAccess":{"useLastSearchKeyword":false,"useLastResultSongs":false,"useAvoidTitles":false,"useToolFailures":false,"reason":"为什么需要或不需要任务记忆"},"effectiveRequest":"用于本轮规划的完整用户请求","searchKeyword":"正向搜索关键词","searchLimit":数量,"targetSongId":"目标歌曲 provider-prefixed id","targetSongTitle":"目标歌曲名","avoidSongTitles":["需要排除的歌名"],"confidence":0.0到1.0}
 
                 规则：
                 - 普通寒暄、感谢、确认、情绪表达属于 chat。
                 - 搜索歌曲、推荐歌曲、歌词、评论、歌单、歌手、专辑、播放相关请求属于 agent。
                 - taskType 必须反映本轮最需要调用的音乐能力：搜索是 search，推荐是 recommend，热门评论/感人评论是 comments，歌词是 lyrics，歌曲详情/背景/故事/介绍是 detail，歌单是 playlist，音乐画像是 profile，播放控制是 playback。
                 - 如果当前输入依赖最近对话上下文，请把它改写成一条完整、可独立执行的音乐请求，放入 effectiveRequest。
-                - 当前任务记忆比最近对话文本更可靠；处理延续请求时优先参考 currentTask、lastSearchKeyword、lastResultSongTitles、lastToolFailures。
+                - 当前用户输入优先级最高；只有用户明确说“再试试”“继续”“换一首”“类似刚才”“上一首/这首”等延续请求时，contextMode 才能是 follow_up、retry 或 refer_previous_song。
+                - 新的开放推荐请求属于 new_task，不要继承上一轮场景、关键词或排除列表；memoryAccess 的所有布尔值应为 false。
+                - 只有 contextMode 是 follow_up 或 retry 时，才可以使用 lastSearchKeyword、avoidSongTitles、lastToolFailures。
+                - 只有 contextMode 是 refer_previous_song，或用户明确延续上一轮歌曲时，才可以使用 lastResultSongRefs / lastResultSongTitles。
                 - 如果用户问“上一首歌/这首歌”的歌词、评论、背景、故事或详情，并且当前任务记忆里有 lastResultSongRefs，请把对应 provider-prefixed song id 填入 targetSongId，把歌名填入 targetSongTitle；searchKeyword 留空。
                 - 评论、歌词、背景、详情类任务不要把“背景故事”“评论”“歌词”等需求词拼进 searchKeyword；这些词代表要调用的能力，不是歌曲搜索关键词。
                 - 如果用户表达替代、排除已返回结果、或继续寻找不同结果的意图，avoidSongTitles 填入最近结果里本轮应排除的歌曲名。
@@ -215,6 +225,51 @@ public class AgentTaskContextResolver {
                     .orElse(""));
         }
         return builder.toString().strip();
+    }
+
+    String plannerTaskMemoryPreview(AgentTaskContext taskContext, AgentTaskMemory memory) {
+        if (taskContext == null || !taskContext.agentTask()) {
+            return "无";
+        }
+        AgentTaskMemoryAccess access = taskContext.memoryAccess();
+        if (access == null || access.none() || isBlankTaskMemory(memory)) {
+            return "无";
+        }
+        StringBuilder builder = new StringBuilder();
+        appendLine(builder, "memoryAccessReason", access.reason());
+        appendLine(builder, "currentTask", memory.currentTask());
+        appendLine(builder, "lastEffectiveRequest", memory.lastEffectiveRequest());
+        if (access.useLastSearchKeyword()) {
+            appendLine(builder, "lastSearchKeyword", memory.lastSearchKeyword());
+            if (memory.lastSearchLimit() != null && memory.lastSearchLimit() > 0) {
+                appendLine(builder, "lastSearchLimit", String.valueOf(memory.lastSearchLimit()));
+            }
+        }
+        if (access.useLastResultSongs()) {
+            if (memory.lastResultSongs() != null && !memory.lastResultSongs().isEmpty()) {
+                appendLine(builder, "lastResultSongRefs", memory.lastResultSongs().stream()
+                        .limit(5)
+                        .map(this::songRef)
+                        .filter(ref -> !ref.isBlank())
+                        .reduce((left, right) -> left + "；" + right)
+                        .orElse(""));
+            }
+            if (memory.lastResultSongTitles() != null && !memory.lastResultSongTitles().isEmpty()) {
+                appendLine(builder, "lastResultSongTitles", String.join("、", memory.lastResultSongTitles().stream().limit(10).toList()));
+            }
+        }
+        if (access.useAvoidTitles() && memory.avoidSongTitles() != null && !memory.avoidSongTitles().isEmpty()) {
+            appendLine(builder, "avoidSongTitles", String.join("、", memory.avoidSongTitles()));
+        }
+        if (access.useToolFailures() && memory.lastToolFailures() != null && !memory.lastToolFailures().isEmpty()) {
+            appendLine(builder, "lastToolFailures", memory.lastToolFailures().stream()
+                    .limit(3)
+                    .map(this::failureSummary)
+                    .reduce((left, right) -> left + "；" + right)
+                    .orElse(""));
+        }
+        String preview = builder.toString().strip();
+        return preview.isBlank() ? "无" : preview;
     }
 
     private String songRef(Song song) {
@@ -352,6 +407,49 @@ public class AgentTaskContextResolver {
         return "unknown";
     }
 
+    private String cleanContextMode(String contextMode, boolean followUp, String taskType, String targetSongId) {
+        String normalized = contextMode == null ? "" : contextMode.strip().toLowerCase(java.util.Locale.ROOT);
+        if (List.of("new_task", "follow_up", "retry", "refer_previous_song").contains(normalized)) {
+            return normalized;
+        }
+        if (!isBlank(targetSongId) || List.of("comments", "lyrics", "detail", "playback").contains(taskType)) {
+            return "refer_previous_song";
+        }
+        return followUp ? "follow_up" : "new_task";
+    }
+
+    private boolean isFollowUpContextMode(String contextMode) {
+        return "follow_up".equals(contextMode)
+                || "retry".equals(contextMode)
+                || "refer_previous_song".equals(contextMode);
+    }
+
+    private AgentTaskMemoryAccess cleanMemoryAccess(JsonNode node, String contextMode) {
+        if ("new_task".equals(contextMode)) {
+            return AgentTaskMemoryAccess.none("新任务不读取上一轮任务记忆。");
+        }
+        if ("refer_previous_song".equals(contextMode)) {
+            return new AgentTaskMemoryAccess(false, true, false, false, memoryReason(node, "需要引用上一轮歌曲。"));
+        }
+        if (!node.isObject()) {
+            return new AgentTaskMemoryAccess(true, true, true, "retry".equals(contextMode), contextMode + " 需要读取上一轮任务记忆。");
+        }
+        return new AgentTaskMemoryAccess(
+                node.path("useLastSearchKeyword").asBoolean(false),
+                node.path("useLastResultSongs").asBoolean(false),
+                node.path("useAvoidTitles").asBoolean(false),
+                node.path("useToolFailures").asBoolean(false),
+                memoryReason(node, contextMode + " 由 Router 授权读取任务记忆。")
+        );
+    }
+
+    private String memoryReason(JsonNode node, String fallback) {
+        if (node != null && node.path("reason").isTextual() && !node.path("reason").asText().isBlank()) {
+            return node.path("reason").asText().strip();
+        }
+        return fallback;
+    }
+
     private String normalizeComparable(String value) {
         if (value == null) {
             return "";
@@ -390,14 +488,16 @@ record AgentTaskContext(
         String source,
         String taskType,
         String targetSongId,
-        String targetSongTitle
+        String targetSongTitle,
+        String contextMode,
+        AgentTaskMemoryAccess memoryAccess
 ) {
     static AgentTaskContext direct(String message) {
         return direct(message, 1.0, "direct");
     }
 
     static AgentTaskContext direct(String message, double confidence, String source) {
-        return new AgentTaskContext(message, message, "", 0, false, false, List.of(), confidence, source, "chat", "", "");
+        return new AgentTaskContext(message, message, "", 0, false, false, List.of(), confidence, source, "chat", "", "", "new_task", AgentTaskMemoryAccess.none("普通聊天不读取任务记忆。"));
     }
 
     static AgentTaskContext agent(
@@ -413,7 +513,29 @@ record AgentTaskContext(
             String targetSongId,
             String targetSongTitle
     ) {
-        return new AgentTaskContext(message, effectiveRequest, searchKeyword, searchLimit, true, followUp, List.copyOf(avoidSongTitles), confidence, source, taskType, targetSongId, targetSongTitle);
+        String contextMode = followUp ? "follow_up" : "new_task";
+        AgentTaskMemoryAccess memoryAccess = followUp
+                ? new AgentTaskMemoryAccess(true, true, true, true, "兼容旧调用：上下文延续任务读取上一轮任务记忆。")
+                : AgentTaskMemoryAccess.none("兼容旧调用：新任务不读取上一轮任务记忆。");
+        return agent(message, effectiveRequest, searchKeyword, searchLimit, followUp, avoidSongTitles, confidence, source, taskType, targetSongId, targetSongTitle, contextMode, memoryAccess);
+    }
+
+    static AgentTaskContext agent(
+            String message,
+            String effectiveRequest,
+            String searchKeyword,
+            int searchLimit,
+            boolean followUp,
+            List<String> avoidSongTitles,
+            double confidence,
+            String source,
+            String taskType,
+            String targetSongId,
+            String targetSongTitle,
+            String contextMode,
+            AgentTaskMemoryAccess memoryAccess
+    ) {
+        return new AgentTaskContext(message, effectiveRequest, searchKeyword, searchLimit, true, followUp, List.copyOf(avoidSongTitles), confidence, source, taskType, targetSongId, targetSongTitle, contextMode, memoryAccess == null ? AgentTaskMemoryAccess.none("未授权任务记忆。") : memoryAccess);
     }
 
     boolean searchPreludeAllowed() {
@@ -455,6 +577,8 @@ record AgentTaskContext(
                 本轮搜索数量提示是：%s
                 本轮目标歌曲 ID 是：%s
                 本轮目标歌曲名是：%s
+                本轮上下文模式是：%s
+                本轮任务记忆权限是：%s
                 本轮需要避免重复这些歌曲：%s
                 请按这个完整请求重新执行，不要只根据历史回答声称已经完成。
                 评论、歌词、背景、详情类任务应优先使用目标歌曲 ID 调用对应工具，不要改成搜索关键词。
@@ -468,7 +592,33 @@ record AgentTaskContext(
                 searchLimit <= 0 ? "未指定" : String.valueOf(searchLimit),
                 targetSongId.isBlank() ? "未指定" : targetSongId,
                 targetSongTitle.isBlank() ? "未指定" : targetSongTitle,
+                contextMode,
+                memoryAccess == null ? "无" : memoryAccess.summary(),
                 avoidSongTitles.isEmpty() ? "无" : String.join("、", avoidSongTitles)
         );
+    }
+}
+
+record AgentTaskMemoryAccess(
+        boolean useLastSearchKeyword,
+        boolean useLastResultSongs,
+        boolean useAvoidTitles,
+        boolean useToolFailures,
+        String reason
+) {
+    static AgentTaskMemoryAccess none(String reason) {
+        return new AgentTaskMemoryAccess(false, false, false, false, reason);
+    }
+
+    boolean none() {
+        return !useLastSearchKeyword && !useLastResultSongs && !useAvoidTitles && !useToolFailures;
+    }
+
+    String summary() {
+        return "useLastSearchKeyword=" + useLastSearchKeyword
+                + ", useLastResultSongs=" + useLastResultSongs
+                + ", useAvoidTitles=" + useAvoidTitles
+                + ", useToolFailures=" + useToolFailures
+                + ", reason=" + reason;
     }
 }

@@ -66,6 +66,22 @@ class AgentToolPlannerTest {
     }
 
     @Test
+    void preservesSceneKeywordSearchCalls() {
+        AgentToolPlan plan = planner.parsePlan("""
+                {
+                  "toolCalls": [
+                    {"toolName": "search_songs", "arguments": {"keyword": "深夜写代码", "limit": 5}}
+                  ],
+                  "confidence": 0.91
+                }
+                """).orElseThrow();
+
+        assertEquals(1, plan.toolCalls().size());
+        assertEquals("深夜写代码", plan.toolCalls().getFirst().arguments().get("keyword"));
+        assertEquals(5, plan.toolCalls().getFirst().arguments().get("limit"));
+    }
+
+    @Test
     void parsesAllRegisteredReadOnlyMusicTools() {
         AgentToolPlan plan = planner.parsePlan("""
                 {

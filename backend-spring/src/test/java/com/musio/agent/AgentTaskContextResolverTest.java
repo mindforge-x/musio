@@ -94,6 +94,23 @@ class AgentTaskContextResolverTest {
     }
 
     @Test
+    void treatsSelfDirectedRecommendationAsNewTask() {
+        AgentTaskContext context = resolver.parseModelResponse("你自己推荐5首给我", """
+                {"mode":"agent","taskType":"recommend","contextMode":"new_task","followUp":false,"memoryAccess":{"useLastSearchKeyword":true,"useLastResultSongs":true,"useAvoidTitles":true,"useToolFailures":true,"reason":"模型错误地想读取旧任务"},"effectiveRequest":"你自己推荐5首给我","searchKeyword":"","searchLimit":5,"avoidSongTitles":[],"confidence":0.91}
+                """).orElseThrow();
+
+        assertEquals("你自己推荐5首给我", context.planningMessage());
+        assertEquals("recommend", context.taskType());
+        assertEquals("", context.searchKeyword());
+        assertEquals(5, context.searchLimit());
+        assertEquals(List.of(), context.avoidSongTitles());
+        assertFalse(context.followUp());
+        assertEquals("new_task", context.contextMode());
+        assertTrue(context.memoryAccess().none());
+        assertTrue(context.agentTask());
+    }
+
+    @Test
     void fallsBackToDirectWhenThereIsNoHistory() {
         AgentTaskContext context = resolver.resolve(null, "再试试", List.of(), AgentTaskMemory.empty("local"));
 
@@ -150,5 +167,70 @@ class AgentTaskContextResolverTest {
         String preview = resolver.taskMemoryPreview(memory);
 
         assertTrue(preview.contains("lastResultSongRefs: Always Online | 林俊杰 | id=qqmusic:001ABC"));
+    }
+
+    @Test
+    void hidesTaskMemoryFromPlannerForNewRecommendation() {
+        AgentTaskMemory memory = new AgentTaskMemory(
+                "local",
+                "music-agent-task",
+                "给我推荐 5 首适合深夜写代码听的歌",
+                "深夜写代码",
+                5,
+                List.of(),
+                List.of("信封", "程序员生活"),
+                List.of("信封", "程序员生活"),
+                List.of(),
+                java.time.Instant.now()
+        );
+        AgentTaskContext context = AgentTaskContext.agent(
+                "你自己推荐5首给我",
+                "你自己推荐5首给我",
+                "",
+                5,
+                false,
+                List.of(),
+                0.9,
+                "test",
+                "recommend",
+                "",
+                ""
+        );
+
+        assertEquals("无", resolver.plannerTaskMemoryPreview(context, memory));
+    }
+
+    @Test
+    void keepsTaskMemoryForFollowUpPlannerContext() {
+        AgentTaskMemory memory = new AgentTaskMemory(
+                "local",
+                "music-agent-task",
+                "给我推荐 5 首适合深夜写代码听的歌",
+                "深夜写代码",
+                5,
+                List.of(),
+                List.of("信封", "程序员生活"),
+                List.of("信封", "程序员生活"),
+                List.of(),
+                java.time.Instant.now()
+        );
+        AgentTaskContext context = AgentTaskContext.agent(
+                "再试试",
+                "给我推荐 5 首适合深夜写代码听的歌",
+                "深夜写代码",
+                5,
+                true,
+                List.of("信封", "程序员生活"),
+                0.9,
+                "test",
+                "recommend",
+                "",
+                ""
+        );
+
+        String preview = resolver.plannerTaskMemoryPreview(context, memory);
+
+        assertTrue(preview.contains("lastSearchKeyword: 深夜写代码"));
+        assertTrue(preview.contains("avoidSongTitles: 信封、程序员生活"));
     }
 }
