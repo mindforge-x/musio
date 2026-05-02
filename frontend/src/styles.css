@@ -1014,6 +1014,11 @@ textarea {
   justify-content: flex-end;
 }
 
+.chat-message.loading {
+  align-items: center;
+  min-height: 52px;
+}
+
 .chat-avatar {
   width: 42px;
   height: 42px;
@@ -1026,6 +1031,10 @@ textarea {
   border-color: rgba(255, 255, 255, 0.24);
   background: rgba(72, 216, 143, 0.16);
   color: var(--text-display);
+}
+
+.chat-message.loading .chat-avatar {
+  margin-top: 0;
 }
 
 .chat-bubble {
@@ -1045,7 +1054,7 @@ textarea {
   border-radius: 16px 16px 6px 16px;
 }
 
-.chat-bubble span {
+.chat-bubble > span {
   color: var(--text-secondary);
   font-family: var(--font-data);
   font-size: 11px;
@@ -1053,7 +1062,7 @@ textarea {
   text-transform: uppercase;
 }
 
-.chat-message.user .chat-bubble span {
+.chat-message.user .chat-bubble > span {
   color: #48d88f;
 }
 
@@ -1061,6 +1070,48 @@ textarea {
   line-height: 1.58;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.musio-wave-loader {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-display);
+  font-family: var(--font-data);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.chat-message.loading .musio-wave-loader {
+  min-height: 32px;
+}
+
+.musio-wave-loader span {
+  color: inherit;
+  font: inherit;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  animation: musio-letter-wave 920ms cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  animation-delay: calc(var(--letter-index, 0) * 90ms);
+  will-change: transform, opacity;
+}
+
+@keyframes musio-letter-wave {
+  0%,
+  100% {
+    opacity: 0.44;
+    transform: translateY(0);
+  }
+  38% {
+    opacity: 1;
+    transform: translateY(-7px);
+  }
+  62% {
+    opacity: 0.68;
+    transform: translateY(2px);
+  }
 }
 
 .markdown-content {
@@ -1107,6 +1158,217 @@ textarea {
   transform: translateY(-50%);
 }
 
+.trace-steps {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.trace-title {
+  color: var(--text-secondary);
+  font-family: var(--font-data);
+  font-size: 11px;
+  line-height: 1.3;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.trace-steps.completed {
+  gap: 0;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+}
+
+.trace-toggle {
+  width: 100%;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.trace-toggle:hover {
+  color: var(--text-primary);
+}
+
+.trace-toggle span {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.trace-toggle small {
+  color: var(--text-muted);
+  font-family: var(--font-data);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.trace-history {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.trace-step {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  opacity: 0;
+  animation: trace-step-enter 180ms ease-out forwards;
+  animation-delay: calc(var(--trace-index, 0) * 120ms);
+}
+
+.trace-step-status {
+  color: var(--text-secondary);
+  font-family: var(--font-data);
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.trace-step.done .trace-step-status {
+  color: var(--success);
+}
+
+.trace-step.running .trace-step-status {
+  color: var(--interactive);
+}
+
+.trace-step.error .trace-step-status {
+  color: var(--accent);
+}
+
+.trace-step strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  overflow: hidden;
+  animation: trace-copy-reveal 520ms steps(18, end) both;
+  animation-delay: calc(var(--trace-index, 0) * 120ms + 80ms);
+}
+
+.trace-step p {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow: hidden;
+  animation: trace-copy-reveal 620ms steps(22, end) both;
+  animation-delay: calc(var(--trace-index, 0) * 120ms + 180ms);
+}
+
+@keyframes trace-step-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes trace-copy-reveal {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.chat-song-card-list {
+  display: grid;
+  gap: 8px;
+}
+
+.chat-song-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.chat-song-cover {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(72, 216, 143, 0.14);
+  color: var(--text-display);
+  font-family: var(--font-data);
+  font-size: 13px;
+}
+
+.chat-song-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chat-song-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.chat-song-main strong,
+.chat-song-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-song-main strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.chat-song-main span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.chat-song-card button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+}
+
+.chat-song-card button:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-display);
+}
+
 .chat-bubble small {
   color: var(--text-secondary);
   font-family: var(--font-data);
@@ -1121,6 +1383,12 @@ textarea {
 
 .chat-message.error .chat-bubble {
   border-color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .musio-wave-loader span {
+    animation: none;
+  }
 }
 
 textarea:focus,

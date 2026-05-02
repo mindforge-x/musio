@@ -1,0 +1,474 @@
+package com.musio.agent;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.ai.SpringAiChatModelFactory;
+import com.musio.agent.trace.AgentTracePublisher;
+import com.musio.config.MusioConfig;
+import com.musio.model.AgentTaskMemory;
+import com.musio.model.AgentToolFailure;
+import com.musio.model.Song;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Optional;
+
+@Component
+public class AgentTaskContextResolver {
+    private static final Logger log = LoggerFactory.getLogger(AgentTaskContextResolver.class);
+    private static final int RECENT_HISTORY_LIMIT = 8;
+    private static final int MESSAGE_PREVIEW_LIMIT = 500;
+    private static final double MIN_CONFIDENCE = 0.55;
+
+    private final SpringAiChatModelFactory chatModelFactory;
+    private final ObjectMapper objectMapper;
+    private final AgentTracePublisher tracePublisher;
+
+    public AgentTaskContextResolver(
+            SpringAiChatModelFactory chatModelFactory,
+            ObjectMapper objectMapper,
+            AgentTracePublisher tracePublisher
+    ) {
+        this.chatModelFactory = chatModelFactory;
+        this.objectMapper = objectMapper;
+        this.tracePublisher = tracePublisher;
+    }
+
+    public AgentTaskContext resolve(
+            MusioConfig.Ai ai,
+            String userMessage,
+            List<ConversationHistoryMessage> history,
+            AgentTaskMemory taskMemory
+    ) {
+        return resolveWithModel(ai, userMessage, history == null ? List.of() : history, taskMemory)
+                .orElseGet(() -> fallbackContext(userMessage));
+    }
+
+    Optional<AgentTaskContext> parseModelResponse(String userMessage, String content) {
+        if (content == null || content.isBlank()) {
+            return Optional.empty();
+        }
+        String json = extractJsonObject(content.strip());
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            double confidence = root.path("confidence").asDouble(0.0);
+            if (confidence < MIN_CONFIDENCE) {
+                return Optional.empty();
+            }
+
+            String mode = text(root, "mode");
+            String taskType = cleanTaskType(text(root, "taskType"), text(root, "effectiveRequest"), text(root, "searchKeyword"));
+            String effectiveRequest = text(root, "effectiveRequest");
+            String searchKeyword = text(root, "searchKeyword");
+            String targetSongId = text(root, "targetSongId");
+            String targetSongTitle = text(root, "targetSongTitle");
+            int searchLimit = cleanSearchLimit(root.path("searchLimit").asInt(0));
+            List<String> avoidSongTitles = textArray(root.path("avoidSongTitles"));
+            boolean followUp = root.path("followUp").asBoolean(false);
+            if (!"agent".equals(mode)) {
+                return Optional.of(AgentTaskContext.direct(userMessage, confidence, "model"));
+            }
+            if (effectiveRequest.isBlank() || !tracePublisher.shouldTraceUserMessage(effectiveRequest)) {
+                return Optional.empty();
+            }
+            return Optional.of(AgentTaskContext.agent(
+                    userMessage,
+                    effectiveRequest,
+                    cleanSearchKeyword(searchKeyword, avoidSongTitles),
+                    searchLimit,
+                    followUp,
+                    avoidSongTitles,
+                    confidence,
+                    "model",
+                    taskType,
+                    targetSongId,
+                    targetSongTitle
+            ));
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
+    private Optional<AgentTaskContext> resolveWithModel(
+            MusioConfig.Ai ai,
+            String userMessage,
+            List<ConversationHistoryMessage> history,
+            AgentTaskMemory taskMemory
+    ) {
+        if (chatModelFactory == null) {
+            return Optional.empty();
+        }
+        Prompt prompt = new Prompt(List.of(
+                new SystemMessage(routerInstruction()),
+                new UserMessage("""
+                        当前任务记忆：
+                        %s
+
+                        最近对话：
+                        %s
+
+                        当前用户输入：
+                        %s
+                        """.formatted(taskMemoryPreview(taskMemory), historyPreview(history), userMessage))
+        ));
+        try {
+            String content = chatModelFactory.chatClient(ai)
+                    .prompt(prompt)
+                    .call()
+                    .content();
+            return parseModelResponse(userMessage, content);
+        } catch (Exception e) {
+            log.warn("Agent task context resolution failed", e);
+            return Optional.empty();
+        }
+    }
+
+    private AgentTaskContext fallbackContext(String userMessage) {
+        if (tracePublisher != null && tracePublisher.shouldTraceUserMessage(userMessage)) {
+            String taskType = cleanTaskType("", userMessage, "");
+            return AgentTaskContext.agent(
+                    userMessage,
+                    userMessage,
+                    "",
+                    0,
+                    false,
+                    List.of(),
+                    0.60,
+                    "heuristic",
+                    taskType,
+                    "",
+                    ""
+            );
+        }
+        return AgentTaskContext.direct(userMessage);
+    }
+
+    private String routerInstruction() {
+        return """
+                你是 Musio 的对话轮次解析器。只输出 JSON 对象，不要 markdown，不要解释。
+                你的任务是判断当前用户输入是否应该作为普通聊天处理，还是作为音乐 Agent 任务处理。
+
+                输出格式：
+                {"mode":"chat|agent","taskType":"chat|search|recommend|comments|lyrics|detail|playlist|profile|playback|unknown","followUp":true|false,"effectiveRequest":"用于本轮规划的完整用户请求","searchKeyword":"正向搜索关键词","searchLimit":数量,"targetSongId":"目标歌曲 provider-prefixed id","targetSongTitle":"目标歌曲名","avoidSongTitles":["需要排除的歌名"],"confidence":0.0到1.0}
+
+                规则：
+                - 普通寒暄、感谢、确认、情绪表达属于 chat。
+                - 搜索歌曲、推荐歌曲、歌词、评论、歌单、歌手、专辑、播放相关请求属于 agent。
+                - taskType 必须反映本轮最需要调用的音乐能力：搜索是 search，推荐是 recommend，热门评论/感人评论是 comments，歌词是 lyrics，歌曲详情/背景/故事/介绍是 detail，歌单是 playlist，音乐画像是 profile，播放控制是 playback。
+                - 如果当前输入依赖最近对话上下文，请把它改写成一条完整、可独立执行的音乐请求，放入 effectiveRequest。
+                - 当前任务记忆比最近对话文本更可靠；处理延续请求时优先参考 currentTask、lastSearchKeyword、lastResultSongTitles、lastToolFailures。
+                - 如果用户问“上一首歌/这首歌”的歌词、评论、背景、故事或详情，并且当前任务记忆里有 lastResultSongRefs，请把对应 provider-prefixed song id 填入 targetSongId，把歌名填入 targetSongTitle；searchKeyword 留空。
+                - 评论、歌词、背景、详情类任务不要把“背景故事”“评论”“歌词”等需求词拼进 searchKeyword；这些词代表要调用的能力，不是歌曲搜索关键词。
+                - 如果用户表达替代、排除已返回结果、或继续寻找不同结果的意图，avoidSongTitles 填入最近结果里本轮应排除的歌曲名。
+                - 对搜索类任务，searchKeyword 只写正向搜索目标，例如歌手、歌曲名或风格，不要包含 avoidSongTitles 中的歌名，也不要包含排除/比较关系。
+                - 对搜索类任务，如果用户明确要求数量，searchLimit 填入该数量；没有明确数量时填 0。
+                - 对搜索类上下文延续，effectiveRequest 应包含可直接执行的搜索目标和数量，不要只写模糊指代。
+                - 如果当前输入是全新的音乐请求，effectiveRequest 保持当前请求含义。
+                - 如果不能确定，不要猜，输出 chat 且 confidence 低于 0.55。
+                - 不要输出 chain-of-thought。
+                """;
+    }
+
+    String taskMemoryPreview(AgentTaskMemory memory) {
+        if (isBlankTaskMemory(memory)) {
+            return "无";
+        }
+        StringBuilder builder = new StringBuilder();
+        appendLine(builder, "currentTask", memory.currentTask());
+        appendLine(builder, "lastEffectiveRequest", memory.lastEffectiveRequest());
+        appendLine(builder, "lastSearchKeyword", memory.lastSearchKeyword());
+        if (memory.lastSearchLimit() != null && memory.lastSearchLimit() > 0) {
+            appendLine(builder, "lastSearchLimit", String.valueOf(memory.lastSearchLimit()));
+        }
+        if (memory.lastResultSongs() != null && !memory.lastResultSongs().isEmpty()) {
+            appendLine(builder, "lastResultSongRefs", memory.lastResultSongs().stream()
+                    .limit(5)
+                    .map(this::songRef)
+                    .filter(ref -> !ref.isBlank())
+                    .reduce((left, right) -> left + "；" + right)
+                    .orElse(""));
+        }
+        if (memory.lastResultSongTitles() != null && !memory.lastResultSongTitles().isEmpty()) {
+            appendLine(builder, "lastResultSongTitles", String.join("、", memory.lastResultSongTitles().stream().limit(10).toList()));
+        } else if (memory.lastResultSongs() != null && !memory.lastResultSongs().isEmpty()) {
+            appendLine(builder, "lastResultSongTitles", memory.lastResultSongs().stream()
+                    .map(Song::title)
+                    .filter(title -> title != null && !title.isBlank())
+                    .distinct()
+                    .limit(10)
+                    .reduce((left, right) -> left + "、" + right)
+                    .orElse(""));
+        }
+        if (memory.avoidSongTitles() != null && !memory.avoidSongTitles().isEmpty()) {
+            appendLine(builder, "avoidSongTitles", String.join("、", memory.avoidSongTitles()));
+        }
+        if (memory.lastToolFailures() != null && !memory.lastToolFailures().isEmpty()) {
+            appendLine(builder, "lastToolFailures", memory.lastToolFailures().stream()
+                    .limit(3)
+                    .map(this::failureSummary)
+                    .reduce((left, right) -> left + "；" + right)
+                    .orElse(""));
+        }
+        return builder.toString().strip();
+    }
+
+    private String songRef(Song song) {
+        if (song == null) {
+            return "";
+        }
+        String title = isBlank(song.title()) ? "未知歌曲" : song.title();
+        String artists = song.artists() == null || song.artists().isEmpty() ? "未知歌手" : String.join("/", song.artists());
+        String id = isBlank(song.id()) ? "无 id" : song.id();
+        return title + " | " + artists + " | id=" + id;
+    }
+
+    private boolean isBlankTaskMemory(AgentTaskMemory memory) {
+        if (memory == null) {
+            return true;
+        }
+        return isBlank(memory.currentTask())
+                && isBlank(memory.lastEffectiveRequest())
+                && isBlank(memory.lastSearchKeyword())
+                && (memory.lastResultSongTitles() == null || memory.lastResultSongTitles().isEmpty())
+                && (memory.lastResultSongs() == null || memory.lastResultSongs().isEmpty())
+                && (memory.lastToolFailures() == null || memory.lastToolFailures().isEmpty());
+    }
+
+    private void appendLine(StringBuilder builder, String key, String value) {
+        if (!isBlank(value)) {
+            builder.append(key).append(": ").append(truncate(value)).append('\n');
+        }
+    }
+
+    private String failureSummary(AgentToolFailure failure) {
+        if (failure == null) {
+            return "";
+        }
+        return failure.toolName() + ": " + truncate(failure.message());
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private String historyPreview(List<ConversationHistoryMessage> history) {
+        int start = Math.max(0, history.size() - RECENT_HISTORY_LIMIT);
+        StringBuilder builder = new StringBuilder();
+        for (ConversationHistoryMessage message : history.subList(start, history.size())) {
+            builder.append(message.role())
+                    .append(": ")
+                    .append(truncate(message.content()))
+                    .append('\n');
+        }
+        return builder.toString().strip();
+    }
+
+    private String truncate(String value) {
+        if (value == null) {
+            return "";
+        }
+        String stripped = value.strip().replaceAll("\\s+", " ");
+        if (stripped.length() <= MESSAGE_PREVIEW_LIMIT) {
+            return stripped;
+        }
+        return stripped.substring(0, MESSAGE_PREVIEW_LIMIT) + "...";
+    }
+
+    private String extractJsonObject(String value) {
+        int start = value.indexOf('{');
+        int end = value.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+            return value.substring(start, end + 1);
+        }
+        return value;
+    }
+
+    private String text(JsonNode node, String field) {
+        JsonNode value = node.path(field);
+        return value.isTextual() ? value.asText().strip() : "";
+    }
+
+    private String cleanSearchKeyword(String keyword, List<String> avoidSongTitles) {
+        if (keyword == null || keyword.isBlank()) {
+            return "";
+        }
+        String cleaned = keyword.strip();
+        for (String title : avoidSongTitles) {
+            if (title != null && !title.isBlank() && containsNormalized(cleaned, title)) {
+                return "";
+            }
+        }
+        return cleaned.length() > 40 ? cleaned.substring(0, 40) : cleaned;
+    }
+
+    private boolean containsNormalized(String value, String candidate) {
+        String normalizedValue = normalizeComparable(value);
+        String normalizedCandidate = normalizeComparable(candidate);
+        return !normalizedCandidate.isBlank() && normalizedValue.contains(normalizedCandidate);
+    }
+
+    private int cleanSearchLimit(int value) {
+        if (value <= 0) {
+            return 0;
+        }
+        return Math.max(1, Math.min(20, value));
+    }
+
+    private String cleanTaskType(String taskType, String effectiveRequest, String searchKeyword) {
+        String normalized = taskType == null ? "" : taskType.strip().toLowerCase(java.util.Locale.ROOT);
+        if (List.of("chat", "search", "recommend", "comments", "lyrics", "detail", "playlist", "profile", "playback", "unknown").contains(normalized)) {
+            return normalized;
+        }
+        String request = normalizeComparable(effectiveRequest);
+        if (request.contains("评论")) {
+            return "comments";
+        }
+        if (request.contains("歌词")) {
+            return "lyrics";
+        }
+        if (request.contains("背景") || request.contains("故事") || request.contains("详情") || request.contains("介绍")) {
+            return "detail";
+        }
+        if (request.contains("歌单")) {
+            return "playlist";
+        }
+        if (request.contains("画像") || request.contains("音乐基因") || request.contains("偏好")) {
+            return "profile";
+        }
+        if (request.contains("播放")) {
+            return "playback";
+        }
+        if (request.contains("推荐")) {
+            return "recommend";
+        }
+        if (!isBlank(searchKeyword) || request.contains("搜索") || request.contains("找")) {
+            return "search";
+        }
+        return "unknown";
+    }
+
+    private String normalizeComparable(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[《》<>\\[\\]【】()（）\\s]+", "")
+                .strip();
+    }
+
+    private List<String> textArray(JsonNode node) {
+        if (!node.isArray()) {
+            return List.of();
+        }
+        List<String> values = new java.util.ArrayList<>();
+        for (JsonNode item : node) {
+            if (item.isTextual() && !item.asText().isBlank()) {
+                values.add(item.asText().strip());
+            }
+        }
+        return values.stream()
+                .distinct()
+                .limit(20)
+                .toList();
+    }
+}
+
+record AgentTaskContext(
+        String originalMessage,
+        String planningMessage,
+        String searchKeyword,
+        int searchLimit,
+        boolean agentTask,
+        boolean followUp,
+        List<String> avoidSongTitles,
+        double confidence,
+        String source,
+        String taskType,
+        String targetSongId,
+        String targetSongTitle
+) {
+    static AgentTaskContext direct(String message) {
+        return direct(message, 1.0, "direct");
+    }
+
+    static AgentTaskContext direct(String message, double confidence, String source) {
+        return new AgentTaskContext(message, message, "", 0, false, false, List.of(), confidence, source, "chat", "", "");
+    }
+
+    static AgentTaskContext agent(
+            String message,
+            String effectiveRequest,
+            String searchKeyword,
+            int searchLimit,
+            boolean followUp,
+            List<String> avoidSongTitles,
+            double confidence,
+            String source,
+            String taskType,
+            String targetSongId,
+            String targetSongTitle
+    ) {
+        return new AgentTaskContext(message, effectiveRequest, searchKeyword, searchLimit, true, followUp, List.copyOf(avoidSongTitles), confidence, source, taskType, targetSongId, targetSongTitle);
+    }
+
+    boolean searchPreludeAllowed() {
+        return "search".equals(taskType);
+    }
+
+    boolean recommendationPreludeAllowed() {
+        return "recommend".equals(taskType);
+    }
+
+    boolean toolEvidenceExpected() {
+        return "search".equals(taskType)
+                || "recommend".equals(taskType)
+                || "comments".equals(taskType)
+                || "lyrics".equals(taskType)
+                || "detail".equals(taskType)
+                || "playlist".equals(taskType)
+                || "profile".equals(taskType);
+    }
+
+    boolean preservePreviousSongContext() {
+        return "comments".equals(taskType)
+                || "lyrics".equals(taskType)
+                || "detail".equals(taskType)
+                || "playback".equals(taskType);
+    }
+
+    String promptContext() {
+        if (!agentTask) {
+            return "";
+        }
+        return """
+
+                本轮用户的原话是：%s
+                对话轮次解析器判断这是一条%s。
+                本轮任务类型是：%s
+                本轮用于规划和工具调用的完整请求是：%s
+                本轮正向搜索关键词是：%s
+                本轮搜索数量提示是：%s
+                本轮目标歌曲 ID 是：%s
+                本轮目标歌曲名是：%s
+                本轮需要避免重复这些歌曲：%s
+                请按这个完整请求重新执行，不要只根据历史回答声称已经完成。
+                评论、歌词、背景、详情类任务应优先使用目标歌曲 ID 调用对应工具，不要改成搜索关键词。
+                如果系统消息提供了新的搜索结果或候选结果，最终回答必须基于这些新的真实结果。
+                """.formatted(
+                originalMessage,
+                followUp ? "上下文延续请求" : "音乐任务请求",
+                taskType,
+                planningMessage,
+                searchKeyword.isBlank() ? "未指定" : searchKeyword,
+                searchLimit <= 0 ? "未指定" : String.valueOf(searchLimit),
+                targetSongId.isBlank() ? "未指定" : targetSongId,
+                targetSongTitle.isBlank() ? "未指定" : targetSongTitle,
+                avoidSongTitles.isEmpty() ? "无" : String.join("、", avoidSongTitles)
+        );
+    }
+}

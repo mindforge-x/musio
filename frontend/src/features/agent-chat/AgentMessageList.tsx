@@ -1,12 +1,15 @@
-import { useEffect, useRef } from "react";
-import { ChatMessage } from "./chatTypes";
+import { CSSProperties, useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, Play } from "lucide-react";
+import { Song } from "../../shared/types";
+import { ChatMessage, TraceStep } from "./chatTypes";
 import { MarkdownContent } from "./MarkdownContent";
 
 type AgentMessageListProps = {
   messages: ChatMessage[];
+  onPlaySong: (song: Song) => void;
 };
 
-export function AgentMessageList({ messages }: AgentMessageListProps) {
+export function AgentMessageList({ messages, onPlaySong }: AgentMessageListProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -23,22 +26,164 @@ export function AgentMessageList({ messages }: AgentMessageListProps) {
 
   return (
     <div ref={listRef} className="chat-message-list" aria-live="polite">
-      {messages.map((message) => (
-        <article key={message.id} className={`chat-message ${message.role} ${message.state}`}>
-          {message.role === "agent" ? <div className="chat-avatar">M</div> : null}
-          <div className="chat-bubble">
-            <span>{message.role === "agent" ? "MUSIO" : "YOU"}</span>
-            {message.role === "agent" ? (
-              <MarkdownContent text={message.content || (message.state === "streaming" ? "正在听你说完，也在认真想..." : "")} />
-            ) : (
-              <p>{message.content}</p>
-            )}
-            {message.state === "streaming" ? <small>正在回复</small> : null}
-            {message.state === "error" ? <small>回复中断</small> : null}
+      {messages.map((message) => {
+        const initialAgentLoading = isInitialAgentLoading(message);
+        const answerStreaming = message.state === "streaming" && message.content.trim().length > 0;
+
+        if (initialAgentLoading) {
+          return (
+            <article key={message.id} className={`chat-message ${message.role} ${message.state} loading`}>
+              <div className="chat-avatar">M</div>
+              <MusioWaveLoading />
+            </article>
+          );
+        }
+
+        return (
+          <article key={message.id} className={`chat-message ${message.role} ${message.state}`}>
+            {message.role === "agent" ? <div className="chat-avatar">M</div> : null}
+            <div className="chat-bubble">
+              <span>{message.role === "agent" ? "MUSIO" : "YOU"}</span>
+              {message.role === "agent" ? (
+                <>
+                  <TraceSteps steps={message.traceSteps} state={message.state} />
+                  {message.content.trim() ? <MarkdownContent text={message.content} /> : null}
+                  <InlineSongCards songs={message.state === "done" ? message.songs : undefined} onPlaySong={onPlaySong} />
+                </>
+              ) : (
+                <p>{message.content}</p>
+              )}
+              {answerStreaming ? <small>正在回复</small> : null}
+              {message.state === "error" ? <small>回复中断</small> : null}
+            </div>
+            {message.role === "user" ? <div className="chat-avatar user">Y</div> : null}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function MusioWaveLoading() {
+  return (
+    <div className="musio-wave-loader" role="status" aria-label="Musio 正在准备回答">
+      {"MUSIO".split("").map((letter, index) => (
+        <span key={letter} style={{ "--letter-index": index } as CSSProperties}>
+          {letter}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function isInitialAgentLoading(message: ChatMessage) {
+  if (message.role !== "agent" || message.state !== "streaming" || message.content.trim().length > 0) {
+    return false;
+  }
+  const visibleTraceSteps = message.traceSteps?.filter((step) => step.visibility === "user") ?? [];
+  return visibleTraceSteps.length === 0 && !message.songs?.length;
+}
+
+function InlineSongCards({ songs, onPlaySong }: { songs?: Song[]; onPlaySong: (song: Song) => void }) {
+  if (!songs?.length) {
+    return null;
+  }
+
+  return (
+    <div className="chat-song-card-list" aria-label="Musio 推荐歌曲">
+      {songs.map((song) => (
+        <article key={song.id} className="chat-song-card">
+          <div className="chat-song-cover">
+            {song.artworkUrl ? <img src={song.artworkUrl} alt="" /> : <span>{song.title?.slice(0, 1) || "M"}</span>}
           </div>
-          {message.role === "user" ? <div className="chat-avatar user">Y</div> : null}
+          <div className="chat-song-main">
+            <strong>{song.title || song.id}</strong>
+            <span>{song.artists?.join(", ") || song.provider || "QQ 音乐"}</span>
+          </div>
+          <button type="button" aria-label={`播放 ${song.title || song.id}`} onClick={() => onPlaySong(song)}>
+            <Play size={15} />
+          </button>
         </article>
       ))}
     </div>
   );
+}
+
+function TraceSteps({ steps, state }: { steps?: TraceStep[]; state: ChatMessage["state"] }) {
+  const visibleSteps = steps?.filter((step) => step.visibility === "user") ?? [];
+  if (visibleSteps.length === 0) {
+    return null;
+  }
+
+  if (state === "done") {
+    return <CompletedTraceSteps steps={visibleSteps} />;
+  }
+
+  const currentStep = currentTraceStep(visibleSteps);
+  return (
+    <div className="trace-steps" aria-label="Musio 当前执行过程">
+      <p className="trace-title">{state === "error" ? "Musio 处理遇到问题" : "Musio 正在处理"}</p>
+      <TraceStepRow step={currentStep} index={0} />
+    </div>
+  );
+}
+
+function CompletedTraceSteps({ steps }: { steps: TraceStep[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const toolSteps = steps.filter((step) => step.stage === "tool");
+
+  return (
+    <div className={`trace-steps completed ${expanded ? "expanded" : ""}`} aria-label="Musio 执行过程">
+      <button type="button" className="trace-toggle" onClick={() => setExpanded((value) => !value)}>
+        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <span>{expanded ? "收起执行过程" : "查看执行过程"}</span>
+        <small>{toolSteps.length > 0 ? `${steps.length} 步 · ${toolSteps.length} 个工具` : `${steps.length} 步`}</small>
+      </button>
+      {expanded ? (
+        <div className="trace-history">
+          {steps.map((step, index) => (
+            <TraceStepRow key={step.stepId} step={step} index={index} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function TraceStepRow({ step, index }: { step: TraceStep; index: number }) {
+  return (
+    <div
+      className={`trace-step ${step.status}`}
+      style={{ "--trace-index": index } as CSSProperties}
+    >
+      <span className="trace-step-status">{traceStatusLabel(step.status)}</span>
+      <div>
+        <strong>{step.title}</strong>
+        {step.summary ? <p>{step.summary}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function currentTraceStep(steps: TraceStep[]) {
+  const reversed = [...steps].reverse();
+  return reversed.find((step) => step.status === "error")
+    ?? reversed.find((step) => step.status === "running")
+    ?? reversed.find((step) => step.status === "pending")
+    ?? reversed[0];
+}
+
+function traceStatusLabel(status: TraceStep["status"]) {
+  switch (status) {
+    case "done":
+      return "完成";
+    case "running":
+      return "进行中";
+    case "error":
+      return "失败";
+    case "skipped":
+      return "跳过";
+    default:
+      return "等待";
+  }
 }

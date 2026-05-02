@@ -142,7 +142,7 @@ export function AppRouter() {
                 disabledReason={musicOperationDisabledReason}
                 onBusyChange={setBusy}
                 onEvent={addEvent}
-                onSongs={setSongs}
+                onPlaySong={playSong}
               />
               <div className="agent-side-stack">
                 <SongCards

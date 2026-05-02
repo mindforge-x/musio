@@ -1,11 +1,13 @@
 import { api } from "../../shared/api";
 import { AgentEvent, Song } from "../../shared/types";
+import { TraceStep, TraceStepStage, TraceStepStatus, TraceStepVisibility } from "./chatTypes";
 
 type AgentRunHandlers = {
   onMessageDelta: (detail: string, runId?: string) => void;
+  onTraceStep: (step: TraceStep) => void;
   onToolStart: (detail: string) => void;
   onToolResult: (detail: string) => void;
-  onSongCards: (songs: Song[]) => void;
+  onSongCards: (songs: Song[], runId?: string) => void;
   onError: (detail: string) => void;
   onDone: () => void;
 };
@@ -26,6 +28,12 @@ function openRunEvents(runId: string, handlers: AgentRunHandlers): EventSource {
     const eventRunId = typeof agentEvent?.data?.runId === "string" ? agentEvent.data.runId : runId;
     handlers.onMessageDelta(text, eventRunId);
   });
+  source.addEventListener("trace_step", (event) => {
+    const traceStep = parseTraceStep(parseAgentEvent((event as MessageEvent).data), runId);
+    if (traceStep) {
+      handlers.onTraceStep(traceStep);
+    }
+  });
   source.addEventListener("tool_start", (event) => {
     handlers.onToolStart(formatToolEvent(parseAgentEvent((event as MessageEvent).data)));
   });
@@ -35,7 +43,8 @@ function openRunEvents(runId: string, handlers: AgentRunHandlers): EventSource {
   source.addEventListener("song_cards", (event) => {
     const agentEvent = parseAgentEvent((event as MessageEvent).data);
     const songs = Array.isArray(agentEvent?.data?.songs) ? (agentEvent.data.songs as Song[]) : [];
-    handlers.onSongCards(songs);
+    const eventRunId = typeof agentEvent?.data?.runId === "string" ? agentEvent.data.runId : runId;
+    handlers.onSongCards(songs, eventRunId);
   });
   source.addEventListener("agent_error", (event) => {
     const agentEvent = parseAgentEvent((event as MessageEvent).data);
@@ -75,4 +84,47 @@ function formatToolEvent(event: AgentEvent | null): string {
 
   const input = event.data.input ? JSON.stringify(event.data.input) : "";
   return input ? `${tool}: ${input}` : tool;
+}
+
+function parseTraceStep(event: AgentEvent | null, fallbackRunId: string): TraceStep | null {
+  const data = event?.data;
+  if (!data) {
+    return null;
+  }
+
+  const stepId = typeof data.stepId === "string" ? data.stepId : "";
+  const title = typeof data.title === "string" ? data.title : "";
+  const stage = typeof data.stage === "string" && isTraceStage(data.stage) ? data.stage : null;
+  const status = typeof data.status === "string" && isTraceStatus(data.status) ? data.status : null;
+  const visibility = typeof data.visibility === "string" && isTraceVisibility(data.visibility) ? data.visibility : null;
+  if (!stepId || !title || !stage || !status || !visibility) {
+    return null;
+  }
+
+  return {
+    runId: typeof data.runId === "string" ? data.runId : fallbackRunId,
+    stepId,
+    stage,
+    status,
+    visibility,
+    title,
+    summary: typeof data.summary === "string" ? data.summary : undefined,
+    safeData: isRecord(data.safeData) ? data.safeData : undefined
+  };
+}
+
+function isTraceStage(value: string): value is TraceStepStage {
+  return ["intent", "context", "tool", "compose", "render", "error"].includes(value);
+}
+
+function isTraceStatus(value: string): value is TraceStepStatus {
+  return ["pending", "running", "done", "error", "skipped"].includes(value);
+}
+
+function isTraceVisibility(value: string): value is TraceStepVisibility {
+  return ["user", "debug"].includes(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

@@ -3,6 +3,7 @@ package com.musio.tools;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.AgentRunContext;
+import com.musio.agent.trace.AgentTracePublisher;
 import com.musio.events.AgentEventBus;
 import com.musio.model.AgentEvent;
 import com.musio.model.Comment;
@@ -11,6 +12,7 @@ import com.musio.model.MusicProfileMemory;
 import com.musio.model.Playlist;
 import com.musio.model.Song;
 import com.musio.model.SongDetail;
+import com.musio.memory.AgentTaskMemoryService;
 import com.musio.memory.MusicProfileService;
 import com.musio.providers.MusicProviderGateway;
 import org.springframework.ai.tool.annotation.Tool;
@@ -19,6 +21,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
 
@@ -28,17 +31,23 @@ public class MusicReadTools {
     private final MusicProfileService musicProfileService;
     private final AgentEventBus eventBus;
     private final ObjectMapper objectMapper;
+    private final AgentTracePublisher tracePublisher;
+    private final AgentTaskMemoryService taskMemoryService;
 
     public MusicReadTools(
             MusicProviderGateway providerGateway,
             MusicProfileService musicProfileService,
             AgentEventBus eventBus,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            AgentTracePublisher tracePublisher,
+            AgentTaskMemoryService taskMemoryService
     ) {
         this.providerGateway = providerGateway;
         this.musicProfileService = musicProfileService;
         this.eventBus = eventBus;
         this.objectMapper = objectMapper.findAndRegisterModules();
+        this.tracePublisher = tracePublisher;
+        this.taskMemoryService = taskMemoryService;
     }
 
     @Tool(name = "search_songs", description = "Search QQ Music songs by keyword. Use this when the user asks to find songs, recommend tracks, or discover music.")
@@ -50,6 +59,32 @@ public class MusicReadTools {
             List<Song> songs = providerGateway.defaultProvider().searchSongs(keyword, actualLimit);
             publish("song_cards", Map.of("songs", songs));
             return Map.of("success", true, "count", songs.size(), "songs", songs);
+        });
+    }
+
+    public String searchSongsExcludingTitles(String keyword, Integer limit, List<String> excludedTitles) {
+        int actualLimit = clamp(limit, 8, 1, 20);
+        List<String> normalizedExclusions = normalizedTitles(excludedTitles);
+        if (normalizedExclusions.isEmpty()) {
+            return searchSongs(keyword, actualLimit);
+        }
+        int searchLimit = Math.max(actualLimit, Math.min(20, actualLimit + normalizedExclusions.size() + 8));
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("keyword", keyword);
+        input.put("limit", actualLimit);
+        input.put("excludedTitles", excludedTitles);
+        return runTool("search_songs", input, () -> {
+            List<Song> songs = providerGateway.defaultProvider().searchSongs(keyword, searchLimit).stream()
+                    .filter(song -> !isExcludedTitle(song, normalizedExclusions))
+                    .limit(actualLimit)
+                    .toList();
+            publish("song_cards", Map.of("songs", songs));
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", true);
+            result.put("count", songs.size());
+            result.put("excludedTitles", excludedTitles);
+            result.put("songs", songs);
+            return result;
         });
     }
 
@@ -122,19 +157,62 @@ public class MusicReadTools {
 
     private String runTool(String toolName, Map<String, Object> input, Supplier<Map<String, Object>> action) {
         publish("tool_start", Map.of("tool", toolName, "input", input));
+        publishToolTrace(toolName, "running", input, null);
         try {
             Map<String, Object> result = action.get();
             publish("tool_result", Map.of(
                     "tool", toolName,
                     "summary", summary(toolName, result)
             ));
+            publishToolTrace(toolName, "done", null, result);
+            recordToolSuccess(result);
             return writeJson(result);
         } catch (Exception e) {
             String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
             Map<String, Object> error = Map.of("success", false, "tool", toolName, "message", message);
             publish("tool_result", Map.of("tool", toolName, "summary", "工具执行失败: " + message));
+            publishToolTrace(toolName, "error", null, error);
+            recordToolFailure(toolName, message);
             return writeJson(error);
         }
+    }
+
+    private void recordToolSuccess(Map<String, Object> result) {
+        if (taskMemoryService == null || !result.containsKey("songs")) {
+            return;
+        }
+        Object songsValue = result.get("songs");
+        if (!(songsValue instanceof List<?> rawSongs)) {
+            return;
+        }
+        List<Song> songs = rawSongs.stream()
+                .filter(Song.class::isInstance)
+                .map(Song.class::cast)
+                .toList();
+        AgentRunContext.userId().ifPresent(userId -> taskMemoryService.recordResultSongs(userId, songs));
+    }
+
+    private void recordToolFailure(String toolName, String message) {
+        if (taskMemoryService == null) {
+            return;
+        }
+        AgentRunContext.userId().ifPresent(userId -> taskMemoryService.recordToolFailure(userId, toolName, message));
+    }
+
+    private void publishToolTrace(String toolName, String status, Map<String, Object> input, Map<String, Object> result) {
+        if (!AgentRunContext.traceEnabled()) {
+            return;
+        }
+        AgentRunContext.runId().ifPresent(runId -> {
+            if ("running".equals(status)) {
+                tracePublisher.publishToolRunning(runId, toolName, input == null ? Map.of() : input);
+            } else if ("done".equals(status)) {
+                tracePublisher.publishToolDone(runId, toolName, result == null ? Map.of() : result);
+            } else if ("error".equals(status)) {
+                Object message = result == null ? null : result.get("message");
+                tracePublisher.publishToolError(runId, toolName, message instanceof String ? (String) message : "未知错误");
+            }
+        });
     }
 
     private void publish(String type, Map<String, Object> data) {
@@ -168,6 +246,36 @@ public class MusicReadTools {
     private int clamp(Integer value, int defaultValue, int min, int max) {
         int actual = value == null ? defaultValue : value;
         return Math.max(min, Math.min(max, actual));
+    }
+
+    private List<String> normalizedTitles(List<String> titles) {
+        if (titles == null || titles.isEmpty()) {
+            return List.of();
+        }
+        return titles.stream()
+                .map(this::normalizeTitle)
+                .filter(title -> !title.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private boolean isExcludedTitle(Song song, List<String> normalizedExclusions) {
+        if (song == null || song.title() == null) {
+            return false;
+        }
+        String title = normalizeTitle(song.title());
+        return normalizedExclusions.stream().anyMatch(excluded ->
+                title.equals(excluded) || title.contains(excluded) || excluded.contains(title)
+        );
+    }
+
+    private String normalizeTitle(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.toLowerCase(Locale.ROOT)
+                .replaceAll("[《》<>\\[\\]【】()（）\\s]+", "")
+                .strip();
     }
 
     private Map<String, Object> musicProfileResult(MusicProfileMemory profile) {

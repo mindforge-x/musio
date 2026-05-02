@@ -3,17 +3,17 @@ import { ArrowUp } from "lucide-react";
 import { EventLog, Song } from "../../shared/types";
 import { AgentMessageList } from "./AgentMessageList";
 import { chatClient } from "./chatClient";
-import { ChatMessage } from "./chatTypes";
+import { ChatMessage, mergeMessageSongs, mergeTraceStep } from "./chatTypes";
 
 type AgentChatPanelProps = {
   busy: boolean;
   disabledReason?: string | null;
   onBusyChange: (busy: boolean) => void;
   onEvent: (event: EventLog) => void;
-  onSongs: (songs: Song[]) => void;
+  onPlaySong: (song: Song) => void;
 };
 
-export function AgentChatPanel({ busy, disabledReason, onBusyChange, onEvent, onSongs }: AgentChatPanelProps) {
+export function AgentChatPanel({ busy, disabledReason, onBusyChange, onEvent, onPlaySong }: AgentChatPanelProps) {
   const [message, setMessage] = useState("给我推荐 5 首适合深夜写代码听的歌。");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
@@ -58,14 +58,30 @@ export function AgentChatPanel({ busy, disabledReason, onBusyChange, onEvent, on
             current.map((item) =>
               item.role === "agent" && item.runId === (eventRunId ?? run.runId)
                 ? { ...item, content: item.content + detail, state: "streaming" }
-                : item
+              : item
             )
           );
         },
+        onTraceStep: (step) => {
+          setMessages((current) =>
+            current.map((item) =>
+              item.role === "agent" && item.runId === step.runId
+                ? { ...item, traceSteps: mergeTraceStep(item.traceSteps, step) }
+                : item
+            )
+          );
+          onEvent({ id: crypto.randomUUID(), name: "trace_step", detail: `${step.title}: ${step.summary ?? step.status}` });
+        },
         onToolStart: (detail) => onEvent({ id: crypto.randomUUID(), name: "tool_start", detail }),
         onToolResult: (detail) => onEvent({ id: crypto.randomUUID(), name: "tool_result", detail }),
-        onSongCards: (songs) => {
-          onSongs(songs);
+        onSongCards: (songs, eventRunId) => {
+          setMessages((current) =>
+            current.map((item) =>
+              item.role === "agent" && item.runId === (eventRunId ?? run.runId)
+                ? { ...item, songs: mergeMessageSongs(item.songs, songs) }
+                : item
+            )
+          );
           onEvent({ id: crypto.randomUUID(), name: "song_cards", detail: `收到 ${songs.length} 首歌曲` });
         },
         onError: (detail) => {
@@ -126,7 +142,7 @@ export function AgentChatPanel({ busy, disabledReason, onBusyChange, onEvent, on
         <span>{busy ? "运行中" : "空闲"}</span>
       </div>
       {disabledReason ? <p className="access-note">{disabledReason}</p> : null}
-      <AgentMessageList messages={messages} />
+      <AgentMessageList messages={messages} onPlaySong={onPlaySong} />
       <form onSubmit={startChat} className="prompt-form">
         <textarea
           placeholder="Say something to Musio..."
