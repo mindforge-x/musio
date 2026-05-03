@@ -1,5 +1,6 @@
 import {
   ChatRunResponse,
+  Lyrics,
   LoginStartResult,
   LoginStatus,
   MusicGeneSnapshot,
@@ -7,6 +8,7 @@ import {
   PlayerState,
   ProviderStatus,
   Song,
+  SongComment,
   SongUrl,
   SystemStatus
 } from "./types";
@@ -67,6 +69,13 @@ export const api = {
   search: (keyword: string, limit = 8) =>
     request<Song[]>(`/api/music/search?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
   songUrl: (songId: string) => request<SongUrl>(`/api/music/songs/${encodeURIComponent(songId)}/url`),
+  lyrics: (songId: string) => request<Lyrics>(`/api/music/songs/${encodeURIComponent(songId)}/lyrics`),
+  comments: (songId: string) => request<SongComment[]>(`/api/music/songs/${encodeURIComponent(songId)}/comments`),
   playerState: () => request<PlayerState>("/api/player/state"),
-  musioPlaylists: () => request<MusioPlaylist[]>("/api/musio/playlists")
+  musioPlaylists: () => request<MusioPlaylist[]>("/api/musio/playlists"),
+  addSongToMusioPlaylist: (playlistId: string, song: Song) =>
+    request<MusioPlaylist>(`/api/musio/playlists/${encodeURIComponent(playlistId)}/items`, {
+      method: "POST",
+      body: JSON.stringify(song)
+    })
 };

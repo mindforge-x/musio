@@ -2,5 +2,7 @@ import { api } from "../../shared/api";
 
 export const playerClient = {
   state: api.playerState,
-  songUrl: api.songUrl
+  songUrl: api.songUrl,
+  streamUrl: (songId: string) => `/api/music/songs/${encodeURIComponent(songId)}/stream`,
+  lyrics: api.lyrics
 };

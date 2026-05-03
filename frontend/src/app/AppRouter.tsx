@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, Cable, ListMusic, MessageSquare } from "lucide-react";
+import type { ReactNode } from "react";
+import { Activity, Cable, FileText, ListMusic, MessageCircle, MessageSquare, Play, Search, Terminal, Trash2 } from "lucide-react";
 import { api } from "../shared/api";
-import { EventLog, ProviderStatus, Song, SystemStatus } from "../shared/types";
+import { EventLog, ProviderStatus, Song, SongComment, SystemStatus } from "../shared/types";
 import { AgentChatPanel } from "../features/agent-chat/AgentChatPanel";
 import { AgentEvents } from "../features/agent-chat/AgentEvents";
 import { SongCards } from "../features/agent-chat/SongCards";
 import { MusioPlaylistsPage } from "../features/musio-playlists/MusioPlaylistsPage";
 import { PlayerShell } from "../features/player/PlayerShell";
+import { PlayerSpectrum } from "../features/player/PlayerSpectrum";
 import { usePlayerStore } from "../features/player/playerStore";
 import { SourceSetupPage } from "../features/source-setup/SourceSetupPage";
 import { AppRoute } from "./routes";
@@ -18,8 +20,16 @@ export function AppRouter() {
   const [events, setEvents] = useState<EventLog[]>([]);
   const [songs, setSongs] = useState<Song[]>([]);
   const [busy, setBusy] = useState(false);
+  const [activeDrawer, setActiveDrawer] = useState<WorkbenchDrawer>("queue");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [now, setNow] = useState(() => new Date());
   const selectedSources = useMemo(() => selectedSourcesFromUrl(), []);
   const player = usePlayerStore();
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const refreshProviderStatuses = useCallback(() => {
     api.providers()
@@ -62,6 +72,25 @@ export function AppRouter() {
       });
   }
 
+  function addToQueue(song: Song) {
+    player.addToQueue(song);
+    addEvent({ id: crypto.randomUUID(), name: "queue", detail: `已加入队列：${song.title || song.id}` });
+  }
+
+  function favoriteSong(song: Song) {
+    void api.addSongToMusioPlaylist("default", song)
+      .then(() => addEvent({ id: crypto.randomUUID(), name: "favorite", detail: `已收藏到 Musio：${song.title || song.id}` }))
+      .catch((error) => {
+        const detail = error instanceof Error && error.message ? error.message : "未知错误";
+        addEvent({ id: crypto.randomUUID(), name: "favorite", detail: `收藏失败：${detail}` });
+      });
+  }
+
+  function openDrawer(drawer: WorkbenchDrawer) {
+    setActiveDrawer(drawer);
+    setDrawerOpen(true);
+  }
+
   return (
     <main className="app-shell">
       <aside className="rail">
@@ -91,7 +120,7 @@ export function AppRouter() {
         </button>
       </aside>
 
-      <section className="workspace">
+      <section className={`workspace ${route === "workbench" ? "workspace-workbench" : ""}`}>
         {route !== "workbench" ? (
           <header className="topbar">
             <div>
@@ -121,55 +150,546 @@ export function AppRouter() {
         ) : route === "playlists" ? (
           <MusioPlaylistsPage />
         ) : (
-          <section className="radio-workbench">
-            <header className="radio-header">
-              <div className="radio-brand">
-                <div className="radio-avatar">M</div>
-                <div>
-                  <p>Musio FM</p>
-                  <strong>Musio</strong>
+          <section className="workbench-stage">
+            <TimeBackdrop now={now} />
+            <section className={`radio-workbench ${drawerOpen ? "drawer-open" : ""}`}>
+              <header className="radio-header">
+                <div className="radio-brand">
+                  <div className="radio-avatar">M</div>
+                  <div>
+                    <p>Musio FM</p>
+                    <strong>Musio</strong>
+                  </div>
                 </div>
-              </div>
-              <div className="radio-header-actions">
-                <span className={`radio-state ${backendLabel === "ok" ? "online" : ""}`}>{backendDisplayLabel}</span>
-                <span>{status ? status.aiModel : "MODEL OFFLINE"}</span>
-              </div>
-            </header>
-            <PlayerShell state={player.state} onTogglePaused={player.togglePaused} onNextMode={player.nextMode} />
-            <div className="radio-queue-strip">
-              <span>QUEUE</span>
-              <span>{player.state.queue.length} TRACKS</span>
-            </div>
-            <div className="agent-workspace">
-              <AgentChatPanel
-                busy={busy}
-                disabledReason={musicOperationDisabledReason}
-                onBusyChange={setBusy}
-                onEvent={addEvent}
-                onPlaySong={playSong}
+                <div className="radio-header-actions">
+                  <span className={`radio-state ${backendLabel === "ok" ? "online" : ""}`}>{backendDisplayLabel}</span>
+                  <span>{status ? status.aiModel : "MODEL OFFLINE"}</span>
+                </div>
+              </header>
+              <PlayerShell
+                state={player.state}
+                onTogglePaused={player.togglePaused}
+                onPrevious={() => void player.previous()}
+                onNext={() => void player.next()}
+                onNextMode={player.nextMode}
               />
-              <div className="agent-side-stack">
-                <SongCards
+              <div className="spectrum-divider">
+                <PlayerSpectrum levels={player.state.spectrumLevels} />
+              </div>
+              <div className="agent-workspace">
+                <AgentChatPanel
                   busy={busy}
                   disabledReason={musicOperationDisabledReason}
-                  songs={songs}
-                  onSongs={setSongs}
                   onBusyChange={setBusy}
                   onEvent={addEvent}
                   onPlaySong={playSong}
+                  onAddToQueue={addToQueue}
+                  onFavoriteSong={favoriteSong}
                 />
-                <AgentEvents events={events} onClear={() => setEvents([])} />
               </div>
-            </div>
-            <footer className="radio-footer">
-              <span>MUSIO FM</span>
-              <span>{qqMusicConnectionLabel}</span>
-            </footer>
+              <footer className="radio-footer">
+                <span>MUSIO FM</span>
+                <span>{qqMusicConnectionLabel}</span>
+              </footer>
+            </section>
+            <StatusRail
+              now={now}
+              queueCount={player.state.queue.length}
+              backendDisplayLabel={backendDisplayLabel}
+              modelLabel={status?.aiModel ?? "MODEL OFFLINE"}
+              activeDrawer={activeDrawer}
+              onOpenDrawer={openDrawer}
+            />
+            <WorkbenchDrawerPanel
+              open={drawerOpen}
+              activeDrawer={activeDrawer}
+              busy={busy}
+              disabledReason={musicOperationDisabledReason}
+              songs={songs}
+              events={events}
+              playerState={player.state}
+              onClose={() => setDrawerOpen(false)}
+              onSongs={setSongs}
+              onBusyChange={setBusy}
+              onEvent={addEvent}
+              onPlaySong={playSong}
+              onAddToQueue={addToQueue}
+              onFavoriteSong={favoriteSong}
+              onPlayQueueIndex={(index) => void player.playQueueIndex(index)}
+              onRemoveFromQueue={player.removeFromQueue}
+              onClearEvents={() => setEvents([])}
+            />
           </section>
         )}
       </section>
     </main>
   );
+}
+
+type WorkbenchDrawer = "search" | "queue" | "lyrics" | "comments" | "trace";
+
+function TimeBackdrop({ now }: { now: Date }) {
+  const [hour, minute] = formatClockParts(now);
+  return (
+    <div className="time-backdrop" aria-hidden="true">
+      <div className="time-flank time-flank-left">
+        <span>HOUR</span>
+        <DotMatrixValue value={hour} />
+        <small>{formatWeekday(now)}</small>
+      </div>
+      <div className="time-flank time-flank-right">
+        <span>MIN</span>
+        <DotMatrixValue value={minute} />
+        <small>{formatCompactDate(now)}</small>
+      </div>
+    </div>
+  );
+}
+
+function DotMatrixValue({ value, small = false }: { value: string; small?: boolean }) {
+  return (
+    <div className={`dot-matrix-time ${small ? "small" : ""}`}>
+      {[...value].map((character, characterIndex) => (
+        <span className="dot-matrix-character" key={`${character}-${characterIndex}`}>
+          {(DOT_MATRIX_DIGITS[character] ?? DOT_MATRIX_DIGITS["0"]).flatMap((row, rowIndex) =>
+            [...row].map((cell, columnIndex) => (
+              <i
+                className={cell === "1" ? "active" : ""}
+                key={`${rowIndex}-${columnIndex}`}
+              />
+            ))
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+const DOT_MATRIX_DIGITS: Record<string, string[]> = {
+  "0": [
+    "0011100",
+    "0110110",
+    "1100011",
+    "1100011",
+    "1100011",
+    "1100011",
+    "1100011",
+    "0110110",
+    "0011100"
+  ],
+  "1": [
+    "0001100",
+    "0011100",
+    "0111100",
+    "0001100",
+    "0001100",
+    "0001100",
+    "0001100",
+    "0001100",
+    "0111110"
+  ],
+  "2": [
+    "0011110",
+    "0110011",
+    "1100011",
+    "0000011",
+    "0000110",
+    "0001100",
+    "0011000",
+    "0110000",
+    "1111111"
+  ],
+  "3": [
+    "0111110",
+    "0000011",
+    "0000011",
+    "0000110",
+    "0011110",
+    "0000011",
+    "0000011",
+    "1100011",
+    "0111110"
+  ],
+  "4": [
+    "0000110",
+    "0001110",
+    "0011110",
+    "0110110",
+    "1100110",
+    "1111111",
+    "0000110",
+    "0000110",
+    "0001111"
+  ],
+  "5": [
+    "1111111",
+    "1100000",
+    "1100000",
+    "1111100",
+    "0000110",
+    "0000011",
+    "0000011",
+    "1100110",
+    "0111100"
+  ],
+  "6": [
+    "0001110",
+    "0011000",
+    "0110000",
+    "1100000",
+    "1111100",
+    "1100110",
+    "1100011",
+    "0110011",
+    "0011110"
+  ],
+  "7": [
+    "1111111",
+    "0000011",
+    "0000110",
+    "0000110",
+    "0001100",
+    "0001100",
+    "0011000",
+    "0011000",
+    "0011000"
+  ],
+  "8": [
+    "0011110",
+    "0110011",
+    "1100011",
+    "0110011",
+    "0011110",
+    "0110011",
+    "1100011",
+    "0110011",
+    "0011110"
+  ],
+  "9": [
+    "0011110",
+    "0110011",
+    "1100011",
+    "1100011",
+    "0111111",
+    "0000011",
+    "0000110",
+    "0001100",
+    "0111000"
+  ]
+};
+
+function StatusRail({
+  now,
+  queueCount,
+  backendDisplayLabel,
+  modelLabel,
+  activeDrawer,
+  onOpenDrawer
+}: {
+  now: Date;
+  queueCount: number;
+  backendDisplayLabel: string;
+  modelLabel: string;
+  activeDrawer: WorkbenchDrawer;
+  onOpenDrawer: (drawer: WorkbenchDrawer) => void;
+}) {
+  return (
+    <aside className="status-rail" aria-label="Musio system rail">
+      <div className="status-readout">
+        <strong>{formatWeekday(now)}</strong>
+        <span>{formatMonthDay(now)}</span>
+      </div>
+      <div className="status-stack">
+        <span>QUEUE {queueCount.toString().padStart(2, "0")}</span>
+        <span>QQ {backendDisplayLabel}</span>
+        <span>{modelLabel}</span>
+      </div>
+      <nav className="drawer-rail" aria-label="Workbench drawers">
+        <DrawerButton drawer="search" activeDrawer={activeDrawer} onOpenDrawer={onOpenDrawer} icon={<Search size={16} />} label="SEARCH" />
+        <DrawerButton drawer="queue" activeDrawer={activeDrawer} onOpenDrawer={onOpenDrawer} icon={<ListMusic size={16} />} label="QUEUE" />
+        <DrawerButton drawer="lyrics" activeDrawer={activeDrawer} onOpenDrawer={onOpenDrawer} icon={<FileText size={16} />} label="LYRICS" />
+        <DrawerButton drawer="comments" activeDrawer={activeDrawer} onOpenDrawer={onOpenDrawer} icon={<MessageCircle size={16} />} label="COMMENTS" />
+        <DrawerButton drawer="trace" activeDrawer={activeDrawer} onOpenDrawer={onOpenDrawer} icon={<Terminal size={16} />} label="TRACE" />
+      </nav>
+    </aside>
+  );
+}
+
+function DrawerButton({
+  drawer,
+  activeDrawer,
+  onOpenDrawer,
+  icon,
+  label
+}: {
+  drawer: WorkbenchDrawer;
+  activeDrawer: WorkbenchDrawer;
+  onOpenDrawer: (drawer: WorkbenchDrawer) => void;
+  icon: ReactNode;
+  label: string;
+}) {
+  return (
+    <button type="button" className={drawer === activeDrawer ? "active" : ""} onClick={() => onOpenDrawer(drawer)} aria-label={label} title={label}>
+      {icon}
+    </button>
+  );
+}
+
+function WorkbenchDrawerPanel({
+  open,
+  activeDrawer,
+  busy,
+  disabledReason,
+  songs,
+  events,
+  playerState,
+  onClose,
+  onSongs,
+  onBusyChange,
+  onEvent,
+  onPlaySong,
+  onAddToQueue,
+  onFavoriteSong,
+  onPlayQueueIndex,
+  onRemoveFromQueue,
+  onClearEvents
+}: {
+  open: boolean;
+  activeDrawer: WorkbenchDrawer;
+  busy: boolean;
+  disabledReason?: string | null;
+  songs: Song[];
+  events: EventLog[];
+  playerState: ReturnType<typeof usePlayerStore>["state"];
+  onClose: () => void;
+  onSongs: (songs: Song[]) => void;
+  onBusyChange: (busy: boolean) => void;
+  onEvent: (event: EventLog) => void;
+  onPlaySong: (song: Song) => void;
+  onAddToQueue: (song: Song) => void;
+  onFavoriteSong: (song: Song) => void;
+  onPlayQueueIndex: (index: number) => void;
+  onRemoveFromQueue: (songId: string) => void;
+  onClearEvents: () => void;
+}) {
+  return (
+    <aside className={`workbench-drawer ${open ? "open" : ""}`} aria-label="Musio side drawer">
+      <div className="drawer-heading">
+        <div>
+          <span>DRAWER</span>
+          <strong>{drawerTitle(activeDrawer)}</strong>
+        </div>
+        <button type="button" onClick={onClose}>CLOSE</button>
+      </div>
+      <div className="drawer-body">
+        {activeDrawer === "search" ? (
+          <SongCards
+            busy={busy}
+            disabledReason={disabledReason}
+            songs={songs}
+            onSongs={onSongs}
+            onBusyChange={onBusyChange}
+            onEvent={onEvent}
+            onPlaySong={onPlaySong}
+            onAddToQueue={onAddToQueue}
+            onFavoriteSong={onFavoriteSong}
+          />
+        ) : activeDrawer === "queue" ? (
+          <QueuePanel state={playerState} onPlayQueueIndex={onPlayQueueIndex} onRemoveFromQueue={onRemoveFromQueue} />
+        ) : activeDrawer === "lyrics" ? (
+          <LyricsPanel state={playerState} />
+        ) : activeDrawer === "comments" ? (
+          <CommentsPanel state={playerState} disabledReason={disabledReason} onEvent={onEvent} />
+        ) : (
+          <AgentEvents events={events} onClear={onClearEvents} />
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function QueuePanel({
+  state,
+  onPlayQueueIndex,
+  onRemoveFromQueue
+}: {
+  state: ReturnType<typeof usePlayerStore>["state"];
+  onPlayQueueIndex: (index: number) => void;
+  onRemoveFromQueue: (songId: string) => void;
+}) {
+  return (
+    <section className="panel queue-panel">
+      <div className="panel-heading">
+        <h2>播放队列</h2>
+        <span>{state.queue.length} tracks</span>
+      </div>
+      <div className="queue-list">
+        {state.queue.length === 0 ? (
+          <p className="empty-copy">[QUEUE EMPTY]</p>
+        ) : (
+          state.queue.map((song, index) => (
+            <article key={song.id} className={`queue-row ${index === state.currentIndex ? "active" : ""}`}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <div>
+                <strong>{song.title || song.id}</strong>
+                <small>{song.artists?.join(", ") || song.provider || "QQ 音乐"}</small>
+              </div>
+              <button type="button" title="播放" aria-label={`播放 ${song.title || song.id}`} onClick={() => onPlayQueueIndex(index)}>
+                <Play size={14} />
+              </button>
+              <button type="button" title="移出队列" aria-label={`移出队列 ${song.title || song.id}`} onClick={() => onRemoveFromQueue(song.id)}>
+                <Trash2 size={14} />
+              </button>
+            </article>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function LyricsPanel({ state }: { state: ReturnType<typeof usePlayerStore>["state"] }) {
+  return (
+    <section className="panel lyrics-panel">
+      <div className="panel-heading">
+        <h2>歌词</h2>
+        <span>{state.currentSong ? "current" : "empty"}</span>
+      </div>
+      <p className="lyrics-track">{state.currentSong ? `${state.currentSong.title} - ${state.currentSong.artists?.join(", ")}` : "[NO TRACK]"}</p>
+      <pre>{state.lyricsText || state.lyricLine || "[LYRICS UNAVAILABLE]"}</pre>
+    </section>
+  );
+}
+
+function CommentsPanel({
+  state,
+  disabledReason,
+  onEvent
+}: {
+  state: ReturnType<typeof usePlayerStore>["state"];
+  disabledReason?: string | null;
+  onEvent: (event: EventLog) => void;
+}) {
+  const [comments, setComments] = useState<SongComment[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const songId = state.currentSong?.id ?? "";
+
+  useEffect(() => {
+    setComments([]);
+    setError(null);
+    if (!songId || disabledReason) {
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    api.comments(songId)
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+        setComments(result);
+        onEvent({ id: crypto.randomUUID(), name: "comments", detail: `读取热门评论 ${result.length} 条` });
+      })
+      .catch((fetchError) => {
+        if (cancelled) {
+          return;
+        }
+        const detail = fetchError instanceof Error && fetchError.message ? fetchError.message : "未知错误";
+        setError(detail);
+        onEvent({ id: crypto.randomUUID(), name: "comments", detail: `评论读取失败：${detail}` });
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [disabledReason, onEvent, songId]);
+
+  return (
+    <section className="panel comments-panel">
+      <div className="panel-heading">
+        <h2>评论</h2>
+        <span>{comments.length} hot</span>
+      </div>
+      <p className="lyrics-track">{state.currentSong ? `${state.currentSong.title} - ${state.currentSong.artists?.join(", ")}` : "[NO TRACK]"}</p>
+      {disabledReason ? <p className="access-note">{disabledReason}</p> : null}
+      {!state.currentSong ? <p className="empty-copy">[PLAY A TRACK TO LOAD COMMENTS]</p> : null}
+      {loading ? <p className="empty-copy">[LOADING COMMENTS]</p> : null}
+      {error ? <p className="access-note">{error}</p> : null}
+      {!loading && !error && state.currentSong && comments.length === 0 ? <p className="empty-copy">[NO COMMENTS]</p> : null}
+      <div className="comment-list">
+        {comments.map((comment) => (
+          <article className="comment-row" key={comment.id}>
+            <div className="comment-row-meta">
+              <strong>{comment.authorName || "QQ MUSIC USER"}</strong>
+              <span>{formatCommentDate(comment.createdAt)}</span>
+            </div>
+            <p>{comment.text}</p>
+            <small>{(comment.likedCount ?? 0).toLocaleString()} LIKES</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function drawerTitle(drawer: WorkbenchDrawer) {
+  switch (drawer) {
+    case "search":
+      return "SEARCH";
+    case "queue":
+      return "QUEUE";
+    case "lyrics":
+      return "LYRICS";
+    case "comments":
+      return "COMMENTS";
+    case "trace":
+      return "TRACE";
+  }
+}
+
+function formatClockParts(date: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(date).split(":");
+}
+
+function formatCompactDate(date: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit"
+  }).format(date).toUpperCase();
+}
+
+function formatWeekday(date: Date) {
+  return new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(date).toUpperCase();
+}
+
+function formatMonthDay(date: Date) {
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit" }).format(date).toUpperCase();
+}
+
+function formatCommentDate(value?: string | null) {
+  if (!value) {
+    return "UNKNOWN";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "UNKNOWN";
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit"
+  }).format(date).toUpperCase();
 }
 
 function sourceKey(source: string) {

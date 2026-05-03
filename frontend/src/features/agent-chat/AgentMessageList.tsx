@@ -1,5 +1,5 @@
 import { CSSProperties, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Play } from "lucide-react";
+import { BookmarkPlus, ChevronDown, ChevronRight, ListPlus, Play } from "lucide-react";
 import { Song } from "../../shared/types";
 import { ChatMessage, TraceStep } from "./chatTypes";
 import { MarkdownContent } from "./MarkdownContent";
@@ -7,9 +7,11 @@ import { MarkdownContent } from "./MarkdownContent";
 type AgentMessageListProps = {
   messages: ChatMessage[];
   onPlaySong: (song: Song) => void;
+  onAddToQueue: (song: Song) => void;
+  onFavoriteSong: (song: Song) => void;
 };
 
-export function AgentMessageList({ messages, onPlaySong }: AgentMessageListProps) {
+export function AgentMessageList({ messages, onPlaySong, onAddToQueue, onFavoriteSong }: AgentMessageListProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -48,7 +50,12 @@ export function AgentMessageList({ messages, onPlaySong }: AgentMessageListProps
                 <>
                   <TraceSteps steps={message.traceSteps} state={message.state} />
                   {message.content.trim() ? <MarkdownContent text={message.content} /> : null}
-                  <InlineSongCards songs={message.state === "done" ? message.songs : undefined} onPlaySong={onPlaySong} />
+                  <InlineSongCards
+                    songs={message.state === "done" ? message.songs : undefined}
+                    onPlaySong={onPlaySong}
+                    onAddToQueue={onAddToQueue}
+                    onFavoriteSong={onFavoriteSong}
+                  />
                 </>
               ) : (
                 <p>{message.content}</p>
@@ -84,7 +91,17 @@ function isInitialAgentLoading(message: ChatMessage) {
   return visibleTraceSteps.length === 0 && !message.songs?.length;
 }
 
-function InlineSongCards({ songs, onPlaySong }: { songs?: Song[]; onPlaySong: (song: Song) => void }) {
+function InlineSongCards({
+  songs,
+  onPlaySong,
+  onAddToQueue,
+  onFavoriteSong
+}: {
+  songs?: Song[];
+  onPlaySong: (song: Song) => void;
+  onAddToQueue: (song: Song) => void;
+  onFavoriteSong: (song: Song) => void;
+}) {
   if (!songs?.length) {
     return null;
   }
@@ -100,9 +117,17 @@ function InlineSongCards({ songs, onPlaySong }: { songs?: Song[]; onPlaySong: (s
             <strong>{song.title || song.id}</strong>
             <span>{song.artists?.join(", ") || song.provider || "QQ 音乐"}</span>
           </div>
-          <button type="button" aria-label={`播放 ${song.title || song.id}`} onClick={() => onPlaySong(song)}>
-            <Play size={15} />
-          </button>
+          <div className="song-action-cluster">
+            <button type="button" title="播放" aria-label={`播放 ${song.title || song.id}`} onClick={() => onPlaySong(song)}>
+              <Play size={14} />
+            </button>
+            <button type="button" title="加入队列" aria-label={`加入队列 ${song.title || song.id}`} onClick={() => onAddToQueue(song)}>
+              <ListPlus size={14} />
+            </button>
+            <button type="button" title="收藏到 Musio" aria-label={`收藏 ${song.title || song.id}`} onClick={() => onFavoriteSong(song)}>
+              <BookmarkPlus size={14} />
+            </button>
+          </div>
         </article>
       ))}
     </div>

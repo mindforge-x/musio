@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { Play, Search } from "lucide-react";
+import { BookmarkPlus, ListPlus, Play, Search } from "lucide-react";
 import { api } from "../../shared/api";
 import { EventLog, Song } from "../../shared/types";
 
@@ -11,9 +11,21 @@ type SongCardsProps = {
   onBusyChange: (busy: boolean) => void;
   onEvent: (event: EventLog) => void;
   onPlaySong: (song: Song) => void;
+  onAddToQueue: (song: Song) => void;
+  onFavoriteSong: (song: Song) => void;
 };
 
-export function SongCards({ busy, disabledReason, songs, onSongs, onBusyChange, onEvent, onPlaySong }: SongCardsProps) {
+export function SongCards({
+  busy,
+  disabledReason,
+  songs,
+  onSongs,
+  onBusyChange,
+  onEvent,
+  onPlaySong,
+  onAddToQueue,
+  onFavoriteSong
+}: SongCardsProps) {
   const [searchKeyword, setSearchKeyword] = useState("周杰伦");
 
   async function search(event: FormEvent) {
@@ -57,9 +69,17 @@ export function SongCards({ busy, disabledReason, songs, onSongs, onBusyChange, 
               <strong>{song.title || song.id}</strong>
               <span>{song.artists?.join(", ") || song.provider || "QQ 音乐"}</span>
             </div>
-            <button type="button" aria-label={`播放 ${song.title || song.id}`} onClick={() => onPlaySong(song)}>
-              <Play size={16} />
-            </button>
+            <div className="song-action-cluster">
+              <button type="button" title="播放" aria-label={`播放 ${song.title || song.id}`} onClick={() => onPlaySong(song)}>
+                <Play size={15} />
+              </button>
+              <button type="button" title="加入队列" aria-label={`加入队列 ${song.title || song.id}`} onClick={() => onAddToQueue(song)}>
+                <ListPlus size={15} />
+              </button>
+              <button type="button" title="收藏到 Musio" aria-label={`收藏 ${song.title || song.id}`} onClick={() => onFavoriteSong(song)}>
+                <BookmarkPlus size={15} />
+              </button>
+            </div>
           </article>
         ))}
       </div>

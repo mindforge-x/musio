@@ -39,6 +39,10 @@ function eventNameLabel(name: string) {
       return "工具结果";
     case "song_cards":
       return "歌曲卡片";
+    case "queue":
+      return "队列";
+    case "favorite":
+      return "收藏";
     case "trace_step":
       return "执行链";
     case "agent_error":

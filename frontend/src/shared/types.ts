@@ -47,6 +47,23 @@ export type SongUrl = {
   expiresInSeconds: number | null;
 };
 
+export type Lyrics = {
+  songId: string;
+  provider: string;
+  plainText: string;
+  syncedText: string;
+};
+
+export type SongComment = {
+  id: string;
+  songId: string;
+  provider: string;
+  authorName: string;
+  text: string;
+  likedCount?: number | null;
+  createdAt?: string | null;
+};
+
 export type Playlist = {
   id: string;
   provider: string;
@@ -92,11 +109,14 @@ export type PlaybackMode = "SEQUENTIAL" | "REPEAT_ONE" | "REPEAT_ALL" | "SHUFFLE
 export type PlayerState = {
   currentSong: Song | null;
   queue: Song[];
+  currentIndex: number;
   paused: boolean;
   positionSeconds: number;
   durationSeconds: number | null;
   playbackMode: PlaybackMode;
   lyricLine: string;
+  lyricsText: string;
+  spectrumLevels: number[];
 };
 
 export type MusioPlaylistItem = {

@@ -11,9 +11,19 @@ type AgentChatPanelProps = {
   onBusyChange: (busy: boolean) => void;
   onEvent: (event: EventLog) => void;
   onPlaySong: (song: Song) => void;
+  onAddToQueue: (song: Song) => void;
+  onFavoriteSong: (song: Song) => void;
 };
 
-export function AgentChatPanel({ busy, disabledReason, onBusyChange, onEvent, onPlaySong }: AgentChatPanelProps) {
+export function AgentChatPanel({
+  busy,
+  disabledReason,
+  onBusyChange,
+  onEvent,
+  onPlaySong,
+  onAddToQueue,
+  onFavoriteSong
+}: AgentChatPanelProps) {
   const [message, setMessage] = useState("给我推荐 5 首适合深夜写代码听的歌。");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
@@ -142,7 +152,12 @@ export function AgentChatPanel({ busy, disabledReason, onBusyChange, onEvent, on
         <span>{busy ? "运行中" : "空闲"}</span>
       </div>
       {disabledReason ? <p className="access-note">{disabledReason}</p> : null}
-      <AgentMessageList messages={messages} onPlaySong={onPlaySong} />
+      <AgentMessageList
+        messages={messages}
+        onPlaySong={onPlaySong}
+        onAddToQueue={onAddToQueue}
+        onFavoriteSong={onFavoriteSong}
+      />
       <form onSubmit={startChat} className="prompt-form">
         <textarea
           placeholder="Say something to Musio..."

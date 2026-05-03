@@ -12,6 +12,7 @@ export type {
   Playlist,
   ProviderStatus,
   Song,
+  SongComment,
   SongUrl,
   SystemStatus
 } from "../shared/types";
