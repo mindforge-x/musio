@@ -109,14 +109,19 @@ public class AgentRuntime {
 
             AgentAnswerStreamGuard answerGuard = new AgentAnswerStreamGuard();
             boolean[] composeStarted = {false};
+            AgentLlmLogger.logRequest("final_answer", ai, prompt);
             chatModelFactory.chatClient(ai)
                     .prompt(prompt)
                     .stream()
                     .content()
-                    .doOnNext(chunk -> publishAnswerDelta(runId, ai, answerGuard, chunk, traceEnabled, composeStarted))
+                    .doOnNext(chunk -> {
+                        AgentLlmLogger.logStreamChunk("final_answer", ai, chunk);
+                        publishAnswerDelta(runId, ai, answerGuard, chunk, traceEnabled, composeStarted);
+                    })
                     .blockLast();
             answerGuard.finish(rawToolProtocolFallback()).ifPresent(text -> publishAnswerText(runId, ai, text, traceEnabled, composeStarted));
             String answerText = answerGuard.visibleAnswer();
+            AgentLlmLogger.logResponse("final_answer.visible", ai, answerText);
             if (answerGuard.rawToolProtocolSuppressed()) {
                 log.warn("Agent run {} suppressed raw tool protocol output from model {}", runId, ai.model());
             }

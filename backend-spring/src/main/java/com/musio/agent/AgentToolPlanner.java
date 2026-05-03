@@ -24,6 +24,7 @@ public class AgentToolPlanner {
     private static final Logger log = LoggerFactory.getLogger(AgentToolPlanner.class);
     private static final double MIN_CONFIDENCE = 0.55;
     private static final int MAX_TOOL_CALLS = 12;
+    private static final int DEFAULT_SEARCH_LIMIT = 8;
     private static final Set<String> ALLOWED_TOOLS = Set.of(
             "search_songs",
             "get_user_music_profile",
@@ -43,8 +44,11 @@ public class AgentToolPlanner {
     }
 
     public AgentToolPlan plan(MusioConfig.Ai ai, AgentTaskContext taskContext, String taskMemoryPreview) {
-        if (chatModelFactory == null || !shouldPlan(taskContext)) {
+        if (!shouldPlan(taskContext)) {
             return AgentToolPlan.empty();
+        }
+        if (chatModelFactory == null) {
+            return fallbackPlan(taskContext);
         }
         Prompt prompt = new Prompt(List.of(
                 new SystemMessage(plannerInstruction()),
@@ -57,14 +61,17 @@ public class AgentToolPlanner {
                         """.formatted(taskContext.promptContext(), taskMemoryPreview == null || taskMemoryPreview.isBlank() ? "无" : taskMemoryPreview))
         ));
         try {
+            AgentLlmLogger.logRequest("tool_planner", ai, prompt);
             String content = chatModelFactory.chatClient(ai)
                     .prompt(prompt)
                     .call()
                     .content();
-            return parsePlan(content).orElseGet(AgentToolPlan::empty);
+            AgentLlmLogger.logResponse("tool_planner", ai, content);
+            AgentToolPlan plan = parsePlan(content).orElseGet(AgentToolPlan::empty);
+            return plan.hasCalls() ? plan : fallbackPlan(taskContext);
         } catch (Exception e) {
             log.warn("Agent tool planning failed", e);
-            return AgentToolPlan.empty();
+            return fallbackPlan(taskContext);
         }
     }
 
@@ -126,6 +133,19 @@ public class AgentToolPlanner {
 
     private boolean shouldPlan(AgentTaskContext taskContext) {
         return taskContext != null && taskContext.agentTask();
+    }
+
+    private AgentToolPlan fallbackPlan(AgentTaskContext taskContext) {
+        if (taskContext == null || !"search".equals(taskContext.taskType()) || taskContext.searchKeyword().isBlank()) {
+            return AgentToolPlan.empty();
+        }
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("keyword", taskContext.searchKeyword());
+        arguments.put("limit", taskContext.searchLimit() > 0 ? taskContext.searchLimit() : DEFAULT_SEARCH_LIMIT);
+        if (taskContext.avoidSongTitles() != null && !taskContext.avoidSongTitles().isEmpty()) {
+            arguments.put("excludedTitles", taskContext.avoidSongTitles());
+        }
+        return new AgentToolPlan(List.of(new AgentToolCall("search_songs", arguments)), 0.70);
     }
 
     private boolean requiredArgumentsPresent(String toolName, Map<String, Object> arguments) {

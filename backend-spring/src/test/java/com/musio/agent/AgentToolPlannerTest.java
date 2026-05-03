@@ -110,6 +110,32 @@ class AgentToolPlannerTest {
     }
 
     @Test
+    void fallsBackToSearchSongsForSearchTaskWhenModelPlannerUnavailable() {
+        AgentTaskContext context = AgentTaskContext.agent(
+                "给我推荐李荣浩的不遗憾",
+                "搜索 李荣浩《不遗憾》",
+                "李荣浩 不遗憾",
+                0,
+                false,
+                java.util.List.of(),
+                0.92,
+                "test",
+                "search",
+                "",
+                "不遗憾",
+                "new_task",
+                AgentTaskMemoryAccess.none("测试")
+        );
+
+        AgentToolPlan plan = planner.plan(null, context, "无");
+
+        assertEquals(1, plan.toolCalls().size());
+        assertEquals("search_songs", plan.toolCalls().getFirst().toolName());
+        assertEquals("李荣浩 不遗憾", plan.toolCalls().getFirst().arguments().get("keyword"));
+        assertEquals(8, plan.toolCalls().getFirst().arguments().get("limit"));
+    }
+
+    @Test
     void dropsSongToolsWithoutSongId() {
         AgentToolPlan plan = planner.parsePlan("""
                 {"toolCalls":[{"toolName":"get_hot_comments","arguments":{"limit":10}}],"confidence":0.9}

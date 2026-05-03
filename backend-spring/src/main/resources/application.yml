@@ -8,6 +8,10 @@ management:
       exposure:
         include: health,info
 
+logging:
+  file:
+    name: "${MUSIO_BACKEND_LOG_FILE:${user.home}/.musio/logs/musio-backend.log}"
+
 musio:
   config:
     path: "${MUSIO_CONFIG:${user.home}/.musio/config.toml}"

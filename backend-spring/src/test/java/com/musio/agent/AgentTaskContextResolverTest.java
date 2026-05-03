@@ -111,6 +111,30 @@ class AgentTaskContextResolverTest {
     }
 
     @Test
+    void treatsExplicitArtistSongRecommendationAsSearchTask() {
+        AgentTaskContext context = resolver.parseModelResponse("给我推荐李荣浩的不遗憾", """
+                {"mode":"agent","taskType":"recommend","contextMode":"new_task","followUp":false,"memoryAccess":{"useLastSearchKeyword":false,"useLastResultSongs":false,"useAvoidTitles":false,"useToolFailures":false,"reason":"新推荐"},"effectiveRequest":"给我推荐李荣浩的不遗憾","searchKeyword":"","searchLimit":0,"avoidSongTitles":[],"confidence":0.91}
+                """).orElseThrow();
+
+        assertEquals("search", context.taskType());
+        assertEquals("李荣浩 不遗憾", context.searchKeyword());
+        assertEquals("不遗憾", context.targetSongTitle());
+        assertFalse(context.recommendationPreludeAllowed());
+        assertTrue(context.searchPreludeAllowed());
+        assertTrue(context.memoryAccess().none());
+    }
+
+    @Test
+    void fallbackTreatsExplicitArtistSongRecommendationAsSearchTask() {
+        AgentTaskContext context = resolver.resolve(null, "给我推荐李荣浩的不遗憾", List.of(), AgentTaskMemory.empty("local"));
+
+        assertEquals("search", context.taskType());
+        assertEquals("李荣浩 不遗憾", context.searchKeyword());
+        assertFalse(context.recommendationPreludeAllowed());
+        assertTrue(context.searchPreludeAllowed());
+    }
+
+    @Test
     void fallsBackToDirectWhenThereIsNoHistory() {
         AgentTaskContext context = resolver.resolve(null, "再试试", List.of(), AgentTaskMemory.empty("local"));
 

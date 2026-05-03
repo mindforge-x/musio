@@ -2,6 +2,7 @@ package com.musio.agent.recommendation;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.agent.AgentLlmLogger;
 import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.config.MusioConfig;
 import com.musio.memory.MusicProfileService;
@@ -77,10 +78,12 @@ public class RecommendationDraftGenerator {
                             taskMemoryPreview(taskMemory)
                     ))
             ));
+            AgentLlmLogger.logRequest("recommendation_draft", ai, prompt);
             String content = chatModelFactory.chatClient(ai)
                     .prompt(prompt)
                     .call()
                     .content();
+            AgentLlmLogger.logResponse("recommendation_draft", ai, content);
             return parseDraft(content, count);
         } catch (Exception e) {
             log.warn("Recommendation draft generation failed", e);

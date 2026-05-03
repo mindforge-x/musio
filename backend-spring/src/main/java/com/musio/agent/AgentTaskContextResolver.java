@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Locale;
 
 @Component
 public class AgentTaskContextResolver {
@@ -45,8 +46,9 @@ public class AgentTaskContextResolver {
             List<ConversationHistoryMessage> history,
             AgentTaskMemory taskMemory
     ) {
-        return resolveWithModel(ai, userMessage, history == null ? List.of() : history, taskMemory)
+        AgentTaskContext context = resolveWithModel(ai, userMessage, history == null ? List.of() : history, taskMemory)
                 .orElseGet(() -> fallbackContext(userMessage));
+        return explicitSongSearchContext(userMessage, context);
     }
 
     Optional<AgentTaskContext> parseModelResponse(String userMessage, String content) {
@@ -76,10 +78,13 @@ public class AgentTaskContextResolver {
             if (!"agent".equals(mode)) {
                 return Optional.of(AgentTaskContext.direct(userMessage, confidence, "model"));
             }
-            if (effectiveRequest.isBlank() || !tracePublisher.shouldTraceUserMessage(effectiveRequest)) {
+            boolean traceable = tracePublisher.shouldTraceUserMessage(effectiveRequest)
+                    || explicitSongSearch(userMessage).isPresent()
+                    || explicitSongSearch(effectiveRequest).isPresent();
+            if (effectiveRequest.isBlank() || !traceable) {
                 return Optional.empty();
             }
-            return Optional.of(AgentTaskContext.agent(
+            AgentTaskContext context = AgentTaskContext.agent(
                     userMessage,
                     effectiveRequest,
                     cleanSearchKeyword(searchKeyword, avoidSongTitles),
@@ -93,7 +98,8 @@ public class AgentTaskContextResolver {
                     targetSongTitle,
                     contextMode,
                     memoryAccess
-            ));
+            );
+            return Optional.of(explicitSongSearchContext(userMessage, context));
         } catch (Exception e) {
             return Optional.empty();
         }
@@ -122,10 +128,12 @@ public class AgentTaskContextResolver {
                         """.formatted(taskMemoryPreview(taskMemory), historyPreview(history), userMessage))
         ));
         try {
+            AgentLlmLogger.logRequest("router", ai, prompt);
             String content = chatModelFactory.chatClient(ai)
                     .prompt(prompt)
                     .call()
                     .content();
+            AgentLlmLogger.logResponse("router", ai, content);
             return parseModelResponse(userMessage, content);
         } catch (Exception e) {
             log.warn("Agent task context resolution failed", e);
@@ -167,6 +175,7 @@ public class AgentTaskContextResolver {
                 - 普通寒暄、感谢、确认、情绪表达属于 chat。
                 - 搜索歌曲、推荐歌曲、歌词、评论、歌单、歌手、专辑、播放相关请求属于 agent。
                 - taskType 必须反映本轮最需要调用的音乐能力：搜索是 search，推荐是 recommend，热门评论/感人评论是 comments，歌词是 lyrics，歌曲详情/背景/故事/介绍是 detail，歌单是 playlist，音乐画像是 profile，播放控制是 playback。
+                - “推荐/找/搜索/播放 某歌手的某首明确歌曲”是精确搜歌任务，不是开放推荐；例如“给我推荐李荣浩的不遗憾”应输出 taskType=search，searchKeyword="李荣浩 不遗憾"。
                 - 如果当前输入依赖最近对话上下文，请把它改写成一条完整、可独立执行的音乐请求，放入 effectiveRequest。
                 - 当前用户输入优先级最高；只有用户明确说“再试试”“继续”“换一首”“类似刚才”“上一首/这首”等延续请求时，contextMode 才能是 follow_up、retry 或 refer_previous_song。
                 - 新的开放推荐请求属于 new_task，不要继承上一轮场景、关键词或排除列表；memoryAccess 的所有布尔值应为 false。
@@ -361,6 +370,111 @@ public class AgentTaskContextResolver {
         return cleaned.length() > 40 ? cleaned.substring(0, 40) : cleaned;
     }
 
+    private AgentTaskContext explicitSongSearchContext(String userMessage, AgentTaskContext context) {
+        Optional<ExplicitSongSearch> request = explicitSongSearch(userMessage);
+        if (request.isEmpty()) {
+            return context;
+        }
+        ExplicitSongSearch songSearch = request.get();
+        int searchLimit = context == null ? 0 : context.searchLimit();
+        double confidence = Math.max(context == null ? 0.0 : context.confidence(), 0.92);
+        String source = context == null || context.source() == null || context.source().isBlank()
+                ? "heuristic-explicit-song"
+                : context.source() + "+explicit-song";
+        return AgentTaskContext.agent(
+                userMessage,
+                "搜索 " + songSearch.artist() + "《" + songSearch.title() + "》",
+                songSearch.artist() + " " + songSearch.title(),
+                searchLimit,
+                false,
+                List.of(),
+                confidence,
+                source,
+                "search",
+                "",
+                songSearch.title(),
+                "new_task",
+                AgentTaskMemoryAccess.none("明确歌手和歌曲名的请求按精确搜歌处理。")
+        );
+    }
+
+    private Optional<ExplicitSongSearch> explicitSongSearch(String userMessage) {
+        String value = safe(userMessage)
+                .replaceAll("[。！？!?，,；;：:]+$", "")
+                .strip();
+        if (value.isBlank() || !hasSearchIntent(value) || hasSecondarySongIntent(value)) {
+            return Optional.empty();
+        }
+        String stripped = stripSearchPrefix(value);
+        int separator = stripped.indexOf("的");
+        if (separator <= 0 || separator >= stripped.length() - 1) {
+            return Optional.empty();
+        }
+        String artist = cleanExplicitSongPart(stripped.substring(0, separator));
+        String title = cleanExplicitSongTitle(stripped.substring(separator + 1));
+        if (artist.isBlank() || title.isBlank() || genericSongTitle(title)) {
+            return Optional.empty();
+        }
+        if (artist.length() > 24 || title.length() > 40) {
+            return Optional.empty();
+        }
+        return Optional.of(new ExplicitSongSearch(artist, title));
+    }
+
+    private boolean hasSearchIntent(String value) {
+        String normalized = normalizeComparable(value);
+        return normalized.contains("推荐")
+                || normalized.contains("找")
+                || normalized.contains("搜索")
+                || normalized.contains("播放")
+                || normalized.contains("想听")
+                || normalized.contains("听一下")
+                || normalized.contains("来一首");
+    }
+
+    private boolean hasSecondarySongIntent(String value) {
+        String normalized = normalizeComparable(value);
+        return normalized.contains("歌词")
+                || normalized.contains("评论")
+                || normalized.contains("背景")
+                || normalized.contains("故事")
+                || normalized.contains("详情")
+                || normalized.contains("介绍");
+    }
+
+    private String stripSearchPrefix(String value) {
+        String stripped = safe(value);
+        boolean changed;
+        do {
+            String next = stripped.replaceFirst("^(请|麻烦|可以|能不能|帮我|给我|我想听|想听|推荐一下|推荐|找一下|找|搜索一下|搜索|播放一下|播放|放一下|听一下|来一首)", "").strip();
+            changed = !next.equals(stripped);
+            stripped = next;
+        } while (changed);
+        return stripped;
+    }
+
+    private String cleanExplicitSongPart(String value) {
+        return safe(value)
+                .replaceAll("^[《“\"'‘]+", "")
+                .replaceAll("[》”\"'’]+$", "")
+                .strip();
+    }
+
+    private String cleanExplicitSongTitle(String value) {
+        return cleanExplicitSongPart(value)
+                .replaceAll("(这首歌曲|这首歌|这首|歌曲)$", "")
+                .strip();
+    }
+
+    private boolean genericSongTitle(String value) {
+        String normalized = normalizeComparable(value);
+        return List.of("歌", "歌曲", "音乐", "一首", "一首歌", "一首歌曲", "几首歌", "几首歌曲").contains(normalized);
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value.strip();
+    }
+
     private boolean containsNormalized(String value, String candidate) {
         String normalizedValue = normalizeComparable(value);
         String normalizedCandidate = normalizeComparable(candidate);
@@ -375,7 +489,7 @@ public class AgentTaskContextResolver {
     }
 
     private String cleanTaskType(String taskType, String effectiveRequest, String searchKeyword) {
-        String normalized = taskType == null ? "" : taskType.strip().toLowerCase(java.util.Locale.ROOT);
+        String normalized = taskType == null ? "" : taskType.strip().toLowerCase(Locale.ROOT);
         if (List.of("chat", "search", "recommend", "comments", "lyrics", "detail", "playlist", "profile", "playback", "unknown").contains(normalized)) {
             return normalized;
         }
@@ -408,7 +522,7 @@ public class AgentTaskContextResolver {
     }
 
     private String cleanContextMode(String contextMode, boolean followUp, String taskType, String targetSongId) {
-        String normalized = contextMode == null ? "" : contextMode.strip().toLowerCase(java.util.Locale.ROOT);
+        String normalized = contextMode == null ? "" : contextMode.strip().toLowerCase(Locale.ROOT);
         if (List.of("new_task", "follow_up", "retry", "refer_previous_song").contains(normalized)) {
             return normalized;
         }
@@ -474,6 +588,12 @@ public class AgentTaskContextResolver {
                 .limit(20)
                 .toList();
     }
+}
+
+record ExplicitSongSearch(
+        String artist,
+        String title
+) {
 }
 
 record AgentTaskContext(
