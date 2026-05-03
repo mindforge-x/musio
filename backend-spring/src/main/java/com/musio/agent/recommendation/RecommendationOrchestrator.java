@@ -49,15 +49,23 @@ public class RecommendationOrchestrator {
     private RecommendationResponse resolve(RecommendationDraft draft, int requestedCount) {
         AgentRunContext.runId().ifPresent(runId -> tracePublisher.publishRecommendationDone(runId, draft.candidates().size()));
         AgentRunContext.runId().ifPresent(tracePublisher::publishRecommendationResolveRunning);
+        AgentRunContext.runId().ifPresent(runId -> tracePublisher.publishRecommendationResolveToolStart(runId, draft.candidates().size()));
         RecommendationResult result = songResolver.resolve(draft.candidates(), requestedCount);
+        List<String> resolvedTitles = result.resolved().stream()
+                .map(item -> titleWithArtist(item.song().title(), item.song().artists()))
+                .toList();
+        List<String> unresolvedTitles = result.unresolved().stream()
+                .map(this::titleWithArtist)
+                .toList();
+        AgentRunContext.runId().ifPresent(runId -> tracePublisher.publishRecommendationResolveToolResult(
+                runId,
+                resolvedTitles,
+                unresolvedTitles
+        ));
         AgentRunContext.runId().ifPresent(runId -> tracePublisher.publishRecommendationResolveDone(
                 runId,
-                result.resolved().stream()
-                        .map(item -> titleWithArtist(item.song().title(), item.song().artists()))
-                        .toList(),
-                result.unresolved().stream()
-                        .map(this::titleWithArtist)
-                        .toList()
+                resolvedTitles,
+                unresolvedTitles
         ));
 
         if (result.resolved().isEmpty()) {

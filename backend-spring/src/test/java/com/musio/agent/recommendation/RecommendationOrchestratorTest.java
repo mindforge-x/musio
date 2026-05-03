@@ -71,6 +71,14 @@ class RecommendationOrchestratorTest {
                 .orElseThrow();
         assertEquals("tool", resolveTrace.data().get("stage"));
         assertTrue(((String) resolveTrace.data().get("summary")).contains("不存在的歌 - 不存在的歌手"));
+        assertTrue(events.stream().anyMatch(event ->
+                "tool_start".equals(event.type()) && "recommendation_resolve".equals(event.data().get("tool"))
+        ));
+        assertTrue(events.stream().anyMatch(event ->
+                "tool_result".equals(event.type())
+                        && "recommendation_resolve".equals(event.data().get("tool"))
+                        && ((String) event.data().get("summary")).contains("不存在的歌 - 不存在的歌手")
+        ));
     }
 
     @Test

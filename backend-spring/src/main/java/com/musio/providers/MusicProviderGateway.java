@@ -1,6 +1,9 @@
 package com.musio.providers;
 
 import com.musio.model.ProviderType;
+import com.musio.providers.observation.ObservedMusicProvider;
+import com.musio.providers.observation.ProviderCallObserver;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.EnumMap;
@@ -12,8 +15,13 @@ public class MusicProviderGateway {
     private final Map<ProviderType, MusicProvider> providers = new EnumMap<>(ProviderType.class);
 
     public MusicProviderGateway(List<MusicProvider> providerList) {
+        this(providerList, null);
+    }
+
+    @Autowired
+    public MusicProviderGateway(List<MusicProvider> providerList, ProviderCallObserver observer) {
         for (MusicProvider provider : providerList) {
-            providers.put(provider.type(), provider);
+            providers.put(provider.type(), observer == null ? provider : new ObservedMusicProvider(provider, observer));
         }
     }
 

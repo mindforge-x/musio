@@ -10,12 +10,36 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Component
 public class SongResolver {
-    private static final int DEFAULT_SEARCH_LIMIT = 5;
+    private static final int DEFAULT_SEARCH_LIMIT = 10;
     private static final int DEFAULT_RESULT_LIMIT = 5;
     private static final int MAX_RESULT_LIMIT = 10;
+    private static final Pattern TRAILING_BRACKET_QUALIFIER = Pattern.compile("\\s*[（(\\[【]([^）)\\]】]+)[）)\\]】]\\s*$");
+    private static final List<String> SAFE_TITLE_SUFFIXES = List.of(
+            "liveversion",
+            "live",
+            "现场版",
+            "现场",
+            "专辑版",
+            "完整版",
+            "录音室版",
+            "albumversion",
+            "radioversion",
+            "radioedit"
+    );
+    private static final List<String> UNSAFE_TITLE_QUALIFIERS = List.of(
+            "dj",
+            "remix",
+            "cover",
+            "翻唱",
+            "伴奏",
+            "纯音乐",
+            "karaoke"
+    );
 
     private final MusicProviderGateway providerGateway;
 
@@ -47,7 +71,7 @@ public class SongResolver {
         return new RecommendationResult(
                 List.copyOf(resolved),
                 List.copyOf(unresolved),
-                "已精确匹配 " + resolved.size() + " 首歌曲，未匹配 " + unresolved.size() + " 首。"
+                "已可信匹配 " + resolved.size() + " 首歌曲，未匹配 " + unresolved.size() + " 首。"
         );
     }
 
@@ -65,7 +89,9 @@ public class SongResolver {
     }
 
     private boolean titleMatches(RecommendationCandidate candidate, Song song) {
-        return normalize(candidate.title()).equals(normalize(song.title()));
+        Set<String> expected = titleVariants(candidate.title());
+        Set<String> actual = titleVariants(song.title());
+        return expected.stream().anyMatch(actual::contains);
     }
 
     private boolean artistMatches(RecommendationCandidate candidate, Song song) {
@@ -75,7 +101,7 @@ public class SongResolver {
         }
         return song.artists().stream()
                 .map(this::normalize)
-                .anyMatch(expected::equals);
+                .anyMatch(actual -> artistEquivalent(expected, actual));
     }
 
     private String query(RecommendationCandidate candidate) {
@@ -93,6 +119,94 @@ public class SongResolver {
                 .filter(Character::isLetterOrDigit)
                 .forEach(builder::appendCodePoint);
         return builder.toString();
+    }
+
+    private String canonicalTitle(String value) {
+        String stripped = stripSafeBracketQualifiers(safe(value));
+        String normalized = normalize(stripped);
+        for (String suffix : SAFE_TITLE_SUFFIXES) {
+            if (normalized.endsWith(suffix) && normalized.length() > suffix.length()) {
+                return normalized.substring(0, normalized.length() - suffix.length());
+            }
+        }
+        return normalized;
+    }
+
+    private Set<String> titleVariants(String value) {
+        Set<String> variants = new LinkedHashSet<>();
+        String title = safe(value);
+        addTitleVariant(variants, title);
+        addBracketAliases(variants, title);
+        return variants;
+    }
+
+    private void addBracketAliases(Set<String> variants, String value) {
+        String title = safe(value);
+        while (!title.isBlank()) {
+            Matcher matcher = TRAILING_BRACKET_QUALIFIER.matcher(title);
+            if (!matcher.find()) {
+                return;
+            }
+            String qualifier = matcher.group(1);
+            if (unsafeTitleQualifier(qualifier)) {
+                return;
+            }
+            String base = title.substring(0, matcher.start()).strip();
+            addTitleVariant(variants, base);
+            addTitleVariant(variants, qualifier);
+            title = base;
+        }
+    }
+
+    private void addTitleVariant(Set<String> variants, String value) {
+        String normalized = normalize(value);
+        if (!normalized.isBlank()) {
+            variants.add(normalized);
+        }
+        String canonical = canonicalTitle(value);
+        if (!canonical.isBlank()) {
+            variants.add(canonical);
+        }
+    }
+
+    private String stripSafeBracketQualifiers(String value) {
+        String stripped = value;
+        boolean changed;
+        do {
+            Matcher matcher = TRAILING_BRACKET_QUALIFIER.matcher(stripped);
+            changed = false;
+            if (matcher.find() && safeTitleQualifier(matcher.group(1))) {
+                stripped = stripped.substring(0, matcher.start()).strip();
+                changed = true;
+            }
+        } while (changed);
+        return stripped;
+    }
+
+    private boolean safeTitleQualifier(String qualifier) {
+        String normalized = normalize(qualifier);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return !unsafeTitleQualifier(qualifier) && SAFE_TITLE_SUFFIXES.stream().anyMatch(normalized::contains);
+    }
+
+    private boolean unsafeTitleQualifier(String qualifier) {
+        String normalized = normalize(qualifier);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return UNSAFE_TITLE_QUALIFIERS.stream().anyMatch(normalized::contains);
+    }
+
+    private boolean artistEquivalent(String expected, String actual) {
+        if (expected.equals(actual)) {
+            return true;
+        }
+        if (expected.length() < 2 || actual.length() < 2) {
+            return false;
+        }
+        return actual.contains(expected) || expected.contains(actual);
     }
 
     private boolean isBlank(String value) {

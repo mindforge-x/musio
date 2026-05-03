@@ -49,6 +49,37 @@ public class AgentTracePublisher {
         publish(runId, "tool.recommendation-resolve", "tool", "running", "解析可播放歌曲", "正在把推荐候选精确匹配到 QQ 音乐歌曲。", Map.of());
     }
 
+    public void publishRecommendationResolveToolStart(String runId, int candidateCount) {
+        eventBus.publish(runId, AgentEvent.of("tool_start", Map.of(
+                "runId", runId,
+                "tool", "recommendation_resolve",
+                "input", Map.of(
+                        "candidateCount", candidateCount,
+                        "searchLimitPerCandidate", 10,
+                        "matchingPolicy", "title_artist_conservative"
+                )
+        )));
+    }
+
+    public void publishRecommendationResolveToolResult(String runId, List<String> resolvedTitles, List<String> unresolvedTitles) {
+        int resolvedCount = resolvedTitles == null ? 0 : resolvedTitles.size();
+        int unresolvedCount = unresolvedTitles == null ? 0 : unresolvedTitles.size();
+        List<String> safeResolvedTitles = safeTitles(resolvedTitles);
+        List<String> safeUnresolvedTitles = safeTitles(unresolvedTitles);
+        eventBus.publish(runId, AgentEvent.of("tool_result", Map.of(
+                "runId", runId,
+                "tool", "recommendation_resolve",
+                "summary", recommendationResolveSummary(
+                        safeResolvedTitles,
+                        safeUnresolvedTitles,
+                        resolvedCount,
+                        unresolvedCount
+                ),
+                "resolvedCount", resolvedCount,
+                "unresolvedCount", unresolvedCount
+        )));
+    }
+
     public void publishRecommendationResolveDone(String runId, int resolvedCount, int unresolvedCount) {
         publishRecommendationResolveDone(runId, List.of(), List.of(), resolvedCount, unresolvedCount);
     }

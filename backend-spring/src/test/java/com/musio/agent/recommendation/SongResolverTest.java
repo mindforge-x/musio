@@ -47,6 +47,66 @@ class SongResolverTest {
         assertEquals("安静", result.unresolved().getFirst().title());
     }
 
+    @Test
+    void resolvesSafeLiveVersionWhenExactTitleIsUnavailable() {
+        SongResolver resolver = new SongResolver(new MusicProviderGateway(List.of(new FakeProvider())));
+
+        RecommendationResult result = resolver.resolve(List.of(
+                new RecommendationCandidate("夜曲", "周杰伦", "安全版本后缀可以接受。")
+        ), 1);
+
+        assertEquals(1, result.resolved().size());
+        assertEquals("夜曲 (Live)", result.resolved().getFirst().song().title());
+    }
+
+    @Test
+    void resolvesCombinedArtistNameWhenExpectedArtistIsPresent() {
+        SongResolver resolver = new SongResolver(new MusicProviderGateway(List.of(new FakeProvider())));
+
+        RecommendationResult result = resolver.resolve(List.of(
+                new RecommendationCandidate("普通朋友", "陶喆", "联合歌手字段里包含目标歌手。")
+        ), 1);
+
+        assertEquals(1, result.resolved().size());
+        assertEquals("普通朋友", result.resolved().getFirst().song().title());
+    }
+
+    @Test
+    void keepsUnsafeDjVersionUnresolved() {
+        SongResolver resolver = new SongResolver(new MusicProviderGateway(List.of(new FakeProvider())));
+
+        RecommendationResult result = resolver.resolve(List.of(
+                new RecommendationCandidate("深夜的酒", "大城", "DJ 版本不应当冒充原曲。")
+        ), 1);
+
+        assertTrue(result.resolved().isEmpty());
+        assertEquals(1, result.unresolved().size());
+    }
+
+    @Test
+    void resolvesTranslatedTitleAliasInParentheses() {
+        SongResolver resolver = new SongResolver(new MusicProviderGateway(List.of(new FakeProvider())));
+
+        RecommendationResult result = resolver.resolve(List.of(
+                new RecommendationCandidate("给你宇宙", "脸红的思春期", "括号里的中文译名应当可匹配。")
+        ), 1);
+
+        assertEquals(1, result.resolved().size());
+        assertEquals("우주를 줄게 (给你宇宙)", result.resolved().getFirst().song().title());
+    }
+
+    @Test
+    void resolvesOriginalTitleWhenProviderTitleContainsTranslatedAlias() {
+        SongResolver resolver = new SongResolver(new MusicProviderGateway(List.of(new FakeProvider())));
+
+        RecommendationResult result = resolver.resolve(List.of(
+                new RecommendationCandidate("우주를 줄게", "脸红的思春期", "原文标题也应当可匹配带译名的结果。")
+        ), 1);
+
+        assertEquals(1, result.resolved().size());
+        assertEquals("우주를 줄게 (给你宇宙)", result.resolved().getFirst().song().title());
+    }
+
     private static final class FakeProvider implements MusicProvider {
         @Override
         public ProviderType type() {
@@ -63,6 +123,18 @@ class SongResolverTest {
             }
             if ("安静 林俊杰".equals(keyword)) {
                 return List.of(new Song("qqmusic:quiet", ProviderType.QQMUSIC, "安静", List.of("周杰伦"), "范特西", 334, null));
+            }
+            if ("夜曲 周杰伦".equals(keyword)) {
+                return List.of(new Song("qqmusic:nocturne-live", ProviderType.QQMUSIC, "夜曲 (Live)", List.of("周杰伦"), "现场专辑", 260, null));
+            }
+            if ("普通朋友 陶喆".equals(keyword)) {
+                return List.of(new Song("qqmusic:regular-friend", ProviderType.QQMUSIC, "普通朋友", List.of("陶喆 / 蔡健雅"), "I'm OK", 260, null));
+            }
+            if ("深夜的酒 大城".equals(keyword)) {
+                return List.of(new Song("qqmusic:late-wine-dj", ProviderType.QQMUSIC, "深夜的酒 (DJ晨晨版)", List.of("大城"), "深夜的酒", 190, null));
+            }
+            if ("给你宇宙 脸红的思春期".equals(keyword) || "우주를 줄게 脸红的思春期".equals(keyword)) {
+                return List.of(new Song("qqmusic:universe", ProviderType.QQMUSIC, "우주를 줄게 (给你宇宙)", List.of("脸红的思春期"), "RED PLANET", 214, null));
             }
             return List.of();
         }
