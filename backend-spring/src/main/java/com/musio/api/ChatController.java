@@ -1,6 +1,7 @@
 package com.musio.api;
 
 import com.musio.agent.AgentRunService;
+import com.musio.model.ChatHistoryMessage;
 import com.musio.model.ChatRequest;
 import com.musio.model.ChatRunResponse;
 import com.musio.model.PendingConfirmation;
@@ -13,6 +14,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/chat")
@@ -41,6 +44,11 @@ public class ChatController {
     @PostMapping("/runs/{runId}/cancel")
     public ChatRunResponse cancel(@PathVariable String runId) {
         return agentRunService.cancel(runId);
+    }
+
+    @GetMapping("/history/{userId}")
+    public List<ChatHistoryMessage> history(@PathVariable String userId) {
+        return agentRunService.history(userId);
     }
 
     @DeleteMapping("/history/{userId}")

@@ -1,4 +1,5 @@
 import {
+  ChatHistoryMessage,
   ChatRunResponse,
   Lyrics,
   LoginStartResult,
@@ -66,6 +67,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ userId: "local", message })
     }),
+  chatHistory: (userId = "local") => request<ChatHistoryMessage[]>(`/api/chat/history/${encodeURIComponent(userId)}`),
   search: (keyword: string, limit = 8) =>
     request<Song[]>(`/api/music/search?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
   songUrl: (songId: string) => request<SongUrl>(`/api/music/songs/${encodeURIComponent(songId)}/url`),

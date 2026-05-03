@@ -26,6 +26,7 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -132,7 +133,7 @@ public class AgentRuntime {
                 tracePublisher.publishComposeDone(runId);
             }
 
-            conversationHistoryService.appendTurn(userId, request.message(), answerText);
+            conversationHistoryService.appendTurn(userId, request.message(), answerText, preludeContext.songs());
 
             eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
         } catch (Exception e) {
@@ -173,7 +174,7 @@ public class AgentRuntime {
             }
             tracePublisher.publishComposeDone(runId);
         }
-        conversationHistoryService.appendTurn(userId, request.message(), response.answerText());
+        conversationHistoryService.appendTurn(userId, request.message(), response.answerText(), response.songs());
         eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
     }
 
@@ -242,13 +243,13 @@ public class AgentRuntime {
         List<AgentToolExecution> executions = toolExecutor.execute(plan);
         if (executions.isEmpty()) {
             if (taskContext.toolEvidenceExpected()) {
-                return new PreludeContext("""
+            return new PreludeContext("""
 
                         本轮工具规划器没有产生可执行的真实工具结果。
                         最终回答不得声称“已读取 QQ 音乐详情/评论/歌词/歌单”等没有真实发生的工具调用。
                         最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
                         必须直接用自然语言回答；如果缺少真实工具结果，请明确说明本轮没有拿到对应真实工具结果。
-                        """, false);
+                        """, false, List.of());
             }
             return PreludeContext.empty();
         }
@@ -264,7 +265,42 @@ public class AgentRuntime {
                 如果 search_songs 返回了歌曲，正文列出的主推荐歌曲必须来自本轮结果 JSON；不要一边展示工具歌曲卡片，一边正文列出另一批未查询歌曲。
                 工具调用阶段已经结束；最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
                 你必须直接生成面向用户的中文自然语言回答。
-                """.formatted(toolExecutionContext(executions)), true);
+                """.formatted(toolExecutionContext(executions)), true, songsFromExecutions(executions));
+    }
+
+    private List<Song> songsFromExecutions(List<AgentToolExecution> executions) {
+        Map<String, Song> songsById = new LinkedHashMap<>();
+        for (AgentToolExecution execution : executions) {
+            for (Song song : songsFromResultJson(execution.resultJson())) {
+                if (song != null && song.id() != null && !song.id().isBlank()) {
+                    songsById.putIfAbsent(song.id(), song);
+                }
+            }
+        }
+        return List.copyOf(songsById.values());
+    }
+
+    private List<Song> songsFromResultJson(String resultJson) {
+        if (resultJson == null || resultJson.isBlank()) {
+            return List.of();
+        }
+        try {
+            JsonNode songsNode = objectMapper.readTree(resultJson).path("songs");
+            if (!songsNode.isArray() || songsNode.isEmpty()) {
+                return List.of();
+            }
+            List<Song> songs = new ArrayList<>();
+            for (JsonNode songNode : songsNode) {
+                try {
+                    songs.add(objectMapper.treeToValue(songNode, Song.class));
+                } catch (Exception ignored) {
+                    // Ignore malformed song cards; the natural language answer remains recoverable.
+                }
+            }
+            return songs;
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     private String toolExecutionContext(List<AgentToolExecution> executions) {
@@ -361,9 +397,13 @@ public class AgentRuntime {
         }
     }
 
-    private record PreludeContext(String text, boolean evidenceBound) {
+    private record PreludeContext(String text, boolean evidenceBound, List<Song> songs) {
         static PreludeContext empty() {
-            return new PreludeContext("", false);
+            return new PreludeContext("", false, List.of());
+        }
+
+        private PreludeContext {
+            songs = songs == null ? List.of() : List.copyOf(songs);
         }
     }
 

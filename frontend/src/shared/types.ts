@@ -30,6 +30,13 @@ export type ChatRunResponse = {
   message: string;
 };
 
+export type ChatHistoryMessage = {
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+  songs?: Song[];
+};
+
 export type Song = {
   id: string;
   provider?: string;

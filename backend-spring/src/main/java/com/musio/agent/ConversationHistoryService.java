@@ -3,6 +3,7 @@ package com.musio.agent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.config.MusioConfigService;
+import com.musio.model.Song;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -67,14 +68,18 @@ public class ConversationHistoryService {
     }
 
     public void appendTurn(String userId, String userMessage, String assistantMessage) {
+        appendTurn(userId, userMessage, assistantMessage, List.of());
+    }
+
+    public void appendTurn(String userId, String userMessage, String assistantMessage, List<Song> songs) {
         String normalizedUserId = normalizeUserId(userId);
         synchronized (lock(normalizedUserId)) {
             Path path = historyPath(normalizedUserId);
             try {
                 Files.createDirectories(path.getParent());
                 List<String> lines = List.of(
-                        writeJson(new ConversationHistoryMessage("user", userMessage, Instant.now())),
-                        writeJson(new ConversationHistoryMessage("assistant", assistantMessage, Instant.now()))
+                        writeJson(new ConversationHistoryMessage("user", userMessage, Instant.now(), List.of())),
+                        writeJson(new ConversationHistoryMessage("assistant", assistantMessage, Instant.now(), safeSongs(songs)))
                 );
                 Files.write(path, lines, StandardCharsets.UTF_8,
                         StandardOpenOption.CREATE,
@@ -119,6 +124,10 @@ public class ConversationHistoryService {
 
     private Object lock(String userId) {
         return userLocks.computeIfAbsent(safeFileName(userId), ignored -> new Object());
+    }
+
+    private List<Song> safeSongs(List<Song> songs) {
+        return songs == null ? List.of() : List.copyOf(songs);
     }
 
     private String writeJson(ConversationHistoryMessage message) {

@@ -3,6 +3,7 @@ package com.musio.agent;
 import com.musio.events.AgentEventBus;
 import com.musio.events.SseEventPublisher;
 import com.musio.model.AgentEvent;
+import com.musio.model.ChatHistoryMessage;
 import com.musio.model.ChatRequest;
 import com.musio.model.ChatRunResponse;
 import com.musio.model.PendingConfirmation;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Map;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -88,6 +90,13 @@ public class AgentRunService {
         String normalizedUserId = conversationHistoryService.normalizeUserId(userId);
         conversationHistoryService.clear(normalizedUserId);
         return new ChatRunResponse(normalizedUserId, "cleared", "Conversation history cleared.");
+    }
+
+    public List<ChatHistoryMessage> history(String userId) {
+        String normalizedUserId = conversationHistoryService.normalizeUserId(userId);
+        return conversationHistoryService.load(normalizedUserId).stream()
+                .map(message -> new ChatHistoryMessage(message.role(), message.content(), message.createdAt(), message.songs()))
+                .toList();
     }
 
     @PreDestroy

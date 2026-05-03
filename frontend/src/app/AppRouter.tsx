@@ -6,6 +6,7 @@ import { EventLog, ProviderStatus, Song, SongComment, SystemStatus } from "../sh
 import { AgentChatPanel } from "../features/agent-chat/AgentChatPanel";
 import { AgentEvents } from "../features/agent-chat/AgentEvents";
 import { SongCards } from "../features/agent-chat/SongCards";
+import type { ChatMessage } from "../features/agent-chat/chatTypes";
 import { MusioPlaylistsPage } from "../features/musio-playlists/MusioPlaylistsPage";
 import { PlayerShell } from "../features/player/PlayerShell";
 import { PlayerSpectrum } from "../features/player/PlayerSpectrum";
@@ -19,6 +20,8 @@ export function AppRouter() {
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([]);
   const [events, setEvents] = useState<EventLog[]>([]);
   const [songs, setSongs] = useState<Song[]>([]);
+  const [chatDraft, setChatDraft] = useState("给我推荐 5 首适合深夜写代码听的歌。");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [activeDrawer, setActiveDrawer] = useState<WorkbenchDrawer>("queue");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -43,6 +46,30 @@ export function AppRouter() {
       .catch(() => setStatus(null));
     refreshProviderStatuses();
   }, [refreshProviderStatuses]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.chatHistory("local")
+      .then((history) => {
+        if (cancelled || history.length === 0) {
+          return;
+        }
+        const restoredMessages = history.map<ChatMessage>((item, index) => ({
+          id: `history-${index}-${item.createdAt}`,
+          role: item.role === "assistant" ? "agent" : "user",
+          content: item.content,
+          state: "done",
+          songs: item.songs?.length ? item.songs : undefined
+        }));
+        setChatMessages((current) => current.length > 0 ? current : restoredMessages);
+      })
+      .catch(() => {
+        // History restore is best-effort; an unavailable backend should not block local chatting.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const backendLabel = useMemo(() => status?.backend ?? "offline", [status]);
   const qqMusicStatus = useMemo(
@@ -180,7 +207,11 @@ export function AppRouter() {
                 <AgentChatPanel
                   busy={busy}
                   disabledReason={musicOperationDisabledReason}
+                  message={chatDraft}
+                  messages={chatMessages}
                   onBusyChange={setBusy}
+                  onMessageChange={setChatDraft}
+                  onMessagesChange={setChatMessages}
                   onEvent={addEvent}
                   onPlaySong={playSong}
                   onAddToQueue={addToQueue}

@@ -1,11 +1,9 @@
-package com.musio.agent;
-
-import com.musio.model.Song;
+package com.musio.model;
 
 import java.time.Instant;
 import java.util.List;
 
-public record ConversationHistoryMessage(
+public record ChatHistoryMessage(
         String role,
         String content,
         Instant createdAt,
