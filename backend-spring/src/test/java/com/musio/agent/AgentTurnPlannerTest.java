@@ -100,6 +100,56 @@ class AgentTurnPlannerTest {
     }
 
     @Test
+    void parsesRecommendationPlanWithInternalRecommendTool() {
+        AgentTurnPlan plan = planner.parsePlan("""
+                {
+                  "disposition": "use_tools",
+                  "taskType": "recommend",
+                  "contextMode": "new_task",
+                  "effectiveRequest": "给我推荐 5 首适合深夜写代码听的歌。",
+                  "memoryUse": {"usesTaskMemory": false, "usedFields": [], "reason": "新的场景推荐任务"},
+                  "toolCalls": [
+                    {"toolName": "recommend_songs", "arguments": {"request": "给我推荐 5 首适合深夜写代码听的歌。", "count": 5}}
+                  ],
+                  "confidence": 0.92
+                }
+                """, "给我推荐 5 首适合深夜写代码听的歌。").orElseThrow();
+
+        assertEquals(TurnDisposition.USE_TOOLS, plan.disposition());
+        assertEquals("recommend", plan.taskType());
+        assertTrue(plan.hasTool("recommend_songs"));
+        assertTrue(plan.toToolPlan().toolCalls().isEmpty());
+
+        AgentTaskContext context = plan.toLegacyTaskContext("给我推荐 5 首适合深夜写代码听的歌。");
+
+        assertTrue(context.agentTask());
+        assertEquals("recommend", context.taskType());
+        assertEquals(5, context.searchLimit());
+        assertEquals("", context.searchKeyword());
+    }
+
+    @Test
+    void dropsRecommendationToolWithoutCountAndFallsBackToRespondOnly() {
+        AgentTurnPlan plan = planner.parsePlan("""
+                {
+                  "disposition": "use_tools",
+                  "taskType": "recommend",
+                  "contextMode": "new_task",
+                  "effectiveRequest": "推荐适合深夜写代码听的歌",
+                  "memoryUse": {"usesTaskMemory": false, "usedFields": [], "reason": "新的场景推荐任务"},
+                  "toolCalls": [
+                    {"toolName": "recommend_songs", "arguments": {"request": "推荐适合深夜写代码听的歌"}}
+                  ],
+                  "confidence": 0.92
+                }
+                """, "推荐适合深夜写代码听的歌").orElseThrow();
+
+        assertEquals(TurnDisposition.RESPOND_ONLY, plan.disposition());
+        assertTrue(plan.toolCalls().isEmpty());
+        assertEquals("no_valid_tool_calls", plan.fallbackReason());
+    }
+
+    @Test
     void turnPlannerMemoryPreviewDoesNotExposeLastSearchLimit() {
         AgentTaskMemory memory = new AgentTaskMemory(
                 "local",

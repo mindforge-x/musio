@@ -32,7 +32,10 @@ record AgentTurnPlan(
         if (disposition != TurnDisposition.USE_TOOLS || toolCalls == null || toolCalls.isEmpty()) {
             return AgentToolPlan.empty();
         }
-        return new AgentToolPlan(toolCalls, confidence);
+        List<AgentToolCall> executableCalls = toolCalls.stream()
+                .filter(call -> call != null && !"recommend_songs".equals(call.toolName()))
+                .toList();
+        return new AgentToolPlan(executableCalls, confidence);
     }
 
     AgentTaskContext toLegacyTaskContext(String originalMessage) {
@@ -40,19 +43,19 @@ record AgentTurnPlan(
         if (disposition != TurnDisposition.USE_TOOLS) {
             return AgentTaskContext.direct(originalMessage, confidence, "turn-planner");
         }
-        SearchToolIntent searchIntent = firstSearchToolIntent();
+        ToolIntent toolIntent = firstToolIntent();
         String targetSongId = firstSongId();
         boolean followUp = List.of("follow_up", "retry", "refer_previous_song", "correction").contains(safe(contextMode));
         return AgentTaskContext.agent(
                 originalMessage,
                 effectiveRequest.isBlank() ? originalMessage : effectiveRequest,
-                searchIntent.keyword(),
-                searchIntent.limit(),
+                toolIntent.keyword(),
+                toolIntent.limit(),
                 followUp,
-                List.of(),
+                toolIntent.excludedTitles(),
                 confidence,
                 "turn-planner",
-                safe(taskType).isBlank() ? "unknown" : safe(taskType),
+                effectiveTaskType(),
                 targetSongId,
                 "",
                 safe(contextMode).isBlank() ? "new_task" : safe(contextMode),
@@ -64,17 +67,35 @@ record AgentTurnPlan(
         return disposition == TurnDisposition.USE_TOOLS && toolCalls != null && !toolCalls.isEmpty();
     }
 
-    private SearchToolIntent firstSearchToolIntent() {
+    boolean hasTool(String toolName) {
+        return toolCalls != null && toolCalls.stream()
+                .anyMatch(call -> call != null && toolName.equals(call.toolName()));
+    }
+
+    private String effectiveTaskType() {
+        if (hasTool("recommend_songs")) {
+            return "recommend";
+        }
+        return safe(taskType).isBlank() ? "unknown" : safe(taskType);
+    }
+
+    private ToolIntent firstToolIntent() {
         if (toolCalls == null) {
-            return new SearchToolIntent("", 0);
+            return new ToolIntent("", 0, List.of());
         }
         for (AgentToolCall call : toolCalls) {
-            if (call != null && "search_songs".equals(call.toolName())) {
-                Map<String, Object> arguments = call.arguments() == null ? Map.of() : call.arguments();
-                return new SearchToolIntent(text(arguments, "keyword"), integer(arguments, "limit"));
+            if (call == null || call.arguments() == null) {
+                continue;
+            }
+            Map<String, Object> arguments = call.arguments();
+            if ("search_songs".equals(call.toolName())) {
+                return new ToolIntent(text(arguments, "keyword"), integer(arguments, "limit"), stringList(arguments, "excludedTitles"));
+            }
+            if ("recommend_songs".equals(call.toolName())) {
+                return new ToolIntent("", integer(arguments, "count"), stringList(arguments, "excludedTitles"));
             }
         }
-        return new SearchToolIntent("", 0);
+        return new ToolIntent("", 0, List.of());
     }
 
     private String firstSongId() {
@@ -113,11 +134,24 @@ record AgentTurnPlan(
         return 0;
     }
 
+    private static List<String> stringList(Map<String, Object> arguments, String key) {
+        Object value = arguments.get(key);
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .filter(item -> !item.isBlank())
+                .map(String::strip)
+                .toList();
+    }
+
     private static String safe(String value) {
         return value == null ? "" : value.strip();
     }
 
-    private record SearchToolIntent(String keyword, int limit) {
+    private record ToolIntent(String keyword, int limit, List<String> excludedTitles) {
     }
 }
 

@@ -30,6 +30,7 @@ public class AgentTurnPlanner {
     private static final int MAX_TOOL_CALLS = 12;
     private static final int DEFAULT_SEARCH_LIMIT = 8;
     private static final Set<String> ALLOWED_TOOLS = Set.of(
+            "recommend_songs",
             "search_songs",
             "get_user_music_profile",
             "get_song_detail",
@@ -213,6 +214,21 @@ public class AgentTurnPlanner {
                 cleaned.remove("excludedTitles");
             }
         }
+        if ("recommend_songs".equals(toolName)) {
+            cleaned.put("request", text(cleaned, "request"));
+            Integer count = cleanRequiredLimit(cleaned.get("count"), 1, 10);
+            if (count == null) {
+                cleaned.remove("count");
+            } else {
+                cleaned.put("count", count);
+            }
+            List<String> excludedTitles = stringList(cleaned.get("excludedTitles"));
+            if (!excludedTitles.isEmpty()) {
+                cleaned.put("excludedTitles", excludedTitles);
+            } else {
+                cleaned.remove("excludedTitles");
+            }
+        }
         if ("get_hot_comments".equals(toolName)) {
             cleaned.put("limit", cleanLimit(cleaned.get("limit"), 10, 1, 30));
         }
@@ -238,6 +254,7 @@ public class AgentTurnPlanner {
             case "get_song_detail", "get_lyrics", "get_hot_comments" -> hasText(arguments, "songId");
             case "get_playlist_songs" -> hasText(arguments, "playlistId");
             case "search_songs" -> hasText(arguments, "keyword") && hasInteger(arguments, "limit");
+            case "recommend_songs" -> hasText(arguments, "request") && hasInteger(arguments, "count");
             default -> true;
         };
     }
@@ -275,6 +292,7 @@ public class AgentTurnPlanner {
                 所有用户输入都已经进入 Agent runtime；你的任务不是决定是否进入 Agent，而是决定本轮是否需要调用音乐能力。
 
                 可用只读工具：
+                - recommend_songs {"request": string, "count": number, "excludedTitles": string[]}：生成个性化推荐候选，并由后端精确解析成可播放歌曲卡片；适合开放推荐、场景推荐、风格推荐。excludedTitles 可选。
                 - search_songs {"keyword": string, "limit": number, "excludedTitles": string[]}：搜索歌曲、歌手、专辑或候选音乐；excludedTitles 可选。
                 - get_user_music_profile {}：读取本地音乐画像摘要。
                 - get_song_detail {"songId": string}：读取歌曲详情。
@@ -290,10 +308,13 @@ public class AgentTurnPlanner {
                 - 普通寒暄、感谢、确认、情绪表达且不需要音乐能力时，输出 disposition=respond_only、taskType=chat、toolCalls=[]。
                 - 当前用户输入优先级最高；任务记忆只用于恢复搜索目标、上一轮结果和排除项，不用于默认继承旧数量。
                 - 搜索歌曲、推荐歌曲、歌词、评论、歌单、歌手、专辑、播放前发现歌曲等音乐相关请求，应输出 disposition=use_tools 并规划只读工具。
-                - taskType 必须描述本轮主能力：如果主要工具是 search_songs 且目标是查找/替换候选歌曲，使用 taskType=search；只有生成个性化推荐候选时才使用 taskType=recommend。
+                - 开放推荐、场景推荐、风格推荐应使用 recommend_songs，taskType=recommend；不要把场景、用途、时段或心境描述直接当 search_songs.keyword 搜索。
+                - 精确搜歌、歌手搜索、替换已有候选、播放前查找候选时使用 search_songs，taskType=search。
+                - taskType 必须描述本轮主能力：如果主要工具是 search_songs 且目标是查找/替换候选歌曲，使用 taskType=search；如果主要工具是 recommend_songs，使用 taskType=recommend。
                 - 如果用户在纠正上一轮音乐搜索目标，例如说明刚才的歌手、歌名或关键词说错了，使用 contextMode=correction，并基于纠正后的正向目标规划 search_songs。
                 - search_songs.keyword 只写正向搜索目标，例如歌手、歌曲名或风格；不要把排除、比较或“不是 X 是 Y”这类关系拼进 keyword。
                 - search_songs.arguments.limit 必须显式填写。根据当前用户输入和 effectiveRequest 的数量含义填写；只有当前请求完全没有数量含义时才用默认 8。
+                - recommend_songs.arguments.count 必须显式填写。根据当前用户输入和 effectiveRequest 的推荐数量填写；完全没有数量含义时默认 5。
                 - 不要编造 songId、playlistId 或用户没有提供且任务记忆中没有的标识符。
                 - 歌曲评论、歌词、详情类任务如果没有目标 songId，需要先 search_songs 找候选；如果有目标 songId，优先直接调用对应工具。
                 - request_confirmation 只用于未来写操作或账号动作；当前只读工具可以直接 use_tools。

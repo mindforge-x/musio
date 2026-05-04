@@ -101,11 +101,12 @@ public class AgentRuntime {
                         taskContext.preservePreviousSongContext()
                 );
             }
+            PreludeContext preludeContext;
             if (traceEnabled && shouldUseRecommendationPrelude(turnPlan, taskContext)) {
-                publishRecommendationRun(runId, userId, ai, request, taskContext, taskMemory, traceEnabled);
-                return;
+                preludeContext = recommendationPreludeContext(ai, taskContext, taskMemory);
+            } else {
+                preludeContext = traceEnabled ? plannedToolPreludeContext(turnPlan, taskContext) : PreludeContext.empty();
             }
-            PreludeContext preludeContext = traceEnabled ? plannedToolPreludeContext(turnPlan, taskContext) : PreludeContext.empty();
             logComposerPolicy(runId, ai, turnPlan, preludeContext);
             Prompt prompt = conversationPrompt(history, request.message(), taskContext.promptContext(), preludeContext);
 
@@ -114,6 +115,7 @@ public class AgentRuntime {
             if (!preludeContext.answerPrefix().isBlank()) {
                 publishAnswerText(runId, ai, preludeContext.answerPrefix(), traceEnabled, composeStarted);
             }
+            publishSongCards(runId, preludeContext.songs());
             AgentLlmLogger.logRequest("final_answer", ai, prompt);
             chatModelFactory.chatClient(ai)
                     .prompt(prompt)
@@ -154,14 +156,10 @@ public class AgentRuntime {
         }
     }
 
-    private void publishRecommendationRun(
-            String runId,
-            String userId,
+    private PreludeContext recommendationPreludeContext(
             MusioConfig.Ai ai,
-            ChatRequest request,
             AgentTaskContext taskContext,
-            AgentTaskMemory taskMemory,
-            boolean traceEnabled
+            AgentTaskMemory taskMemory
     ) {
         RecommendationResponse response = recommendationOrchestrator.recommend(
                 ai,
@@ -170,17 +168,26 @@ public class AgentRuntime {
                 taskContext.avoidSongTitles(),
                 taskMemory
         );
-        boolean[] composeStarted = {false};
-        publishAnswerText(runId, ai, response.answerText(), traceEnabled, composeStarted);
-        publishSongCards(runId, response.songs());
-        if (traceEnabled) {
-            if (!composeStarted[0]) {
-                tracePublisher.publishComposeRunning(runId);
-            }
-            tracePublisher.publishComposeDone(runId);
-        }
-        conversationHistoryService.appendTurn(userId, request.message(), response.answerText(), response.songs());
-        eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
+        log.info(
+                "TURN_EXECUTOR stage=recommendation_executor runId={} userId={} disposition=USE_TOOLS taskType=recommend executionCount=1 songCardCount={} songCardTitles={}",
+                AgentRunContext.runId().orElse("-"),
+                AgentRunContext.userId().orElse("-"),
+                response.songs() == null ? 0 : response.songs().size(),
+                songTitles(response.songs())
+        );
+        return new PreludeContext("""
+
+                本轮内部推荐器已根据用户请求和音乐画像生成候选，并把候选精确解析成真实歌曲卡片。
+                本轮歌曲卡片顺序是：
+                %s
+                本轮推荐理由是：
+                %s
+                如果最终回答正文列出歌曲，必须严格按照上面的歌曲卡片顺序输出，不要重排、补歌或改写歌手。
+                工具调用阶段已经结束；最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
+                """.formatted(songTitles(response.songs()), recommendationReasons(response)),
+                true,
+                response.songs(),
+                "");
     }
 
     private boolean shouldUseRecommendationPrelude(AgentTurnPlan turnPlan, AgentTaskContext taskContext) {
@@ -188,7 +195,7 @@ public class AgentRuntime {
             return false;
         }
         // Planner 的显式工具计划优先；legacy recommendation 不能覆盖已声明的 search_songs 等工具调用。
-        return turnPlan.toolCalls() == null || turnPlan.toolCalls().isEmpty();
+        return turnPlan.toolCalls() == null || turnPlan.toolCalls().isEmpty() || turnPlan.hasTool("recommend_songs");
     }
 
     private void publishAnswerDelta(String runId, MusioConfig.Ai ai, AgentAnswerStreamGuard answerGuard, String chunk, boolean traceEnabled, boolean[] composeStarted) {
@@ -237,7 +244,7 @@ public class AgentRuntime {
 
                     请只根据系统消息中的本轮任务上下文和本轮工具 evidence 回答。
                     最近历史已经只用于 Router/Planner 判断上下文，不得把历史 assistant 文本当成本轮事实来源。
-                    如果系统已经说明主歌曲列表由后端输出，你只能补充简短说明或使用建议，不要重复、重排或重新编号歌曲列表。
+                    如果你在正文中列出歌曲，必须严格使用系统消息里的“本轮歌曲卡片顺序”，不要重排、补歌或改写歌手。
                     """.formatted(userMessage)));
         } else {
             for (ConversationHistoryMessage message : history) {
@@ -280,7 +287,6 @@ public class AgentRuntime {
             }
             return PreludeContext.empty();
         }
-        String orderedSongListText = orderedSongListText(evidence.songs());
         return new PreludeContext("""
 
                 本轮工具规划器已根据任务上下文决定并执行这些只读音乐工具：
@@ -288,7 +294,7 @@ public class AgentRuntime {
                 本轮歌曲卡片顺序是：
                 %s
                 最终回答必须基于这些真实工具结果；不要声称调用了没有出现在上方结果里的工具。
-                如果本轮有歌曲卡片，正文主歌曲列表已经由后端按 song_cards 顺序输出；最终回答模型不得重复、重排或重新编号歌曲主列表。
+                如果最终回答正文列出歌曲，必须严格按照上面的歌曲卡片顺序输出，不要重排、补歌或改写歌手。
                 当前工具结果优先于历史对话、任务记忆和上一轮失败描述；不要把历史里的 HTTP 500 当成本轮结果。
                 工具状态以“状态”行和 result.success 为准：success=true 的工具不得写成失败、HTTP 500 或没有拿到结果。
                 如果工具成功但结果相关性不高，应说明“QQ 音乐返回结果不够准确”，不要改写成接口失败。
@@ -299,7 +305,7 @@ public class AgentRuntime {
                 """.formatted(toolExecutionContext(evidence.executions()), songTitles(evidence.songs())),
                 true,
                 evidence.songs(),
-                orderedSongListText);
+                "");
     }
 
     private List<Song> songsFromExecutions(List<AgentToolExecution> executions) {
@@ -348,22 +354,26 @@ public class AgentRuntime {
         return builder.toString().strip();
     }
 
-    static String orderedSongListText(List<Song> songs) {
-        if (songs == null || songs.isEmpty()) {
-            return "";
+    private String recommendationReasons(RecommendationResponse response) {
+        if (response == null || response.result() == null || response.result().resolved() == null || response.result().resolved().isEmpty()) {
+            return response == null || response.answerText() == null || response.answerText().isBlank()
+                    ? "无"
+                    : response.answerText().strip();
         }
-        StringBuilder builder = new StringBuilder("根据本轮真实工具结果，我按歌曲卡片顺序整理如下：\n\n");
-        for (int index = 0; index < songs.size(); index++) {
-            Song song = songs.get(index);
+        StringBuilder builder = new StringBuilder();
+        for (int index = 0; index < response.result().resolved().size(); index++) {
+            var item = response.result().resolved().get(index);
+            Song song = item.song();
             builder.append(index + 1)
-                    .append(". 《")
-                    .append(song.title() == null || song.title().isBlank() ? song.id() : song.title())
-                    .append("》 - ")
-                    .append(song.artists() == null || song.artists().isEmpty() ? "未知歌手" : String.join(" / ", song.artists()))
+                    .append(". ")
+                    .append(song == null || song.title() == null || song.title().isBlank() ? "未知歌曲" : song.title())
+                    .append(" - ")
+                    .append(song == null || song.artists() == null || song.artists().isEmpty() ? "未知歌手" : String.join(" / ", song.artists()))
+                    .append("：")
+                    .append(item.reason() == null || item.reason().isBlank() ? "无" : item.reason())
                     .append('\n');
         }
-        builder.append('\n');
-        return builder.toString();
+        return builder.toString().strip();
     }
 
     private String combineAnswer(String prefix, String generatedText) {
@@ -492,7 +502,7 @@ public class AgentRuntime {
 
     private void logComposerPolicy(String runId, MusioConfig.Ai ai, AgentTurnPlan plan, PreludeContext preludeContext) {
         log.info(
-                "TURN_COMPOSER stage=final_composer runId={} userId={} provider={} model={} disposition={} taskType={} evidenceBound={} allowHistoryAsContext={} allowClaimToolUse={} songCardCount={}",
+                "TURN_COMPOSER stage=final_composer runId={} userId={} provider={} model={} disposition={} taskType={} evidenceBound={} allowHistoryAsContext={} allowClaimToolUse={} songCardCount={} songCardsProvided={}",
                 runId,
                 AgentRunContext.userId().orElse("-"),
                 ai == null ? "" : ai.provider(),
@@ -502,7 +512,8 @@ public class AgentRuntime {
                 preludeContext.evidenceBound(),
                 !preludeContext.evidenceBound(),
                 preludeContext.evidenceBound(),
-                preludeContext.songs().size()
+                preludeContext.songs().size(),
+                preludeContext.hasSongCards()
         );
     }
 
@@ -524,6 +535,10 @@ public class AgentRuntime {
         private PreludeContext {
             songs = songs == null ? List.of() : List.copyOf(songs);
             answerPrefix = answerPrefix == null ? "" : answerPrefix;
+        }
+
+        private boolean hasSongCards() {
+            return !songs.isEmpty();
         }
     }
 
