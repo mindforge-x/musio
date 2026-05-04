@@ -6,12 +6,14 @@ type ProviderLoginCardProps = {
   login: LoginStartResult | null;
   loginStatus: LoginStatus | null;
   authenticated: boolean;
+  credentialStored: boolean;
   skipped: boolean;
   connectionState?: string;
   musicGeneState?: string;
   busy: boolean;
   musicGeneBusy: boolean;
   onStartLogin: () => void;
+  onRelogin: () => void;
   onSkip: () => void;
   onGenerateMusicGene: () => void;
 };
@@ -21,17 +23,20 @@ export function ProviderLoginCard({
   login,
   loginStatus,
   authenticated,
+  credentialStored,
   skipped,
   connectionState,
   musicGeneState,
   busy,
   musicGeneBusy,
   onStartLogin,
+  onRelogin,
   onSkip,
   onGenerateMusicGene
 }: ProviderLoginCardProps) {
   const state = providerStateLabel(connectionState, musicGeneState, authenticated, skipped, loginStatus?.state);
   const hasQr = Boolean(login?.qrCodeDataUrl);
+  const canRelogin = !hasQr && (authenticated || credentialStored || Boolean(loginStatus?.credentialStored));
 
   return (
     <section className="panel auth-panel">
@@ -49,12 +54,18 @@ export function ProviderLoginCard({
             <RotateCcw size={18} />
             {musicGeneBusy ? "生成中" : "生成音乐基因"}
           </button>
-        ) : (
+        ) : !authenticated ? (
           <button className="primary-action" type="button" onClick={onStartLogin} disabled={busy || authenticated}>
             {hasQr ? <RotateCcw size={18} /> : <QrCode size={18} />}
             {hasQr ? "刷新二维码" : "开始扫码登录"}
           </button>
-        )}
+        ) : null}
+        {canRelogin ? (
+          <button className="secondary-action" type="button" onClick={onRelogin} disabled={busy}>
+            <RotateCcw size={16} />
+            重新登录
+          </button>
+        ) : null}
         <button className="ghost-action" type="button" onClick={onSkip} disabled={busy || authenticated}>
           <SkipForward size={16} />
           跳过

@@ -6,6 +6,9 @@ const PLAYBACK_MODES: PlaybackMode[] = ["SEQUENTIAL", "REPEAT_ONE", "REPEAT_ALL"
 const SPECTRUM_BAR_COUNT = 56;
 const SPECTRUM_MIN_HZ = 32;
 const SPECTRUM_MAX_HZ = 16_000;
+const PLAYBACK_RECOVERY_DELAY_MS = 2600;
+const PLAYBACK_RECOVERY_MAX_ATTEMPTS = 3;
+const PLAYBACK_PROGRESS_STALL_MS = 7000;
 const IDLE_SPECTRUM_LEVELS = Array.from({ length: SPECTRUM_BAR_COUNT }, () => 6);
 const QUIET_SPECTRUM_LEVELS = Array.from({ length: SPECTRUM_BAR_COUNT }, () => 6);
 
@@ -43,6 +46,12 @@ export function usePlayerStore() {
   const spectrumFrameRef = useRef<number | null>(null);
   const spectrumLastUpdateRef = useRef(0);
   const syncedLyricsRef = useRef<SyncedLyricLine[]>([]);
+  const userPausedRef = useRef(false);
+  const suppressPauseSyncRef = useRef(false);
+  const recoveryTimeoutRef = useRef<number | null>(null);
+  const recoveryInFlightRef = useRef(false);
+  const recoveryAttemptsRef = useRef(0);
+  const lastProgressRef = useRef({ positionSeconds: 0, updatedAt: 0 });
 
   useEffect(() => {
     stateRef.current = state;
@@ -56,6 +65,11 @@ export function usePlayerStore() {
     function updatePosition() {
       const positionSeconds = Number.isFinite(audio.currentTime) ? audio.currentTime : null;
       const lyricLine = positionSeconds === null ? null : lyricLineAt(positionSeconds, syncedLyricsRef.current);
+      if (positionSeconds !== null && Math.abs(positionSeconds - lastProgressRef.current.positionSeconds) > 0.25) {
+        lastProgressRef.current = { positionSeconds, updatedAt: Date.now() };
+        recoveryAttemptsRef.current = 0;
+        clearPlaybackRecoveryTimeout();
+      }
       setState((current) => ({
         ...current,
         positionSeconds: positionSeconds === null ? current.positionSeconds : Math.floor(positionSeconds),
@@ -71,6 +85,8 @@ export function usePlayerStore() {
     }
 
     function handleEnded() {
+      clearPlaybackRecoveryTimeout();
+      recoveryAttemptsRef.current = 0;
       stopSpectrumMonitor();
       const current = stateRef.current;
       const nextIndex = nextQueueIndex(current);
@@ -88,7 +104,13 @@ export function usePlayerStore() {
     }
 
     function handleError() {
+      clearPlaybackRecoveryTimeout();
       stopSpectrumMonitor();
+      const current = stateRef.current;
+      if (!userPausedRef.current && current.currentSong && !current.paused && recoveryAttemptsRef.current < PLAYBACK_RECOVERY_MAX_ATTEMPTS) {
+        schedulePlaybackRecovery(500);
+        return;
+      }
       setState((current) => ({
         ...current,
         paused: true,
@@ -97,22 +119,54 @@ export function usePlayerStore() {
       }));
     }
 
+    function handlePause() {
+      if (suppressPauseSyncRef.current || audio.ended) {
+        return;
+      }
+      stopSpectrumMonitor();
+      if (userPausedRef.current || !stateRef.current.currentSong) {
+        setState((current) => ({ ...current, paused: true, spectrumLevels: IDLE_SPECTRUM_LEVELS }));
+        return;
+      }
+      schedulePlaybackRecovery(400);
+    }
+
+    function handlePlaying() {
+      userPausedRef.current = false;
+      clearPlaybackRecoveryTimeout();
+      setState((current) => ({ ...current, paused: false }));
+      startSpectrumMonitor(audio);
+    }
+
+    function handleBufferGap() {
+      schedulePlaybackRecovery(PLAYBACK_RECOVERY_DELAY_MS);
+    }
+
     audio.addEventListener("timeupdate", updatePosition);
     audio.addEventListener("loadedmetadata", updateDuration);
     audio.addEventListener("durationchange", updateDuration);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("error", handleError);
+    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("playing", handlePlaying);
+    audio.addEventListener("waiting", handleBufferGap);
+    audio.addEventListener("stalled", handleBufferGap);
 
     return () => {
       stopSpectrumMonitor(false);
-      audio.pause();
-      audio.removeAttribute("src");
-      audio.load();
+      clearPlaybackRecoveryTimeout();
       audio.removeEventListener("timeupdate", updatePosition);
       audio.removeEventListener("loadedmetadata", updateDuration);
       audio.removeEventListener("durationchange", updateDuration);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("error", handleError);
+      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("playing", handlePlaying);
+      audio.removeEventListener("waiting", handleBufferGap);
+      audio.removeEventListener("stalled", handleBufferGap);
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
       sourceNodeRef.current?.disconnect();
       analyserRef.current?.disconnect();
       void audioContextRef.current?.close();
@@ -168,7 +222,17 @@ export function usePlayerStore() {
       if (!currentAudio || currentAudio.paused || currentAudio.ended) {
         spectrumFrameRef.current = null;
         setState((current) => ({ ...current, spectrumLevels: IDLE_SPECTRUM_LEVELS }));
+        if (currentAudio && currentAudio.paused && !currentAudio.ended && !stateRef.current.paused && !userPausedRef.current) {
+          schedulePlaybackRecovery(400);
+        }
         return;
+      }
+      if (
+        !stateRef.current.paused &&
+        lastProgressRef.current.updatedAt > 0 &&
+        Date.now() - lastProgressRef.current.updatedAt > PLAYBACK_PROGRESS_STALL_MS
+      ) {
+        schedulePlaybackRecovery(0);
       }
 
       if (timestamp - spectrumLastUpdateRef.current > 70) {
@@ -190,6 +254,138 @@ export function usePlayerStore() {
     if (reset) {
       setState((current) => ({ ...current, spectrumLevels: IDLE_SPECTRUM_LEVELS }));
     }
+  }
+
+  function clearPlaybackRecoveryTimeout() {
+    if (recoveryTimeoutRef.current !== null) {
+      window.clearTimeout(recoveryTimeoutRef.current);
+      recoveryTimeoutRef.current = null;
+    }
+  }
+
+  function schedulePlaybackRecovery(delayMs: number) {
+    const audio = audioRef.current;
+    const current = stateRef.current;
+    if (
+      !audio ||
+      !current.currentSong ||
+      current.paused ||
+      audio.ended ||
+      userPausedRef.current ||
+      recoveryInFlightRef.current ||
+      recoveryTimeoutRef.current !== null
+    ) {
+      return;
+    }
+    recoveryTimeoutRef.current = window.setTimeout(() => {
+      recoveryTimeoutRef.current = null;
+      void recoverCurrentPlayback();
+    }, delayMs);
+  }
+
+  async function recoverCurrentPlayback() {
+    const audio = audioRef.current;
+    const current = stateRef.current;
+    if (!audio || !current.currentSong || current.paused || audio.ended || userPausedRef.current || recoveryInFlightRef.current) {
+      return;
+    }
+    if (recoveryAttemptsRef.current >= PLAYBACK_RECOVERY_MAX_ATTEMPTS) {
+      stopSpectrumMonitor();
+      setState((value) => ({
+        ...value,
+        paused: true,
+        lyricLine: "[ERROR: STREAM STALLED]",
+        spectrumLevels: IDLE_SPECTRUM_LEVELS
+      }));
+      return;
+    }
+
+    recoveryInFlightRef.current = true;
+    recoveryAttemptsRef.current += 1;
+    const resumeSeconds = Number.isFinite(audio.currentTime) ? audio.currentTime : current.positionSeconds;
+    const progressStalled = lastProgressRef.current.updatedAt > 0 && Date.now() - lastProgressRef.current.updatedAt > PLAYBACK_PROGRESS_STALL_MS;
+    try {
+      if (audio.paused && audio.src && audio.readyState >= audio.HAVE_CURRENT_DATA) {
+        await audio.play();
+      } else if (audio.src && (audio.paused || audio.readyState < audio.HAVE_FUTURE_DATA || progressStalled)) {
+        await reloadCurrentStream(audio, current.currentSong.id, resumeSeconds);
+      } else {
+        return;
+      }
+      setState((value) => ({ ...value, paused: false }));
+      startSpectrumMonitor(audio);
+    } catch (error) {
+      if (recoveryAttemptsRef.current >= PLAYBACK_RECOVERY_MAX_ATTEMPTS) {
+        stopSpectrumMonitor();
+        setState((value) => ({
+          ...value,
+          paused: true,
+          lyricLine: `[ERROR: ${errorMessage(error)}]`,
+          spectrumLevels: IDLE_SPECTRUM_LEVELS
+        }));
+      } else {
+        recoveryInFlightRef.current = false;
+        schedulePlaybackRecovery(PLAYBACK_RECOVERY_DELAY_MS);
+      }
+    } finally {
+      recoveryInFlightRef.current = false;
+    }
+  }
+
+  function reloadCurrentStream(audio: HTMLAudioElement, songId: string, resumeSeconds: number) {
+    return new Promise<void>((resolve, reject) => {
+      const targetSeconds = Math.max(0, resumeSeconds - 0.4);
+      let settled = false;
+      const timeoutId = window.setTimeout(() => fail(new Error("stream reload timed out")), 9000);
+
+      function cleanup() {
+        window.clearTimeout(timeoutId);
+        audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+        audio.removeEventListener("error", handleReloadError);
+        suppressPauseSyncRef.current = false;
+      }
+
+      function fail(error: Error) {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(error);
+      }
+
+      function handleReloadError() {
+        fail(new Error("stream reload failed"));
+      }
+
+      function handleLoadedMetadata() {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        try {
+          if (targetSeconds > 0 && (!Number.isFinite(audio.duration) || targetSeconds < audio.duration)) {
+            audio.currentTime = targetSeconds;
+          }
+        } catch {
+          // Some providers do not allow precise seeking on a fresh stream. Playing from the stream head is safer than staying stalled.
+        }
+        audio.play().then(resolve).catch((error) => reject(error instanceof Error ? error : new Error("stream replay failed")));
+      }
+
+      audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.addEventListener("error", handleReloadError);
+      suppressPauseSyncRef.current = true;
+      audio.pause();
+      const url = playerClient.streamUrl(songId);
+      const separator = url.includes("?") ? "&" : "?";
+      audio.src = `${url}${separator}recover=${Date.now()}`;
+      audio.load();
+      if (audio.readyState >= audio.HAVE_METADATA) {
+        window.setTimeout(handleLoadedMetadata, 0);
+      }
+    });
   }
 
   function readAnalyserSpectrum(timestamp: number) {
@@ -237,6 +433,10 @@ export function usePlayerStore() {
   async function startPlayback(song: Song, queue: Song[], index: number) {
     const requestId = playRequestRef.current + 1;
     playRequestRef.current = requestId;
+    userPausedRef.current = false;
+    recoveryAttemptsRef.current = 0;
+    lastProgressRef.current = { positionSeconds: 0, updatedAt: Date.now() };
+    clearPlaybackRecoveryTimeout();
     stopSpectrumMonitor();
     syncedLyricsRef.current = [];
     setState((current) => ({
@@ -280,11 +480,13 @@ export function usePlayerStore() {
         throw new Error("播放器尚未初始化");
       }
 
+      suppressPauseSyncRef.current = true;
       audio.pause();
       audio.src = playerClient.streamUrl(song.id);
       audio.currentTime = 0;
       audio.load();
       await audio.play();
+      suppressPauseSyncRef.current = false;
       if (playRequestRef.current !== requestId) {
         return;
       }
@@ -295,6 +497,7 @@ export function usePlayerStore() {
       }));
       startSpectrumMonitor(audio);
     } catch (error) {
+      suppressPauseSyncRef.current = false;
       if (playRequestRef.current === requestId) {
         stopSpectrumMonitor();
         setState((current) => ({
@@ -381,6 +584,9 @@ export function usePlayerStore() {
         return;
       }
       if (state.paused) {
+        userPausedRef.current = false;
+        recoveryAttemptsRef.current = 0;
+        clearPlaybackRecoveryTimeout();
         audio.play()
           .then(() => {
             setState((current) => ({ ...current, paused: false }));
@@ -394,6 +600,8 @@ export function usePlayerStore() {
           })));
         return;
       }
+      userPausedRef.current = true;
+      clearPlaybackRecoveryTimeout();
       audio.pause();
       stopSpectrumMonitor();
       setState((current) => ({ ...current, paused: true, spectrumLevels: IDLE_SPECTRUM_LEVELS }));

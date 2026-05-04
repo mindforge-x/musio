@@ -125,21 +125,7 @@ export function SourceSetupPage({
   async function startLogin() {
     onBusyChange(true);
     try {
-      const result = await providerSetupClient.startLogin(QQ_PROVIDER);
-      setSkippedSources((current) => {
-        const next = new Set(current);
-        next.delete(QQ_PROVIDER);
-        return next;
-      });
-      setLogin(result);
-      setLoginStatus({
-        sessionId: result.sessionId,
-        provider: result.provider,
-        state: result.state,
-        credentialStored: false,
-        message: result.message
-      });
-      onEvent({ id: crypto.randomUUID(), name: "login", detail: `已开始登录：${loginStateLabel(result.state)}` });
+      await beginLogin();
     } catch (error) {
       onEvent({
         id: crypto.randomUUID(),
@@ -149,6 +135,44 @@ export function SourceSetupPage({
     } finally {
       onBusyChange(false);
     }
+  }
+
+  async function relogin() {
+    onBusyChange(true);
+    try {
+      const logout = await providerSetupClient.logout(QQ_PROVIDER);
+      setLogin(null);
+      setLoginStatus(logout);
+      refreshProviderStatuses();
+      onEvent({ id: crypto.randomUUID(), name: "login", detail: "已清理本地 QQ 音乐凭证，准备重新扫码" });
+      await beginLogin();
+    } catch (error) {
+      onEvent({
+        id: crypto.randomUUID(),
+        name: "login",
+        detail: error instanceof Error ? error.message : "重新登录失败"
+      });
+    } finally {
+      onBusyChange(false);
+    }
+  }
+
+  async function beginLogin() {
+    const result = await providerSetupClient.startLogin(QQ_PROVIDER);
+    setSkippedSources((current) => {
+      const next = new Set(current);
+      next.delete(QQ_PROVIDER);
+      return next;
+    });
+    setLogin(result);
+    setLoginStatus({
+      sessionId: result.sessionId,
+      provider: result.provider,
+      state: result.state,
+      credentialStored: false,
+      message: result.message
+    });
+    onEvent({ id: crypto.randomUUID(), name: "login", detail: `已开始登录：${loginStateLabel(result.state)}` });
   }
 
   function skipSource(sourceId: string) {
@@ -244,12 +268,14 @@ export function SourceSetupPage({
             login={login}
             loginStatus={loginStatus}
             authenticated={Boolean(statusByProvider.get(QQ_PROVIDER)?.authenticated)}
+            credentialStored={Boolean(statusByProvider.get(QQ_PROVIDER)?.credentialStored)}
             skipped={skippedSources.has(QQ_PROVIDER)}
             connectionState={statusByProvider.get(QQ_PROVIDER)?.connectionState}
             musicGeneState={statusByProvider.get(QQ_PROVIDER)?.musicGeneState}
             busy={busy}
             musicGeneBusy={musicGeneBusy}
             onStartLogin={startLogin}
+            onRelogin={relogin}
             onSkip={() => skipSource(QQ_PROVIDER)}
             onGenerateMusicGene={generateMusicGene}
           />
