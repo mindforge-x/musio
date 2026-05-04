@@ -136,6 +136,29 @@ class AgentToolPlannerTest {
     }
 
     @Test
+    void doesNotFallbackToSearchSongsForPlaybackTaskWithSearchKeyword() {
+        AgentTaskContext context = AgentTaskContext.agent(
+                "放几首周杰伦的",
+                "放几首周杰伦的",
+                "周杰伦",
+                0,
+                false,
+                java.util.List.of(),
+                0.90,
+                "test",
+                "playback",
+                "",
+                "",
+                "new_task",
+                AgentTaskMemoryAccess.none("测试")
+        );
+
+        AgentToolPlan plan = planner.plan(null, context, "无");
+
+        assertTrue(plan.toolCalls().isEmpty());
+    }
+
+    @Test
     void dropsSongToolsWithoutSongId() {
         AgentToolPlan plan = planner.parsePlan("""
                 {"toolCalls":[{"toolName":"get_hot_comments","arguments":{"limit":10}}],"confidence":0.9}

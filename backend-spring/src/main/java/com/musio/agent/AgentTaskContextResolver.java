@@ -48,7 +48,7 @@ public class AgentTaskContextResolver {
     ) {
         AgentTaskContext context = resolveWithModel(ai, userMessage, history == null ? List.of() : history, taskMemory)
                 .orElseGet(() -> fallbackContext(userMessage));
-        return explicitSongSearchContext(userMessage, context);
+        return context;
     }
 
     Optional<AgentTaskContext> parseModelResponse(String userMessage, String content) {
@@ -64,7 +64,7 @@ public class AgentTaskContextResolver {
             }
 
             String mode = text(root, "mode");
-            String taskType = cleanTaskType(text(root, "taskType"), text(root, "effectiveRequest"), text(root, "searchKeyword"));
+            String taskType = cleanModelTaskType(text(root, "taskType"));
             String effectiveRequest = text(root, "effectiveRequest");
             String searchKeyword = text(root, "searchKeyword");
             String targetSongId = text(root, "targetSongId");
@@ -78,10 +78,7 @@ public class AgentTaskContextResolver {
             if (!"agent".equals(mode)) {
                 return Optional.of(AgentTaskContext.direct(userMessage, confidence, "model"));
             }
-            boolean traceable = tracePublisher.shouldTraceUserMessage(effectiveRequest)
-                    || explicitSongSearch(userMessage).isPresent()
-                    || explicitSongSearch(effectiveRequest).isPresent();
-            if (effectiveRequest.isBlank() || !traceable) {
+            if (effectiveRequest.isBlank()) {
                 return Optional.empty();
             }
             AgentTaskContext context = AgentTaskContext.agent(
@@ -99,7 +96,7 @@ public class AgentTaskContextResolver {
                     contextMode,
                     memoryAccess
             );
-            return Optional.of(explicitSongSearchContext(userMessage, context));
+            return Optional.of(context);
         } catch (Exception e) {
             return Optional.empty();
         }
@@ -142,9 +139,13 @@ public class AgentTaskContextResolver {
     }
 
     private AgentTaskContext fallbackContext(String userMessage) {
+        Optional<ExplicitSongSearch> explicitSongSearch = explicitSongSearch(userMessage);
+        if (explicitSongSearch.isPresent()) {
+            return explicitSongSearchContext(userMessage, AgentTaskContext.direct(userMessage));
+        }
         if (tracePublisher != null && tracePublisher.shouldTraceUserMessage(userMessage)) {
-            String taskType = cleanTaskType("", userMessage, "");
-            return AgentTaskContext.agent(
+            String taskType = inferFallbackTaskType(userMessage, "");
+            AgentTaskContext context = AgentTaskContext.agent(
                     userMessage,
                     userMessage,
                     "",
@@ -159,6 +160,7 @@ public class AgentTaskContextResolver {
                     "new_task",
                     AgentTaskMemoryAccess.none("启发式识别的新音乐任务。")
             );
+            return explicitSongSearchContext(userMessage, context);
         }
         return AgentTaskContext.direct(userMessage);
     }
@@ -175,6 +177,7 @@ public class AgentTaskContextResolver {
                 - 普通寒暄、感谢、确认、情绪表达属于 chat。
                 - 搜索歌曲、推荐歌曲、歌词、评论、歌单、歌手、专辑、播放相关请求属于 agent。
                 - taskType 必须反映本轮最需要调用的音乐能力：搜索是 search，推荐是 recommend，热门评论/感人评论是 comments，歌词是 lyrics，歌曲详情/背景/故事/介绍是 detail，歌单是 playlist，音乐画像是 profile，播放控制是 playback。
+                - playback 只用于暂停、继续播放、上一首、下一首、播放当前或已确定歌曲等控制动作；如果用户想播放但还需要先发现歌曲，应按搜索或推荐任务处理。
                 - “推荐/找/搜索/播放 某歌手的某首明确歌曲”是精确搜歌任务，不是开放推荐；例如“给我推荐李荣浩的不遗憾”应输出 taskType=search，searchKeyword="李荣浩 不遗憾"。
                 - 如果当前输入依赖最近对话上下文，请把它改写成一条完整、可独立执行的音乐请求，放入 effectiveRequest。
                 - 当前用户输入优先级最高；只有用户明确说“再试试”“继续”“换一首”“类似刚才”“上一首/这首”等延续请求时，contextMode 才能是 follow_up、retry 或 refer_previous_song。
@@ -488,11 +491,15 @@ public class AgentTaskContextResolver {
         return Math.max(1, Math.min(20, value));
     }
 
-    private String cleanTaskType(String taskType, String effectiveRequest, String searchKeyword) {
+    private String cleanModelTaskType(String taskType) {
         String normalized = taskType == null ? "" : taskType.strip().toLowerCase(Locale.ROOT);
         if (List.of("chat", "search", "recommend", "comments", "lyrics", "detail", "playlist", "profile", "playback", "unknown").contains(normalized)) {
             return normalized;
         }
+        return "unknown";
+    }
+
+    private String inferFallbackTaskType(String effectiveRequest, String searchKeyword) {
         String request = normalizeComparable(effectiveRequest);
         if (request.contains("评论")) {
             return "comments";
@@ -673,7 +680,8 @@ record AgentTaskContext(
                 || "lyrics".equals(taskType)
                 || "detail".equals(taskType)
                 || "playlist".equals(taskType)
-                || "profile".equals(taskType);
+                || "profile".equals(taskType)
+                || ("playback".equals(taskType) && !searchKeyword.isBlank());
     }
 
     boolean preservePreviousSongContext() {

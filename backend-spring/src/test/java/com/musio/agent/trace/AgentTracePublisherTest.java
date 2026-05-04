@@ -20,6 +20,7 @@ class AgentTracePublisherTest {
     void shouldTraceMusicTasksButNotSmallTalk() {
         assertTrue(publisher.shouldTraceUserMessage("给我推荐 5 首适合深夜写代码听的歌"));
         assertTrue(publisher.shouldTraceUserMessage("找周杰伦的歌"));
+        assertFalse(publisher.shouldTraceUserMessage("放几首周杰伦的"));
         assertFalse(publisher.shouldTraceUserMessage("谢谢"));
         assertFalse(publisher.shouldTraceUserMessage("好的"));
     }

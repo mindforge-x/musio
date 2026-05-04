@@ -24,7 +24,7 @@ class AgentTaskContextResolverTest {
     @Test
     void parsesModelAgentFollowUpAsEffectiveRequest() {
         AgentTaskContext context = resolver.parseModelResponse("再试试", """
-                {"mode":"agent","followUp":true,"effectiveRequest":"给我推荐 10 首适合深夜听的歌","searchKeyword":"深夜听","searchLimit":10,"avoidSongTitles":["晴天"],"confidence":0.91}
+                {"mode":"agent","taskType":"recommend","followUp":true,"effectiveRequest":"给我推荐 10 首适合深夜听的歌","searchKeyword":"深夜听","searchLimit":10,"avoidSongTitles":["晴天"],"confidence":0.91}
                 """).orElseThrow();
 
         assertEquals("给我推荐 10 首适合深夜听的歌", context.planningMessage());
@@ -59,16 +59,21 @@ class AgentTaskContextResolverTest {
     }
 
     @Test
-    void rejectsAgentDecisionWithoutTraceableEffectiveRequest() {
-        assertTrue(resolver.parseModelResponse("再试试", """
-                {"mode":"agent","followUp":true,"effectiveRequest":"继续刚才那个","searchKeyword":"周杰伦","searchLimit":1,"avoidSongTitles":["晴天"],"confidence":0.90}
-                """).isEmpty());
+    void acceptsHighConfidenceAgentDecisionWithoutTraceableGate() {
+        AgentTaskContext context = resolver.parseModelResponse("再试试", """
+                {"mode":"agent","taskType":"search","followUp":true,"effectiveRequest":"继续刚才那个","searchKeyword":"周杰伦","searchLimit":1,"avoidSongTitles":["晴天"],"confidence":0.90}
+                """).orElseThrow();
+
+        assertTrue(context.agentTask());
+        assertEquals("search", context.taskType());
+        assertEquals("周杰伦", context.searchKeyword());
+        assertEquals(List.of("晴天"), context.avoidSongTitles());
     }
 
     @Test
     void dropsSearchKeywordWhenItContainsAvoidedTitle() {
         AgentTaskContext context = resolver.parseModelResponse("换一首", """
-                {"mode":"agent","followUp":true,"effectiveRequest":"搜索周杰伦的一首歌曲","searchKeyword":"周杰伦 不同于 晴天","searchLimit":1,"avoidSongTitles":["晴天"],"confidence":0.91}
+                {"mode":"agent","taskType":"search","followUp":true,"effectiveRequest":"搜索周杰伦的一首歌曲","searchKeyword":"周杰伦 不同于 晴天","searchLimit":1,"avoidSongTitles":["晴天"],"confidence":0.91}
                 """).orElseThrow();
 
         assertEquals("", context.searchKeyword());
@@ -111,16 +116,32 @@ class AgentTaskContextResolverTest {
     }
 
     @Test
-    void treatsExplicitArtistSongRecommendationAsSearchTask() {
+    void preservesModelTaskTypeWithoutExplicitSongHardcodedOverride() {
         AgentTaskContext context = resolver.parseModelResponse("给我推荐李荣浩的不遗憾", """
                 {"mode":"agent","taskType":"recommend","contextMode":"new_task","followUp":false,"memoryAccess":{"useLastSearchKeyword":false,"useLastResultSongs":false,"useAvoidTitles":false,"useToolFailures":false,"reason":"新推荐"},"effectiveRequest":"给我推荐李荣浩的不遗憾","searchKeyword":"","searchLimit":0,"avoidSongTitles":[],"confidence":0.91}
                 """).orElseThrow();
 
-        assertEquals("search", context.taskType());
-        assertEquals("李荣浩 不遗憾", context.searchKeyword());
-        assertEquals("不遗憾", context.targetSongTitle());
-        assertFalse(context.recommendationPreludeAllowed());
-        assertTrue(context.searchPreludeAllowed());
+        assertEquals("recommend", context.taskType());
+        assertEquals("", context.searchKeyword());
+        assertEquals("", context.targetSongTitle());
+        assertTrue(context.recommendationPreludeAllowed());
+        assertFalse(context.searchPreludeAllowed());
+        assertTrue(context.memoryAccess().none());
+    }
+
+    @Test
+    void acceptsColloquialPlayArtistRequestAsModelAgentDecision() {
+        AgentTaskContext context = resolver.parseModelResponse("放几首周杰伦的", """
+                {"mode":"agent","taskType":"playback","contextMode":"new_task","followUp":false,"memoryAccess":{"useLastSearchKeyword":false,"useLastResultSongs":false,"useAvoidTitles":false,"useToolFailures":false,"reason":"新的开放请求，不依赖之前上下文"},"effectiveRequest":"放几首周杰伦的","searchKeyword":"周杰伦","searchLimit":0,"targetSongId":"","targetSongTitle":"","avoidSongTitles":[],"confidence":0.9}
+                """).orElseThrow();
+
+        assertTrue(context.agentTask());
+        assertEquals("playback", context.taskType());
+        assertEquals("周杰伦", context.searchKeyword());
+        assertEquals("new_task", context.contextMode());
+        assertFalse(context.followUp());
+        assertTrue(context.toolEvidenceExpected());
+        assertFalse(context.searchPreludeAllowed());
         assertTrue(context.memoryAccess().none());
     }
 
