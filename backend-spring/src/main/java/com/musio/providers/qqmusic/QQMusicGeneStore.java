@@ -59,11 +59,9 @@ public class QQMusicGeneStore {
         if (provider != ProviderType.QQMUSIC) {
             throw new IllegalArgumentException("QQ Music gene store cannot handle provider: " + provider);
         }
-        if (accountKey == null || accountKey.isBlank()) {
-            throw new IllegalArgumentException("Account key is required for QQ Music gene store.");
-        }
+        String safeAccountKey = MusicAccountRef.requireSafeAccountKey(accountKey);
         return musicGeneRoot
                 .resolve(provider.name().toLowerCase(Locale.ROOT))
-                .resolve(accountKey + ".json");
+                .resolve(safeAccountKey + ".json");
     }
 }

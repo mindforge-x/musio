@@ -3,6 +3,7 @@ package com.musio.model;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 public record MusicAccountRef(
         ProviderType provider,
@@ -13,6 +14,8 @@ public record MusicAccountRef(
         boolean authenticated,
         Instant checkedAt
 ) {
+    private static final Pattern SAFE_ACCOUNT_KEY = Pattern.compile("[A-Za-z0-9._-]+");
+
     public static Optional<MusicAccountRef> qqMusic(
             String userId,
             String euin,
@@ -43,6 +46,17 @@ public record MusicAccountRef(
         if (safeAccountId.isBlank()) {
             throw new IllegalArgumentException("Provider account id does not contain safe filename characters.");
         }
-        return providerPrefix + "_" + safeAccountId;
+        return requireSafeAccountKey(providerPrefix + "_" + safeAccountId);
+    }
+
+    public static String requireSafeAccountKey(String accountKey) {
+        if (accountKey == null || accountKey.isBlank()) {
+            throw new IllegalArgumentException("Account key is required.");
+        }
+        String trimmed = accountKey.trim();
+        if (!SAFE_ACCOUNT_KEY.matcher(trimmed).matches()) {
+            throw new IllegalArgumentException("Account key contains unsafe filename characters.");
+        }
+        return trimmed;
     }
 }

@@ -56,11 +56,9 @@ public class MusicProfileMemoryStore {
     }
 
     private Path path(ProviderType provider, String accountKey) {
-        if (accountKey == null || accountKey.isBlank()) {
-            throw new IllegalArgumentException("Account key is required for music profile store.");
-        }
+        String safeAccountKey = MusicAccountRef.requireSafeAccountKey(accountKey);
         return profileRoot
                 .resolve(provider.name().toLowerCase(Locale.ROOT))
-                .resolve(accountKey + ".json");
+                .resolve(safeAccountKey + ".json");
     }
 }

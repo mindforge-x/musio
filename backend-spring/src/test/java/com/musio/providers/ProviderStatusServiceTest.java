@@ -23,6 +23,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProviderStatusServiceTest {
@@ -104,6 +105,45 @@ class ProviderStatusServiceTest {
         assertTrue(stores.geneStore().read(accountB).isPresent());
         assertTrue(stores.profileStore().read(accountB).isPresent());
         assertFalse(stores.geneStore().read(account("30003")).isPresent());
+    }
+
+    @Test
+    void rejectsUnsafeAccountKeyWhenWritingGene() {
+        StoreSet stores = stores(config());
+
+        MusicGeneSnapshot unsafeSnapshot = new MusicGeneSnapshot(
+                ProviderType.QQMUSIC,
+                "../qqmusic_10001",
+                "10001",
+                null,
+                Instant.EPOCH,
+                Map.of()
+        );
+
+        assertThrows(IllegalArgumentException.class, () -> stores.geneStore().write(unsafeSnapshot));
+    }
+
+    @Test
+    void rejectsUnsafeAccountKeyWhenWritingProfile() {
+        StoreSet stores = stores(config());
+
+        MusicProfileMemory unsafeProfile = new MusicProfileMemory(
+                ProviderType.QQMUSIC,
+                "../qqmusic_10001",
+                "10001",
+                Instant.EPOCH,
+                Instant.EPOCH,
+                "summary",
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                Map.of()
+        );
+
+        assertThrows(IllegalArgumentException.class, () -> stores.profileStore().write(unsafeProfile));
     }
 
     private ProviderStatusService service(MusioConfigService config, boolean credentialStored, QQMusicSidecarClient sidecarClient) {
