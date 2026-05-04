@@ -27,6 +27,7 @@ public class MusicProfileSummaryService {
 
         return new MusicProfileMemory(
                 snapshot.provider(),
+                snapshot.accountKey(),
                 snapshot.userId(),
                 Instant.now(),
                 snapshot.generatedAt(),

@@ -101,10 +101,26 @@ export type ProviderStatus = {
   message: string;
   connectionState: string;
   musicGeneState: string;
+  musicGeneStatus?: MusicGeneStatus;
+};
+
+export type MusicGeneStatus = {
+  state: string;
+  provider: string;
+  accountKey?: string | null;
+  userId?: string | null;
+  euin?: string | null;
+  generatedAt?: string | null;
+  profileGeneratedAt?: string | null;
+  sourceGeneGeneratedAt?: string | null;
+  profileSynced: boolean;
+  staleReason?: string | null;
+  message: string;
 };
 
 export type MusicGeneSnapshot = {
   provider: string;
+  accountKey: string;
   userId: string;
   euin: string;
   generatedAt: string;

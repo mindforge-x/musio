@@ -167,6 +167,7 @@ class AgentToolExecutorTest {
         public Optional<MusicProfileMemory> readOrCreate() {
             return Optional.of(new MusicProfileMemory(
                     ProviderType.QQMUSIC,
+                    "qqmusic_local",
                     "local",
                     Instant.EPOCH,
                     Instant.EPOCH,

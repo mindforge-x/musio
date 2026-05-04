@@ -5,6 +5,7 @@ import java.util.Map;
 
 public record MusicGeneSnapshot(
         ProviderType provider,
+        String accountKey,
         String userId,
         String euin,
         Instant generatedAt,

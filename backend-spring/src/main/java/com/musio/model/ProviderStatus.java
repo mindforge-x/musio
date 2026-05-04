@@ -9,6 +9,7 @@ public record ProviderStatus(
         String loginMethod,
         String message,
         String connectionState,
-        String musicGeneState
+        String musicGeneState,
+        MusicGeneStatus musicGeneStatus
 ) {
 }

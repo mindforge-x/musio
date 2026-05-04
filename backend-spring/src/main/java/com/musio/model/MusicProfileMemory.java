@@ -6,6 +6,7 @@ import java.util.Map;
 
 public record MusicProfileMemory(
         ProviderType provider,
+        String accountKey,
         String userId,
         Instant generatedAt,
         Instant sourceGeneGeneratedAt,

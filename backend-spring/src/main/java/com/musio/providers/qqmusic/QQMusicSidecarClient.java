@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.config.MusioConfigService;
 import com.musio.model.Comment;
 import com.musio.model.Lyrics;
+import com.musio.model.MusicAccountRef;
 import com.musio.model.MusicGeneSnapshot;
 import com.musio.model.Playlist;
 import com.musio.model.ProviderType;
@@ -69,6 +70,7 @@ public class QQMusicSidecarClient {
         SidecarMusicGene musicGene = get("/users/me/music-gene", SidecarMusicGene.class);
         return new MusicGeneSnapshot(
                 ProviderType.QQMUSIC,
+                MusicAccountRef.accountKey(ProviderType.QQMUSIC, musicGene.userId()),
                 musicGene.userId(),
                 musicGene.euin(),
                 parseInstant(musicGene.generatedAt()),
