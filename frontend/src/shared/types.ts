@@ -61,6 +61,11 @@ export type Lyrics = {
   syncedText: string;
 };
 
+export type SyncedLyricLine = {
+  timeSeconds: number;
+  text: string;
+};
+
 export type SongComment = {
   id: string;
   songId: string;
@@ -139,6 +144,8 @@ export type PlayerState = {
   playbackMode: PlaybackMode;
   lyricLine: string;
   lyricsText: string;
+  lyricLines: SyncedLyricLine[];
+  activeLyricIndex: number;
   spectrumLevels: number[];
 };
 

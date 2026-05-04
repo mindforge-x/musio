@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { PlaybackMode, PlayerState, Song } from "../../shared/types";
+import { PlaybackMode, PlayerState, Song, SyncedLyricLine } from "../../shared/types";
 import { playerClient } from "./playerClient";
 
 const PLAYBACK_MODES: PlaybackMode[] = ["SEQUENTIAL", "REPEAT_ONE", "REPEAT_ALL", "SHUFFLE"];
@@ -22,16 +22,13 @@ const initialPlayerState: PlayerState = {
   playbackMode: "SEQUENTIAL",
   lyricLine: "[NO TRACK]",
   lyricsText: "",
+  lyricLines: [],
+  activeLyricIndex: -1,
   spectrumLevels: IDLE_SPECTRUM_LEVELS
 };
 
 type WebAudioWindow = Window & typeof globalThis & {
   webkitAudioContext?: typeof AudioContext;
-};
-
-type SyncedLyricLine = {
-  timeSeconds: number;
-  text: string;
 };
 
 export function usePlayerStore() {
@@ -64,7 +61,8 @@ export function usePlayerStore() {
 
     function updatePosition() {
       const positionSeconds = Number.isFinite(audio.currentTime) ? audio.currentTime : null;
-      const lyricLine = positionSeconds === null ? null : lyricLineAt(positionSeconds, syncedLyricsRef.current);
+      const activeLyricIndex = positionSeconds === null ? -1 : lyricIndexAt(positionSeconds, syncedLyricsRef.current);
+      const lyricLine = activeLyricIndex >= 0 ? syncedLyricsRef.current[activeLyricIndex]?.text ?? null : null;
       if (positionSeconds !== null && Math.abs(positionSeconds - lastProgressRef.current.positionSeconds) > 0.25) {
         lastProgressRef.current = { positionSeconds, updatedAt: Date.now() };
         recoveryAttemptsRef.current = 0;
@@ -73,7 +71,8 @@ export function usePlayerStore() {
       setState((current) => ({
         ...current,
         positionSeconds: positionSeconds === null ? current.positionSeconds : Math.floor(positionSeconds),
-        lyricLine: lyricLine ?? current.lyricLine
+        lyricLine: lyricLine ?? current.lyricLine,
+        activeLyricIndex: syncedLyricsRef.current.length > 0 ? activeLyricIndex : current.activeLyricIndex
       }));
     }
 
@@ -449,6 +448,8 @@ export function usePlayerStore() {
       durationSeconds: song.durationSeconds ?? null,
       lyricLine: "[LOADING LYRICS]",
       lyricsText: "",
+      lyricLines: [],
+      activeLyricIndex: -1,
       spectrumLevels: IDLE_SPECTRUM_LEVELS
     }));
 
@@ -461,16 +462,19 @@ export function usePlayerStore() {
         const fallbackLine = firstLyricLine(lyrics.plainText || lyrics.syncedText);
         syncedLyricsRef.current = syncedLines;
         const positionSeconds = audioRef.current?.currentTime ?? 0;
-        const lyricLine = lyricLineAt(positionSeconds, syncedLines) ?? fallbackLine;
+        const activeLyricIndex = lyricIndexAt(positionSeconds, syncedLines);
+        const lyricLine = activeLyricIndex >= 0 ? syncedLines[activeLyricIndex]?.text ?? null : null;
         setState((current) => ({
           ...current,
-          lyricLine: lyricLine || "[LYRICS UNAVAILABLE]",
-          lyricsText: lyrics.plainText || lyrics.syncedText || ""
+          lyricLine: lyricLine || fallbackLine || "[LYRICS UNAVAILABLE]",
+          lyricsText: lyrics.plainText || lyrics.syncedText || "",
+          lyricLines: syncedLines,
+          activeLyricIndex
         }));
       })
       .catch(() => {
         if (playRequestRef.current === requestId) {
-          setState((current) => ({ ...current, lyricLine: "[LYRICS UNAVAILABLE]", lyricsText: "" }));
+          setState((current) => ({ ...current, lyricLine: "[LYRICS UNAVAILABLE]", lyricsText: "", lyricLines: [], activeLyricIndex: -1 }));
         }
       });
 
@@ -554,6 +558,8 @@ export function usePlayerStore() {
           paused: currentRemoved ? true : current.paused,
           lyricLine: currentRemoved ? "[NO TRACK]" : current.lyricLine,
           lyricsText: currentRemoved ? "" : current.lyricsText,
+          lyricLines: currentRemoved ? [] : current.lyricLines,
+          activeLyricIndex: currentRemoved ? -1 : current.activeLyricIndex,
           spectrumLevels: currentRemoved ? IDLE_SPECTRUM_LEVELS : current.spectrumLevels
         };
       });
@@ -693,9 +699,9 @@ function lyricTimestamp(match: RegExpMatchArray) {
   return minutes * 60 + seconds + fractionSeconds;
 }
 
-function lyricLineAt(positionSeconds: number, lines: SyncedLyricLine[]) {
+function lyricIndexAt(positionSeconds: number, lines: SyncedLyricLine[]) {
   if (lines.length === 0) {
-    return null;
+    return -1;
   }
 
   const adjustedPosition = positionSeconds + 0.18;
@@ -712,7 +718,7 @@ function lyricLineAt(positionSeconds: number, lines: SyncedLyricLine[]) {
     }
   }
 
-  return matchIndex >= 0 ? lines[matchIndex].text : null;
+  return matchIndex;
 }
 
 function errorMessage(error: unknown) {

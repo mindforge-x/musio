@@ -611,7 +611,9 @@ h3 {
 .radio-header-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
+  min-width: 0;
   white-space: nowrap;
 }
 
@@ -1902,8 +1904,7 @@ textarea:focus,
 
 .time-rail span,
 .time-rail small,
-.status-readout span,
-.status-stack span {
+.status-readout span {
   color: var(--text-disabled);
   font-size: 11px;
   letter-spacing: 0.1em;
@@ -1933,7 +1934,6 @@ textarea:focus,
 }
 
 .status-readout,
-.status-stack,
 .drawer-rail {
   display: grid;
   justify-items: center;
@@ -1945,12 +1945,6 @@ textarea:focus,
   font-size: 20px;
   font-weight: 400;
   letter-spacing: 0.06em;
-}
-
-.status-stack {
-  gap: 10px;
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
 }
 
 .drawer-rail {
@@ -2120,16 +2114,78 @@ textarea:focus,
 
 .lyrics-panel {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 16px;
+  height: 100%;
+  min-height: 0;
 }
 
 .lyrics-panel pre {
   margin: 0;
+  min-height: 0;
+  overflow: auto;
   white-space: pre-wrap;
   color: var(--text-primary);
   font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.65;
+}
+
+.lyrics-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 28px 0 42px;
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  scroll-behavior: smooth;
+}
+
+.lyrics-row {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 9px 0;
+  border-left: 2px solid transparent;
+  color: rgba(255, 255, 255, 0.48);
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    padding 140ms ease;
+}
+
+.lyrics-row span {
+  color: rgba(255, 255, 255, 0.3);
+  font-family: var(--font-data);
+  font-size: 10px;
+  line-height: 1.7;
+  letter-spacing: 0.08em;
+}
+
+.lyrics-row strong {
+  min-width: 0;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.55;
+}
+
+.lyrics-row.active {
+  padding-left: 10px;
+  border-color: rgba(72, 216, 143, 0.82);
+  background-color: rgba(72, 216, 143, 0.1);
+  color: var(--text-display);
+}
+
+.lyrics-row.active span {
+  color: rgba(72, 216, 143, 0.82);
+}
+
+.lyrics-row.active strong {
+  text-shadow: 0 0 14px rgba(72, 216, 143, 0.24);
 }
 
 .song-action-cluster {
@@ -2192,14 +2248,6 @@ textarea:focus,
     margin-bottom: 14px;
   }
 
-  .status-stack {
-    writing-mode: initial;
-    transform: none;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
   .drawer-rail {
     display: flex;
   }
@@ -2233,8 +2281,7 @@ textarea:focus,
     height: calc(100vh - 172px);
   }
 
-  .status-readout,
-  .status-stack {
+  .status-readout {
     display: none;
   }
 
@@ -2414,14 +2461,6 @@ textarea:focus,
     transform: none;
   }
 
-  .status-stack {
-    writing-mode: initial;
-    transform: none;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-
   .drawer-rail {
     display: flex;
   }
@@ -2451,8 +2490,7 @@ textarea:focus,
     border-radius: 10px;
   }
 
-  .status-readout,
-  .status-stack {
+  .status-readout {
     display: none;
   }
 
@@ -2564,8 +2602,7 @@ textarea:focus,
   transform: translateY(-50%);
 }
 
-.workspace-workbench .status-readout,
-.workspace-workbench .status-stack {
+.workspace-workbench .status-readout {
   opacity: 0.56;
 }
 
@@ -2755,8 +2792,7 @@ textarea:focus,
   gap: 12px;
 }
 
-.workspace-workbench .status-readout,
-.workspace-workbench .status-stack {
+.workspace-workbench .status-readout {
   width: 132px;
   display: grid;
   justify-items: end;
@@ -2782,22 +2818,6 @@ textarea:focus,
   font-size: 10px;
 }
 
-.workspace-workbench .status-stack {
-  writing-mode: horizontal-tb;
-  transform: none;
-}
-
-.workspace-workbench .status-stack span {
-  max-width: 100%;
-  color: rgba(255, 255, 255, 0.56);
-  font-size: 9px;
-  line-height: 1.25;
-  overflow: hidden;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .workspace-workbench .drawer-rail {
   justify-self: end;
   border-radius: 999px;
@@ -2811,8 +2831,7 @@ textarea:focus,
     width: 116px;
   }
 
-  .workspace-workbench .status-readout,
-  .workspace-workbench .status-stack {
+  .workspace-workbench .status-readout {
     width: 116px;
   }
 }
@@ -2823,8 +2842,7 @@ textarea:focus,
     justify-items: center;
   }
 
-  .workspace-workbench .status-readout,
-  .workspace-workbench .status-stack {
+  .workspace-workbench .status-readout {
     display: none;
   }
 }

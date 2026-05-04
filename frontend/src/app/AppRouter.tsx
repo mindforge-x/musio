@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Activity, Cable, FileText, ListMusic, MessageCircle, MessageSquare, Play, Search, Terminal, Trash2 } from "lucide-react";
 import { api } from "../shared/api";
@@ -77,6 +77,10 @@ export function AppRouter() {
     [providerStatuses]
   );
   const backendDisplayLabel = backendLabel === "ok" ? "正常" : "离线";
+  const sourceStatusPills = useMemo(
+    () => selectedSources.map((source) => sourceStatusPill(source, providerStatuses)),
+    [providerStatuses, selectedSources]
+  );
   const selectedSourcesLabel = useMemo(() => selectedSources.map(sourceDisplayName).join(" / "), [selectedSources]);
   const qqMusicConnectionLabel = qqMusicStatus ? providerConnectionLabel(qqMusicStatus) : "QQ 音乐状态未知";
   const musicOperationDisabledReason = qqMusicStatus?.authenticated
@@ -189,7 +193,9 @@ export function AppRouter() {
                   </div>
                 </div>
                 <div className="radio-header-actions">
-                  <span className={`radio-state ${backendLabel === "ok" ? "online" : ""}`}>{backendDisplayLabel}</span>
+                  {sourceStatusPills.map((item) => (
+                    <span className={`radio-state ${item.healthy ? "online" : ""}`} key={item.key}>{item.label}</span>
+                  ))}
                   <span>{status ? status.aiModel : "MODEL OFFLINE"}</span>
                 </div>
               </header>
@@ -224,10 +230,6 @@ export function AppRouter() {
               </footer>
             </section>
             <StatusRail
-              now={now}
-              queueCount={player.state.queue.length}
-              backendDisplayLabel={backendDisplayLabel}
-              modelLabel={status?.aiModel ?? "MODEL OFFLINE"}
               activeDrawer={activeDrawer}
               onOpenDrawer={openDrawer}
             />
@@ -409,32 +411,12 @@ const DOT_MATRIX_DIGITS: Record<string, string[]> = {
   ]
 };
 
-function StatusRail({
-  now,
-  queueCount,
-  backendDisplayLabel,
-  modelLabel,
-  activeDrawer,
-  onOpenDrawer
-}: {
-  now: Date;
-  queueCount: number;
-  backendDisplayLabel: string;
-  modelLabel: string;
+function StatusRail({ activeDrawer, onOpenDrawer }: {
   activeDrawer: WorkbenchDrawer;
   onOpenDrawer: (drawer: WorkbenchDrawer) => void;
 }) {
   return (
     <aside className="status-rail" aria-label="Musio system rail">
-      <div className="status-readout">
-        <strong>{formatWeekday(now)}</strong>
-        <span>{formatMonthDay(now)}</span>
-      </div>
-      <div className="status-stack">
-        <span>QUEUE {queueCount.toString().padStart(2, "0")}</span>
-        <span>QQ {backendDisplayLabel}</span>
-        <span>{modelLabel}</span>
-      </div>
       <nav className="drawer-rail" aria-label="Workbench drawers">
         <DrawerButton drawer="search" activeDrawer={activeDrawer} onOpenDrawer={onOpenDrawer} icon={<Search size={16} />} label="SEARCH" />
         <DrawerButton drawer="queue" activeDrawer={activeDrawer} onOpenDrawer={onOpenDrawer} icon={<ListMusic size={16} />} label="QUEUE" />
@@ -580,6 +562,16 @@ function QueuePanel({
 }
 
 function LyricsPanel({ state }: { state: ReturnType<typeof usePlayerStore>["state"] }) {
+  const activeLineRef = useRef<HTMLParagraphElement | null>(null);
+  const hasSyncedLyrics = state.lyricLines.length > 0;
+
+  useEffect(() => {
+    if (!hasSyncedLyrics || state.activeLyricIndex < 0) {
+      return;
+    }
+    activeLineRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [hasSyncedLyrics, state.activeLyricIndex, state.currentSong?.id]);
+
   return (
     <section className="panel lyrics-panel">
       <div className="panel-heading">
@@ -587,9 +579,35 @@ function LyricsPanel({ state }: { state: ReturnType<typeof usePlayerStore>["stat
         <span>{state.currentSong ? "current" : "empty"}</span>
       </div>
       <p className="lyrics-track">{state.currentSong ? `${state.currentSong.title} - ${state.currentSong.artists?.join(", ")}` : "[NO TRACK]"}</p>
-      <pre>{state.lyricsText || state.lyricLine || "[LYRICS UNAVAILABLE]"}</pre>
+      {hasSyncedLyrics ? (
+        <div className="lyrics-list" aria-label="同步歌词">
+          {state.lyricLines.map((line, index) => {
+            const active = index === state.activeLyricIndex;
+            return (
+              <p
+                key={`${line.timeSeconds}-${index}`}
+                ref={active ? activeLineRef : undefined}
+                className={`lyrics-row ${active ? "active" : ""}`}
+                aria-current={active ? "true" : undefined}
+              >
+                <span>{formatLyricTime(line.timeSeconds)}</span>
+                <strong>{line.text}</strong>
+              </p>
+            );
+          })}
+        </div>
+      ) : (
+        <pre>{state.lyricsText || state.lyricLine || "[LYRICS UNAVAILABLE]"}</pre>
+      )}
     </section>
   );
+}
+
+function formatLyricTime(timeSeconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(timeSeconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function CommentsPanel({
@@ -705,10 +723,6 @@ function formatWeekday(date: Date) {
   return new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(date).toUpperCase();
 }
 
-function formatMonthDay(date: Date) {
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit" }).format(date).toUpperCase();
-}
-
 function formatCommentDate(value?: string | null) {
   if (!value) {
     return "UNKNOWN";
@@ -744,6 +758,44 @@ function providerConnectionLabel(status: ProviderStatus) {
       return "QQ 音乐未连接";
     default:
       return "QQ 音乐未连接";
+  }
+}
+
+function sourceStatusPill(source: string, providerStatuses: ProviderStatus[]) {
+  const key = sourceKey(source);
+  const providerStatus = providerStatuses.find((item) => sourceKey(item.provider) === key);
+  const displayName = sourceShortName(source);
+  if (!providerStatus) {
+    if (providerStatuses.length === 0) {
+      return { key, label: `${displayName} 检查中`, healthy: false };
+    }
+    return { key, label: `${displayName} 未开放`, healthy: false };
+  }
+  if (providerStatus.authenticated) {
+    return { key, label: `${displayName} 正常`, healthy: true };
+  }
+  if (providerStatus.connectionState === "COMING_SOON" || providerStatus.connectionState === "SANDBOX_RESERVED") {
+    return { key, label: `${displayName} 未开放`, healthy: false };
+  }
+  if (providerStatus.connectionState === "EXPIRED") {
+    return { key, label: `${displayName} 过期`, healthy: false };
+  }
+  if (providerStatus.connectionState === "UNVERIFIED") {
+    return { key, label: `${displayName} 待校验`, healthy: false };
+  }
+  return { key, label: `${displayName} 未连接`, healthy: false };
+}
+
+function sourceShortName(source: string) {
+  switch (sourceKey(source)) {
+    case "qqmusic":
+      return "QQ";
+    case "netease":
+      return "网易云";
+    case "local":
+      return "本地";
+    default:
+      return source;
   }
 }
 
