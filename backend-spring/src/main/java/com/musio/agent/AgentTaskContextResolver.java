@@ -698,7 +698,7 @@ record AgentTaskContext(
         return """
 
                 本轮用户的原话是：%s
-                对话轮次解析器判断这是一条%s。
+                Turn Planner 判断这是一条%s。
                 本轮任务类型是：%s
                 本轮用于规划和工具调用的完整请求是：%s
                 本轮正向搜索关键词是：%s

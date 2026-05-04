@@ -64,6 +64,28 @@ class AgentToolExecutorTest {
     }
 
     @Test
+    void executesSearchToolFromTurnPlan() {
+        AgentToolExecutor executor = new AgentToolExecutor(tools());
+        AgentTurnPlan turnPlan = new AgentTurnPlan(
+                TurnDisposition.USE_TOOLS,
+                "search",
+                "correction",
+                "搜索后弦的歌曲",
+                new AgentTurnMemoryUse(true, List.of("lastSearchKeyword"), "纠正上一轮关键词"),
+                List.of(new AgentToolCall("search_songs", Map.of("keyword", "后弦", "limit", 8))),
+                0.92,
+                ""
+        );
+
+        List<AgentToolExecution> executions = executor.execute(turnPlan.toToolPlan());
+
+        assertEquals(1, executions.size());
+        assertEquals("search_songs", executions.getFirst().toolName());
+        assertEquals("后弦", executions.getFirst().arguments().get("keyword"));
+        assertTrue(executions.getFirst().resultJson().contains("\"songs\""));
+    }
+
+    @Test
     void executesRemainingRegisteredReadOnlyTools() {
         AgentToolExecutor executor = new AgentToolExecutor(tools(new FakeMusicProfileService()));
         AgentToolPlan plan = new AgentToolPlan(List.of(
