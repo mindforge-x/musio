@@ -9,6 +9,7 @@ import java.util.function.Consumer;
 
 @Component
 public class AgentEventBus {
+    // 轻量级内存事件总线：只按 runId 转发当前运行中的 Agent 事件，不做事件持久化。
     private final Map<String, Consumer<AgentEvent>> listeners = new ConcurrentHashMap<>();
 
     public void subscribe(String runId, Consumer<AgentEvent> listener) {

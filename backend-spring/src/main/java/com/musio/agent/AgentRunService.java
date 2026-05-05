@@ -48,9 +48,11 @@ public class AgentRunService {
     }
 
     public SseEmitter connect(String runId) {
+        // 每个 runId 对应一条 SSE 连接，创建后会先向前端发送 connected 事件。
         SseEmitter emitter = eventPublisher.create(runId);
         ChatRequest request = pendingRuns.get(runId);
         if (request == null) {
+            // runId 不存在通常表示任务已启动过、已结束，或前端传入了错误的 runId。
             eventPublisher.publish(runId, AgentEvent.of("agent_error", Map.of(
                     "runId", runId,
                     "message", "Agent run not found or already started."
@@ -58,15 +60,18 @@ public class AgentRunService {
             return emitter;
         }
 
+        // 订阅本轮 run 的内存事件总线，将 Agent 执行过程中的 token、工具、歌曲卡片等事件转发到 SSE。
         eventBus.subscribe(runId, event -> {
             eventPublisher.publish(runId, event);
             if (isTerminal(event)) {
+                // done / agent_error 是终止事件，发送后释放本轮订阅和任务索引，避免内存残留。
                 eventBus.unsubscribe(runId);
                 pendingRuns.remove(runId);
                 runningRuns.remove(runId);
             }
         });
 
+        // 同一个 runId 只能启动一次后台 Agent 任务；重复连接不会重复提交执行。
         runningRuns.computeIfAbsent(runId, id -> executorService.submit(() -> agentRuntime.start(id, request)));
         return emitter;
     }

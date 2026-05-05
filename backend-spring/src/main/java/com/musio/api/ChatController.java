@@ -33,6 +33,7 @@ public class ChatController {
 
     @GetMapping("/runs/{runId}/events")
     public SseEmitter events(@PathVariable String runId) {
+        // 建立本轮 Agent run 的 SSE 长连接；客户端连接后，后端才会真正启动对应的后台执行任务。
         return agentRunService.connect(runId);
     }
 

@@ -17,8 +17,10 @@ public class SseEventPublisher {
     private final Map<String, SseEmitter> emitters = new ConcurrentHashMap<>();
 
     public SseEmitter create(String runId) {
+        // 0L 表示服务端不主动设置超时时间，连接生命周期由终止事件或客户端断开决定。
         SseEmitter emitter = new SseEmitter(0L);
         emitters.put(runId, emitter);
+        // 无论正常完成、超时还是异常断开，都要移除 emitter，避免后续继续向失效连接写事件。
         emitter.onCompletion(() -> emitters.remove(runId));
         emitter.onTimeout(() -> emitters.remove(runId));
         emitter.onError(error -> emitters.remove(runId));
@@ -37,6 +39,7 @@ public class SseEventPublisher {
                     .name(event.type())
                     .data(event));
             if ("done".equals(event.type()) || "agent_error".equals(event.type())) {
+                // 终止事件发送成功后立即关闭 SSE 长连接，本轮 run 的事件流到此结束。
                 emitter.complete();
                 emitters.remove(runId);
             }
