@@ -31,6 +31,7 @@ export function AgentMessageList({ messages, onPlaySong, onAddToQueue, onFavorit
       {messages.map((message) => {
         const initialAgentLoading = isInitialAgentLoading(message);
         const answerStreaming = message.state === "streaming" && message.content.trim().length > 0;
+        const thinking = isAgentThinking(message);
 
         if (initialAgentLoading) {
           return (
@@ -42,7 +43,7 @@ export function AgentMessageList({ messages, onPlaySong, onAddToQueue, onFavorit
         }
 
         return (
-          <article key={message.id} className={`chat-message ${message.role} ${message.state}`}>
+          <article key={message.id} className={`chat-message ${message.role} ${message.state} ${thinking ? "thinking" : ""}`}>
             {message.role === "agent" ? <div className="chat-avatar">M</div> : null}
             <div className="chat-bubble">
               <span>{message.role === "agent" ? "MUSIO" : "YOU"}</span>
@@ -89,6 +90,14 @@ function isInitialAgentLoading(message: ChatMessage) {
   }
   const visibleTraceSteps = message.traceSteps?.filter((step) => step.visibility === "user") ?? [];
   return visibleTraceSteps.length === 0 && !message.songs?.length;
+}
+
+function isAgentThinking(message: ChatMessage) {
+  if (message.role !== "agent" || message.state !== "streaming" || message.content.trim().length > 0) {
+    return false;
+  }
+  const visibleTraceSteps = message.traceSteps?.filter((step) => step.visibility === "user") ?? [];
+  return visibleTraceSteps.length > 0;
 }
 
 function InlineSongCards({
