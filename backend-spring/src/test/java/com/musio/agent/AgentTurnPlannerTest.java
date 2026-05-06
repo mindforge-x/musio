@@ -129,6 +129,30 @@ class AgentTurnPlannerTest {
     }
 
     @Test
+    void parsesLocalMusioPlaylistAddPlanAsInternalTool() {
+        AgentTurnPlan plan = planner.parsePlan("""
+                {
+                  "disposition": "use_tools",
+                  "taskType": "playlist",
+                  "contextMode": "refer_previous_song",
+                  "effectiveRequest": "把上一轮第一首歌收藏到 Musio 默认歌单",
+                  "memoryUse": {"usesTaskMemory": true, "usedFields": ["lastResultSongs"], "reason": "用户要收藏上一轮歌曲卡片"},
+                  "toolCalls": [
+                    {"toolName": "add_song_to_musio_playlist", "arguments": {"playlistId": "default", "songIndex": 1}}
+                  ],
+                  "confidence": 0.92
+                }
+                """, "帮我收藏第一首").orElseThrow();
+
+        assertEquals(TurnDisposition.USE_TOOLS, plan.disposition());
+        assertEquals("playlist", plan.taskType());
+        assertTrue(plan.hasTool("add_song_to_musio_playlist"));
+        assertTrue(plan.toToolPlan().toolCalls().isEmpty());
+        assertEquals("default", plan.toolCalls().getFirst().arguments().get("playlistId"));
+        assertEquals(1, plan.toolCalls().getFirst().arguments().get("songIndex"));
+    }
+
+    @Test
     void dropsRecommendationToolWithoutCountAndFallsBackToRespondOnly() {
         AgentTurnPlan plan = planner.parsePlan("""
                 {

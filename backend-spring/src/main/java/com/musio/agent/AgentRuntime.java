@@ -16,6 +16,8 @@ import com.musio.model.AgentTaskMemory;
 import com.musio.model.Song;
 import com.musio.memory.AgentTaskMemoryService;
 import com.musio.memory.MusicProfileService;
+import com.musio.playlists.MusioPlaylist;
+import com.musio.playlists.MusioPlaylistService;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +53,7 @@ public class AgentRuntime {
     private final AgentTurnPlanner turnPlanner;
     private final AgentToolExecutor toolExecutor;
     private final RecommendationOrchestrator recommendationOrchestrator;
+    private final MusioPlaylistService musioPlaylistService;
     private final ObjectMapper objectMapper;
     private final ScheduledExecutorService progressExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
         Thread thread = new Thread(runnable, "musio-agent-progress-heartbeat");
@@ -70,6 +73,7 @@ public class AgentRuntime {
             AgentTurnPlanner turnPlanner,
             AgentToolExecutor toolExecutor,
             RecommendationOrchestrator recommendationOrchestrator,
+            MusioPlaylistService musioPlaylistService,
             ObjectMapper objectMapper
     ) {
         this.prompts = prompts;
@@ -83,6 +87,7 @@ public class AgentRuntime {
         this.turnPlanner = turnPlanner;
         this.toolExecutor = toolExecutor;
         this.recommendationOrchestrator = recommendationOrchestrator;
+        this.musioPlaylistService = musioPlaylistService;
         this.objectMapper = objectMapper;
     }
 
@@ -122,6 +127,10 @@ public class AgentRuntime {
                         taskContext.avoidSongTitles(),
                         taskContext.preservePreviousSongContext()
                 );
+            }
+            if (turnPlan.hasTool("add_song_to_musio_playlist")) {
+                handleMusioPlaylistAdd(runId, ai, userId, request.message(), history, taskMemory, turnPlan, traceEnabled);
+                return;
             }
             PreludeContext preludeContext;
             if (traceEnabled && shouldUseRecommendationPrelude(turnPlan, taskContext)) {
@@ -208,6 +217,259 @@ public class AgentRuntime {
     @PreDestroy
     public void shutdownProgressExecutor() {
         progressExecutor.shutdownNow();
+    }
+
+    private void handleMusioPlaylistAdd(
+            String runId,
+            MusioConfig.Ai ai,
+            String userId,
+            String userMessage,
+            List<ConversationHistoryMessage> history,
+            AgentTaskMemory taskMemory,
+            AgentTurnPlan turnPlan,
+            boolean traceEnabled
+    ) {
+        AgentToolCall call = firstToolCall(turnPlan, "add_song_to_musio_playlist");
+        Map<String, Object> arguments = call == null || call.arguments() == null ? Map.of() : call.arguments();
+        String playlistId = text(arguments, "playlistId").isBlank() ? "default" : text(arguments, "playlistId");
+        Map<String, Object> input = musioPlaylistAddInput(playlistId, arguments);
+        publishToolStart(runId, "add_song_to_musio_playlist", input);
+        tracePublisher.publishToolRunning(runId, "add_song_to_musio_playlist", input);
+
+        LocalPlaylistAddResult result;
+        try {
+            Song song = resolveMusioPlaylistSong(arguments, history, taskMemory);
+            if (song == null) {
+                result = LocalPlaylistAddResult.failure("还没能确定要收藏哪一首歌。你可以告诉我歌名，或先让我推荐/搜索出歌曲卡片。");
+            } else {
+                boolean existed = playlistContains(playlistId, song.id());
+                MusioPlaylist playlist = musioPlaylistService.addSong(playlistId, song);
+                result = LocalPlaylistAddResult.success(song, playlist, existed);
+            }
+        } catch (Exception e) {
+            String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            result = LocalPlaylistAddResult.failure("收藏失败：" + message);
+        }
+
+        publishToolResult(runId, "add_song_to_musio_playlist", result.toolResult());
+        if (result.success()) {
+            tracePublisher.publishToolDone(runId, "add_song_to_musio_playlist", result.toolResult());
+        } else {
+            tracePublisher.publishToolError(runId, "add_song_to_musio_playlist", result.message());
+        }
+
+        boolean[] composeStarted = {false};
+        if (result.success()) {
+            publishSongCards(runId, List.of(result.song()));
+        }
+        publishAnswerText(runId, ai, result.answerText(), traceEnabled, composeStarted);
+        if (traceEnabled) {
+            if (!composeStarted[0]) {
+                tracePublisher.publishComposeRunning(runId);
+            }
+            tracePublisher.publishComposeDone(runId);
+        }
+        conversationHistoryService.appendTurn(
+                userId,
+                userMessage,
+                result.answerText(),
+                result.success() ? List.of(result.song()) : List.of()
+        );
+        eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
+    }
+
+    private Song resolveMusioPlaylistSong(
+            Map<String, Object> arguments,
+            List<ConversationHistoryMessage> history,
+            AgentTaskMemory taskMemory
+    ) {
+        String songId = text(arguments, "songId");
+        String songTitle = text(arguments, "songTitle");
+        String artist = text(arguments, "artist");
+        Integer songIndex = integer(arguments, "songIndex");
+        List<Song> candidates = recentSongs(history, taskMemory);
+        Song fromContext = resolveFromCandidates(candidates, songId, songTitle, artist, songIndex);
+        if (fromContext != null) {
+            return fromContext;
+        }
+        String query = String.join(" ", List.of(artist, songTitle).stream()
+                .filter(value -> value != null && !value.isBlank())
+                .toList()).strip();
+        if (query.isBlank()) {
+            return null;
+        }
+        List<AgentToolExecution> executions = toolExecutor.execute(new AgentToolPlan(List.of(
+                new AgentToolCall("search_songs", Map.of("keyword", query, "limit", 1))
+        ), 1.0));
+        for (AgentToolExecution execution : executions) {
+            List<Song> songs = songsFromResultJson(execution.resultJson());
+            if (!songs.isEmpty()) {
+                return songs.getFirst();
+            }
+        }
+        return null;
+    }
+
+    private Song resolveFromCandidates(List<Song> candidates, String songId, String songTitle, String artist, Integer songIndex) {
+        if (candidates == null || candidates.isEmpty()) {
+            return null;
+        }
+        if (songIndex != null && songIndex >= 1 && songIndex <= candidates.size()) {
+            return candidates.get(songIndex - 1);
+        }
+        if (songId != null && !songId.isBlank()) {
+            for (Song song : candidates) {
+                if (song != null && songId.equals(song.id())) {
+                    return song;
+                }
+            }
+        }
+        String normalizedTitle = normalizeSongText(songTitle);
+        String normalizedArtist = normalizeSongText(artist);
+        if (!normalizedTitle.isBlank()) {
+            Song titleAndArtistMatch = candidates.stream()
+                    .filter(song -> titleMatches(song, normalizedTitle))
+                    .filter(song -> normalizedArtist.isBlank() || artistMatches(song, normalizedArtist))
+                    .findFirst()
+                    .orElse(null);
+            if (titleAndArtistMatch != null) {
+                return titleAndArtistMatch;
+            }
+            return candidates.stream()
+                    .filter(song -> titleMatches(song, normalizedTitle))
+                    .findFirst()
+                    .orElse(null);
+        }
+        return candidates.getFirst();
+    }
+
+    private List<Song> recentSongs(List<ConversationHistoryMessage> history, AgentTaskMemory taskMemory) {
+        Map<String, Song> songsById = new LinkedHashMap<>();
+        if (history != null) {
+            for (int index = history.size() - 1; index >= 0; index--) {
+                ConversationHistoryMessage message = history.get(index);
+                if (message == null || !"assistant".equals(message.role())) {
+                    continue;
+                }
+                for (Song song : message.songs()) {
+                    addSongCandidate(songsById, song);
+                }
+            }
+        }
+        if (taskMemory != null && taskMemory.lastResultSongs() != null) {
+            for (Song song : taskMemory.lastResultSongs()) {
+                addSongCandidate(songsById, song);
+            }
+        }
+        return List.copyOf(songsById.values());
+    }
+
+    private void addSongCandidate(Map<String, Song> songsById, Song song) {
+        if (song == null || song.id() == null || song.id().isBlank()) {
+            return;
+        }
+        songsById.putIfAbsent(song.id(), song);
+    }
+
+    private boolean playlistContains(String playlistId, String songId) {
+        if (songId == null || songId.isBlank()) {
+            return false;
+        }
+        return musioPlaylistService.get(playlistId).items().stream()
+                .anyMatch(item -> songId.equals(item.providerTrackId()));
+    }
+
+    private AgentToolCall firstToolCall(AgentTurnPlan turnPlan, String toolName) {
+        if (turnPlan == null || turnPlan.toolCalls() == null) {
+            return null;
+        }
+        return turnPlan.toolCalls().stream()
+                .filter(call -> call != null && toolName.equals(call.toolName()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private Map<String, Object> musioPlaylistAddInput(String playlistId, Map<String, Object> arguments) {
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("playlistId", playlistId);
+        copyTextArgument(arguments, input, "songId");
+        copyTextArgument(arguments, input, "songTitle");
+        copyTextArgument(arguments, input, "artist");
+        Object songIndex = arguments.get("songIndex");
+        if (songIndex instanceof Number number) {
+            input.put("songIndex", number.intValue());
+        }
+        return input;
+    }
+
+    private void copyTextArgument(Map<String, Object> source, Map<String, Object> target, String key) {
+        String value = text(source, key);
+        if (!value.isBlank()) {
+            target.put(key, value);
+        }
+    }
+
+    private void publishToolStart(String runId, String toolName, Map<String, Object> input) {
+        eventBus.publish(runId, AgentEvent.of("tool_start", Map.of(
+                "runId", runId,
+                "tool", toolName,
+                "input", input
+        )));
+    }
+
+    private void publishToolResult(String runId, String toolName, Map<String, Object> result) {
+        eventBus.publish(runId, AgentEvent.of("tool_result", Map.of(
+                "runId", runId,
+                "tool", toolName,
+                "summary", result.getOrDefault("summary", "Musio 歌单操作已完成。")
+        )));
+    }
+
+    private boolean titleMatches(Song song, String normalizedTitle) {
+        if (song == null || normalizedTitle == null || normalizedTitle.isBlank()) {
+            return false;
+        }
+        String title = normalizeSongText(song.title());
+        return !title.isBlank() && (title.equals(normalizedTitle) || title.contains(normalizedTitle) || normalizedTitle.contains(title));
+    }
+
+    private boolean artistMatches(Song song, String normalizedArtist) {
+        if (song == null || song.artists() == null || normalizedArtist == null || normalizedArtist.isBlank()) {
+            return false;
+        }
+        return song.artists().stream()
+                .map(this::normalizeSongText)
+                .anyMatch(artist -> !artist.isBlank()
+                        && (artist.equals(normalizedArtist) || artist.contains(normalizedArtist) || normalizedArtist.contains(artist)));
+    }
+
+    private String normalizeSongText(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.toLowerCase()
+                .replaceAll("[《》<>\\[\\]【】()（）\\s·・,，。.!！?？:：;；'\"“”‘’-]+", "")
+                .strip();
+    }
+
+    private String text(Map<String, Object> arguments, String key) {
+        Object value = arguments == null ? null : arguments.get(key);
+        return value instanceof String text ? text.strip() : "";
+    }
+
+    private Integer integer(Map<String, Object> arguments, String key) {
+        Object value = arguments == null ? null : arguments.get(key);
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Integer.parseInt(text.strip());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private PreludeContext recommendationPreludeContext(
@@ -630,6 +892,54 @@ public class AgentRuntime {
             if (future != null) {
                 future.cancel(false);
             }
+        }
+    }
+
+    private record LocalPlaylistAddResult(
+            boolean success,
+            Song song,
+            MusioPlaylist playlist,
+            boolean existed,
+            String message
+    ) {
+        static LocalPlaylistAddResult success(Song song, MusioPlaylist playlist, boolean existed) {
+            return new LocalPlaylistAddResult(true, song, playlist, existed, "");
+        }
+
+        static LocalPlaylistAddResult failure(String message) {
+            return new LocalPlaylistAddResult(false, null, null, false, message == null || message.isBlank() ? "收藏失败。" : message);
+        }
+
+        String answerText() {
+            if (!success) {
+                return message;
+            }
+            String title = song.title() == null || song.title().isBlank() ? song.id() : song.title();
+            String artists = song.artists() == null || song.artists().isEmpty() ? "" : " - " + String.join(" / ", song.artists());
+            if (existed) {
+                return "这首歌已经在 Musio 歌单里了：%s%s。".formatted(title, artists);
+            }
+            return "已帮你收藏到 Musio 歌单：%s%s。".formatted(title, artists);
+        }
+
+        Map<String, Object> toolResult() {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", success);
+            result.put("summary", answerText());
+            if (!success) {
+                result.put("message", message);
+                return result;
+            }
+            result.put("playlistId", playlist.id());
+            result.put("playlistName", playlist.name());
+            result.put("itemCount", playlist.items().size());
+            result.put("alreadyExists", existed);
+            result.put("songId", song.id());
+            result.put("songTitle", song.title() == null ? song.id() : song.title());
+            if (song.artists() != null && !song.artists().isEmpty()) {
+                result.put("artists", song.artists());
+            }
+            return result;
         }
     }
 

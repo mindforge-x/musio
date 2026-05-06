@@ -37,7 +37,8 @@ public class AgentTurnPlanner {
             "get_lyrics",
             "get_hot_comments",
             "get_user_playlists",
-            "get_playlist_songs"
+            "get_playlist_songs",
+            "add_song_to_musio_playlist"
     );
 
     private final SpringAiChatModelFactory chatModelFactory;
@@ -235,6 +236,19 @@ public class AgentTurnPlanner {
         if ("get_user_playlists".equals(toolName) || "get_playlist_songs".equals(toolName)) {
             cleaned.put("limit", cleanLimit(cleaned.get("limit"), 20, 1, 50));
         }
+        if ("add_song_to_musio_playlist".equals(toolName)) {
+            String playlistId = text(cleaned, "playlistId");
+            cleaned.put("playlistId", playlistId.isBlank() ? "default" : playlistId);
+            cleaned.put("songId", text(cleaned, "songId"));
+            cleaned.put("songTitle", text(cleaned, "songTitle"));
+            cleaned.put("artist", text(cleaned, "artist"));
+            Integer songIndex = cleanRequiredLimit(cleaned.get("songIndex"), 1, 20);
+            if (songIndex == null) {
+                cleaned.remove("songIndex");
+            } else {
+                cleaned.put("songIndex", songIndex);
+            }
+        }
         return cleaned;
     }
 
@@ -255,6 +269,7 @@ public class AgentTurnPlanner {
             case "get_playlist_songs" -> hasText(arguments, "playlistId");
             case "search_songs" -> hasText(arguments, "keyword") && hasInteger(arguments, "limit");
             case "recommend_songs" -> hasText(arguments, "request") && hasInteger(arguments, "count");
+            case "add_song_to_musio_playlist" -> true;
             default -> true;
         };
     }
@@ -301,6 +316,9 @@ public class AgentTurnPlanner {
                 - get_user_playlists {"limit": number}：读取用户歌单。
                 - get_playlist_songs {"playlistId": string, "limit": number}：读取歌单歌曲。
 
+                可用本地 Musio 写入能力：
+                - add_song_to_musio_playlist {"playlistId": "default", "songId": string, "songTitle": string, "artist": string, "songIndex": number}：把歌曲收藏到本地 Musio 默认歌单；这是 Musio 本地歌单写入，不是 QQ 音乐账号收藏。
+
                 输出格式：
                 {"disposition":"respond_only|use_tools|request_confirmation|unsupported","taskType":"chat|search|recommend|comments|lyrics|detail|playlist|profile|playback|unknown","contextMode":"new_task|follow_up|retry|refer_previous_song|correction","effectiveRequest":"用于本轮执行的完整请求","memoryUse":{"usesTaskMemory":true|false,"usedFields":["lastSearchKeyword"],"reason":"为什么需要或不需要短期任务记忆"},"toolCalls":[{"toolName":"工具名","arguments":{}}],"confidence":0.0到1.0}
 
@@ -317,7 +335,11 @@ public class AgentTurnPlanner {
                 - recommend_songs.arguments.count 必须显式填写。根据当前用户输入和 effectiveRequest 的推荐数量填写；完全没有数量含义时默认 5。
                 - 不要编造 songId、playlistId 或用户没有提供且任务记忆中没有的标识符。
                 - 歌曲评论、歌词、详情类任务如果没有目标 songId，需要先 search_songs 找候选；如果有目标 songId，优先直接调用对应工具。
+                - 用户说“收藏/保存/加入 Musio 歌单/帮我收藏某首歌”时，使用 add_song_to_musio_playlist，taskType=playlist，playlistId 默认 default。
+                - 如果用户要收藏“刚才那首/第一首/第二首”等上一轮卡片歌曲，memoryUse.usesTaskMemory=true，usedFields 包含 lastResultSongs；能确定序号时填写 songIndex，能确定 songId 时填写 songId。
+                - 如果用户明确给出歌名或歌手但没有 songId，add_song_to_musio_playlist 填 songTitle/artist；后端会先解析或搜索真实歌曲。
                 - request_confirmation 只用于未来写操作或账号动作；当前只读工具可以直接 use_tools。
+                - add_song_to_musio_playlist 是本地 Musio 歌单写入，MVP 阶段可以直接 use_tools，不需要 request_confirmation。
                 - 不需要工具时不要为了展示能力而调用工具。
                 - 不要输出 chain-of-thought。
                 """;

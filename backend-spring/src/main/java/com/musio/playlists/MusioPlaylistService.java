@@ -1,10 +1,21 @@
 package com.musio.playlists;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.musio.config.MusioConfigService;
 import com.musio.model.Song;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -12,23 +23,80 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class MusioPlaylistService {
-    private final Map<String, MusioPlaylist> playlists = new ConcurrentHashMap<>();
+    private static final String DEFAULT_PLAYLIST_ID = "default";
 
-    public MusioPlaylistService() {
+    private final Map<String, MusioPlaylist> playlists = new ConcurrentHashMap<>();
+    private final Path playlistPath;
+    private final ObjectMapper objectMapper;
+
+    @Autowired
+    public MusioPlaylistService(MusioConfigService configService, ObjectMapper objectMapper) {
+        this(
+                configService.config().storage().home().resolve("playlists").resolve("musio-playlists.json"),
+                objectMapper
+        );
+    }
+
+    MusioPlaylistService(Path playlistPath, ObjectMapper objectMapper) {
+        this.playlistPath = playlistPath.toAbsolutePath().normalize();
+        this.objectMapper = objectMapper.copy()
+                .findAndRegisterModules()
+                .enable(SerializationFeature.INDENT_OUTPUT);
+        loadOrInitialize();
+    }
+
+    private void loadOrInitialize() {
+        boolean shouldPersist = false;
+        if (Files.isRegularFile(playlistPath)) {
+            List<MusioPlaylist> stored = readPlaylists();
+            stored.stream()
+                    .map(this::safePlaylist)
+                    .forEach(playlist -> playlists.put(playlist.id(), playlist));
+        } else {
+            shouldPersist = true;
+        }
+        if (!playlists.containsKey(DEFAULT_PLAYLIST_ID)) {
+            playlists.put(DEFAULT_PLAYLIST_ID, defaultPlaylist());
+            shouldPersist = true;
+        }
+        if (shouldPersist) {
+            persist();
+        }
+    }
+
+    private List<MusioPlaylist> readPlaylists() {
+        try {
+            PlaylistFile file = objectMapper.readValue(playlistPath.toFile(), PlaylistFile.class);
+            return file.playlists();
+        } catch (IOException structuredReadFailure) {
+            try {
+                return objectMapper.readValue(playlistPath.toFile(), new TypeReference<List<MusioPlaylist>>() {
+                });
+            } catch (IOException listReadFailure) {
+                throw new IllegalStateException("Failed to read Musio playlists: " + playlistPath, structuredReadFailure);
+            }
+        }
+    }
+
+    private MusioPlaylist defaultPlaylist() {
         Instant now = Instant.now();
-        MusioPlaylist defaultPlaylist = new MusioPlaylist(
-                "default",
+        return new MusioPlaylist(
+                DEFAULT_PLAYLIST_ID,
                 "Musio Queue",
                 "Cross-source songs saved from Agent results.",
                 List.of(),
                 now,
                 now
         );
-        playlists.put(defaultPlaylist.id(), defaultPlaylist);
     }
 
     public List<MusioPlaylist> list() {
-        return playlists.values().stream().toList();
+        return playlists.values().stream()
+                .sorted(Comparator.comparing(
+                        MusioPlaylist::createdAt,
+                        Comparator.nullsLast(Comparator.naturalOrder())
+                ))
+                .toList();
     }
 
     public MusioPlaylist get(String playlistId) {
@@ -75,6 +143,38 @@ public class MusioPlaylistService {
                 now
         );
         playlists.put(updated.id(), updated);
+        persist();
         return updated;
+    }
+
+    private void persist() {
+        try {
+            Files.createDirectories(playlistPath.getParent());
+            objectMapper.writeValue(playlistPath.toFile(), new PlaylistFile(list()));
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to store Musio playlists: " + playlistPath, e);
+        }
+    }
+
+    private MusioPlaylist safePlaylist(MusioPlaylist playlist) {
+        if (playlist == null || playlist.id() == null || playlist.id().isBlank()) {
+            return defaultPlaylist();
+        }
+        Instant now = Instant.now();
+        return new MusioPlaylist(
+                playlist.id(),
+                playlist.name() == null || playlist.name().isBlank() ? playlist.id() : playlist.name(),
+                playlist.description() == null ? "" : playlist.description(),
+                playlist.items() == null ? List.of() : List.copyOf(playlist.items()),
+                playlist.createdAt() == null ? now : playlist.createdAt(),
+                playlist.updatedAt() == null ? now : playlist.updatedAt()
+        );
+    }
+
+    private record PlaylistFile(List<MusioPlaylist> playlists) {
+        @JsonCreator
+        private PlaylistFile(@JsonProperty("playlists") List<MusioPlaylist> playlists) {
+            this.playlists = playlists == null ? List.of() : List.copyOf(playlists);
+        }
     }
 }

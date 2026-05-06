@@ -33,7 +33,9 @@ record AgentTurnPlan(
             return AgentToolPlan.empty();
         }
         List<AgentToolCall> executableCalls = toolCalls.stream()
-                .filter(call -> call != null && !"recommend_songs".equals(call.toolName()))
+                .filter(call -> call != null
+                        && !"recommend_songs".equals(call.toolName())
+                        && !"add_song_to_musio_playlist".equals(call.toolName()))
                 .toList();
         return new AgentToolPlan(executableCalls, confidence);
     }

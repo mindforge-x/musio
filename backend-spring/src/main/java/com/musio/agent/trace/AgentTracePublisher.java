@@ -251,11 +251,18 @@ public class AgentTracePublisher {
             case "get_hot_comments" -> "正在读取热门评论。";
             case "get_user_playlists" -> "正在读取你的 QQ 音乐歌单。";
             case "get_playlist_songs" -> "正在读取歌单里的歌曲。";
+            case "add_song_to_musio_playlist" -> "正在收藏到 Musio 歌单。";
             default -> "正在调用音乐能力。";
         };
     }
 
     private String doneSummary(String toolName, Map<String, Object> result) {
+        if ("add_song_to_musio_playlist".equals(toolName)) {
+            Object title = result.get("songTitle");
+            return title instanceof String text && !text.isBlank()
+                    ? "已收藏到 Musio 歌单：" + text + "。"
+                    : "已收藏到 Musio 歌单。";
+        }
         if ("get_user_music_profile".equals(toolName)) {
             return Boolean.TRUE.equals(result.get("success")) ? "已读取本地音乐偏好摘要。" : "音乐偏好摘要暂不可用。";
         }
@@ -275,6 +282,7 @@ public class AgentTracePublisher {
             case "get_hot_comments" -> "读取热门评论";
             case "get_user_playlists" -> "读取歌单";
             case "get_playlist_songs" -> "读取歌单歌曲";
+            case "add_song_to_musio_playlist" -> "收藏到 Musio";
             default -> "调用音乐能力";
         };
     }
