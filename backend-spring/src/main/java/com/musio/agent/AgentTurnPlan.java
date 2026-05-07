@@ -1,7 +1,5 @@
 package com.musio.agent;
 
-import com.musio.model.Song;
-
 import java.util.List;
 import java.util.Map;
 
@@ -195,16 +193,3 @@ record AgentTurnMemoryUse(
     }
 }
 
-record AgentTurnEvidence(
-        List<AgentToolExecution> executions,
-        List<Song> songs
-) {
-    static AgentTurnEvidence empty() {
-        return new AgentTurnEvidence(List.of(), List.of());
-    }
-
-    AgentTurnEvidence {
-        executions = executions == null ? List.of() : List.copyOf(executions);
-        songs = songs == null ? List.of() : List.copyOf(songs);
-    }
-}
