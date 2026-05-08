@@ -6169,3 +6169,65 @@ canvas.magnetic-dot-field::before {
     padding: 6px 2px 24px;
   }
 }
+
+/* Nothing-inspired playback progress: segmented, flat, monochrome. */
+.workspace-workbench .progress-row {
+  grid-template-columns: 42px minmax(0, 1fr) 42px;
+  gap: 12px;
+  color: rgba(232, 232, 232, 0.48);
+  font-family: var(--font-data);
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+}
+
+.workspace-workbench .progress-row > span:first-child {
+  color: rgba(232, 232, 232, 0.88);
+}
+
+.workspace-workbench .progress-row > span:last-child {
+  color: rgba(232, 232, 232, 0.38);
+  text-align: right;
+}
+
+.workspace-workbench .progress-track {
+  position: relative;
+  height: 14px;
+  display: grid;
+  grid-template-columns: repeat(32, minmax(0, 1fr));
+  gap: clamp(1px, 0.16vw, 2px);
+  align-items: center;
+  overflow: visible;
+  border-radius: 0;
+  background: transparent;
+}
+
+.workspace-workbench .progress-track i {
+  display: block;
+  width: 100%;
+  min-width: 1px;
+  height: 4px;
+  border-radius: 1px;
+  background: rgba(232, 232, 232, 0.16);
+}
+
+.workspace-workbench .progress-track i.active {
+  background: rgba(232, 232, 232, 0.86);
+}
+
+.workspace-workbench .progress-fill,
+.workspace-workbench .progress-fill::after {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .workspace-workbench .progress-row {
+    grid-template-columns: 35px minmax(0, 1fr) 35px;
+    gap: 8px;
+    font-size: 9px;
+  }
+
+  .workspace-workbench .progress-track {
+    gap: 1px;
+  }
+}
