@@ -131,12 +131,14 @@ public class AgentTurnPlanner {
             String contextMode = cleanContextMode(text(root, "contextMode"));
             String effectiveRequest = text(root, "effectiveRequest");
             AgentTurnMemoryUse memoryUse = parseMemoryUse(root.path("memoryUse"));
+            List<AgentRequiredOutcome> requiredOutcomes = parseRequiredOutcomes(root.path("requiredOutcomes"));
             List<AgentToolCall> calls = parseCalls(root.path("toolCalls"));
             if (calls.isEmpty() && root.path("calls").isArray()) {
                 calls = parseCalls(root.path("calls"));
             }
             if (disposition == TurnDisposition.RESPOND_ONLY) {
                 calls = List.of();
+                requiredOutcomes = List.of();
             }
             if (disposition == TurnDisposition.USE_TOOLS && calls.isEmpty() && !isLoopTaskType(taskType)) {
                 return Optional.of(AgentTurnPlan.respondOnly(
@@ -152,6 +154,7 @@ public class AgentTurnPlanner {
                     effectiveRequest.isBlank() ? originalMessage : effectiveRequest,
                     memoryUse,
                     calls,
+                    requiredOutcomes,
                     confidence,
                     ""
             ));
@@ -219,6 +222,37 @@ public class AgentTurnPlanner {
         );
     }
 
+    private List<AgentRequiredOutcome> parseRequiredOutcomes(JsonNode node) {
+        if (!node.isArray()) {
+            return List.of();
+        }
+        java.util.LinkedHashSet<AgentRequiredOutcome> outcomes = new java.util.LinkedHashSet<>();
+        for (JsonNode item : node) {
+            if (!item.isTextual()) {
+                continue;
+            }
+            parseRequiredOutcome(item.asText()).ifPresent(outcomes::add);
+        }
+        return List.copyOf(outcomes);
+    }
+
+    private Optional<AgentRequiredOutcome> parseRequiredOutcome(String value) {
+        String normalized = value == null ? "" : value.strip().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "recommendation", "recommend" -> Optional.of(AgentRequiredOutcome.RECOMMENDATION);
+            case "search" -> Optional.of(AgentRequiredOutcome.SEARCH);
+            case "comments", "comment", "hot_comments" -> Optional.of(AgentRequiredOutcome.COMMENTS);
+            case "lyrics", "lyric" -> Optional.of(AgentRequiredOutcome.LYRICS);
+            case "detail", "song_detail" -> Optional.of(AgentRequiredOutcome.DETAIL);
+            case "playlist" -> Optional.of(AgentRequiredOutcome.PLAYLIST);
+            case "profile" -> Optional.of(AgentRequiredOutcome.PROFILE);
+            case "playback", "play" -> Optional.of(AgentRequiredOutcome.PLAYBACK);
+            case "local_playlist_write", "local_write", "musio_playlist_write" -> Optional.of(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE);
+            case "account_write" -> Optional.of(AgentRequiredOutcome.ACCOUNT_WRITE);
+            default -> Optional.empty();
+        };
+    }
+
     private AgentCapabilityValidationResult validateArguments(String toolName, Map<String, Object> arguments) {
         return capabilityRegistry.validateArguments(toolName, arguments, AgentCapabilityArgumentContext.turnPlanner());
     }
@@ -263,15 +297,17 @@ public class AgentTurnPlanner {
                 %s
 
                 输出格式：
-                {"disposition":"respond_only|use_tools|request_confirmation|unsupported","taskType":"chat|search|recommend|comments|lyrics|detail|playlist|profile|playback|unknown","contextMode":"new_task|follow_up|retry|refer_previous_song|correction","effectiveRequest":"用于本轮执行的完整请求","memoryUse":{"usesTaskMemory":true|false,"usedFields":["lastSearchKeyword"],"reason":"为什么需要或不需要短期任务记忆"},"toolCalls":[{"toolName":"工具名","arguments":{}}],"confidence":0.0到1.0}
+                {"disposition":"respond_only|use_tools|request_confirmation|unsupported","taskType":"chat|search|recommend|comments|lyrics|detail|playlist|profile|playback|unknown","contextMode":"new_task|follow_up|retry|refer_previous_song|correction","effectiveRequest":"用于本轮执行的完整请求","memoryUse":{"usesTaskMemory":true|false,"usedFields":["lastSearchKeyword"],"reason":"为什么需要或不需要短期任务记忆"},"requiredOutcomes":["recommendation|search|comments|lyrics|detail|playlist|profile|playback|local_playlist_write|account_write"],"toolCalls":[{"toolName":"工具名","arguments":{}}],"confidence":0.0到1.0}
 
                 规则：
+                - requiredOutcomes 是本轮目标完成条件，必须覆盖用户要求的所有结果；普通聊天填 []。
                 - toolCalls 只表达本轮权限、目标或写入意图提示，可以为空，不是执行顺序；真正下一步工具选择由 AgentStepLoop 基于 observation 决定。
                 - recommend_songs 是 StepLoop 内部推荐能力，Turn Planner 不要输出它；开放推荐只需要 disposition=use_tools、taskType=recommend、toolCalls=[]。
                 - 普通寒暄、感谢、确认、情绪表达且不需要音乐能力时，输出 disposition=respond_only、taskType=chat、toolCalls=[]。
                 - 当前用户输入优先级最高；任务记忆只用于恢复搜索目标、上一轮结果和排除项，不用于默认继承旧数量。
                 - 搜索歌曲、推荐歌曲、歌词、评论、歌单、歌手、专辑、播放前发现歌曲等音乐相关请求，应输出 disposition=use_tools。
-                - 开放推荐、场景推荐、风格推荐应输出 taskType=recommend，toolCalls 可以为空；由 StepLoop 在可用能力内决定是否搜索歌曲、读取画像或继续补充证据。
+                - 开放推荐、场景推荐、风格推荐应输出 taskType=recommend，requiredOutcomes 至少包含 recommendation，toolCalls 可以为空；由 StepLoop 在可用能力内决定是否搜索歌曲、读取画像或继续补充证据。
+                - 复合任务必须把后续目标写进 requiredOutcomes；例如“推荐一首并获取热评”填 ["recommendation","comments"]，“推荐一首并分享歌词再加入歌单”填 ["recommendation","lyrics","local_playlist_write"]。
                 - 精确搜歌、歌手搜索、替换已有候选、播放前查找候选时使用 search_songs，taskType=search。
                 - taskType 必须描述本轮主能力：查找/替换候选歌曲使用 search；开放推荐、场景推荐、风格推荐使用 recommend。
                 - 如果用户在纠正上一轮音乐搜索目标，例如说明刚才的歌手、歌名或关键词说错了，使用 contextMode=correction，并基于纠正后的正向目标规划 search_songs。
@@ -302,7 +338,7 @@ public class AgentTurnPlanner {
 
     private void logPlanSummary(String stage, MusioConfig.Ai ai, AgentTurnPlan plan, String source) {
         log.info(
-                "TURN_PLAN stage={} runId={} userId={} provider={} model={} source={} disposition={} taskType={} contextMode={} memoryUse={} toolCallCount={} toolNames={} confidence={} fallbackReason={}",
+                "TURN_PLAN stage={} runId={} userId={} provider={} model={} source={} disposition={} taskType={} contextMode={} memoryUse={} requiredOutcomes={} toolCallCount={} toolNames={} confidence={} fallbackReason={}",
                 stage,
                 currentRunId(),
                 currentUserId(),
@@ -313,6 +349,7 @@ public class AgentTurnPlanner {
                 plan.taskType(),
                 plan.contextMode(),
                 plan.memoryUse() == null ? "none" : plan.memoryUse().summary(),
+                plan.requiredOutcomes() == null || plan.requiredOutcomes().isEmpty() ? "none" : plan.requiredOutcomes(),
                 plan.toolCalls() == null ? 0 : plan.toolCalls().size(),
                 toolNames(plan.toolCalls()),
                 plan.confidence(),

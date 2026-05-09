@@ -692,7 +692,7 @@ public class AgentRuntime {
 
     private void logTurnRuntimePlan(String runId, MusioConfig.Ai ai, AgentTurnPlan plan, boolean traceEnabled) {
         log.info(
-                "TURN_RUNTIME stage=plan_validator runId={} userId={} provider={} model={} disposition={} taskType={} contextMode={} memoryUse={} toolCallCount={} toolNames={} validationStatus={} fallbackReason={} traceEnabled={}",
+                "TURN_RUNTIME stage=plan_validator runId={} userId={} provider={} model={} disposition={} taskType={} contextMode={} memoryUse={} requiredOutcomes={} toolCallCount={} toolNames={} validationStatus={} fallbackReason={} traceEnabled={}",
                 runId,
                 AgentRunContext.userId().orElse("-"),
                 ai == null ? "" : ai.provider(),
@@ -701,6 +701,7 @@ public class AgentRuntime {
                 plan.taskType(),
                 plan.contextMode(),
                 plan.memoryUse() == null ? "none" : plan.memoryUse().summary(),
+                plan.requiredOutcomes() == null || plan.requiredOutcomes().isEmpty() ? "none" : plan.requiredOutcomes(),
                 plan.toolCalls() == null ? 0 : plan.toolCalls().size(),
                 toolNames(plan.toolCalls()),
                 plan.disposition() == TurnDisposition.USE_TOOLS ? "accepted" : "respond_only",
@@ -711,7 +712,7 @@ public class AgentRuntime {
 
     private void logAgentGoal(String runId, MusioConfig.Ai ai, AgentGoal goal, AgentCapabilityManifest manifest) {
         log.info(
-                "AGENT_GOAL stage=goal_analyzer runId={} userId={} provider={} model={} taskType={} contextMode={} musicTask={} toolEvidenceExpected={} localWriteIntent={} accountWriteIntent={} requestedSongCount={} manifestTools={}",
+                "AGENT_GOAL stage=goal_analyzer runId={} userId={} provider={} model={} taskType={} contextMode={} musicTask={} toolEvidenceExpected={} localWriteIntent={} accountWriteIntent={} requestedSongCount={} requiredOutcomes={} manifestTools={}",
                 runId,
                 AgentRunContext.userId().orElse("-"),
                 ai == null ? "" : ai.provider(),
@@ -723,6 +724,7 @@ public class AgentRuntime {
                 goal != null && goal.localWriteIntent(),
                 goal != null && goal.accountWriteIntent(),
                 goal == null ? 0 : goal.requestedSongCount(),
+                goal == null || goal.requiredOutcomes().isEmpty() ? "none" : goal.requiredOutcomes(),
                 manifest == null ? "none" : String.join(",", manifest.names())
         );
     }

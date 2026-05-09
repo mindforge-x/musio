@@ -2,6 +2,7 @@ package com.musio.agent.loop;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.AgentToolExecutor;
+import com.musio.agent.AgentRequiredOutcome;
 import com.musio.agent.capability.AgentCapabilityExecutor;
 import com.musio.agent.capability.AgentCapabilityManifest;
 import com.musio.agent.capability.AgentCapabilityRegistry;
@@ -161,6 +162,9 @@ public class AgentLoopRunner {
         if (state == null || action == null) {
             return false;
         }
+        if (pureRecommendationSatisfied(state, action)) {
+            return true;
+        }
         if (state.requestedSongCount() == 1
                 && state.capabilityManifest().allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)
                 && successfulToolObserved(state, "get_hot_comments")
@@ -168,6 +172,33 @@ public class AgentLoopRunner {
             return true;
         }
         return false;
+    }
+
+    private boolean pureRecommendationSatisfied(AgentLoopState state, AgentStepAction action) {
+        if (!AgentCapabilityRegistry.RECOMMEND_SONGS.equals(action.toolName())
+                || state.goal() == null
+                || !"recommend".equals(state.goal().taskType())) {
+            return false;
+        }
+        if (!state.goal().requiredOutcomes().equals(List.of(AgentRequiredOutcome.RECOMMENDATION))) {
+            return false;
+        }
+        AgentObservation recommendation = lastSuccessfulObservation(state, AgentCapabilityRegistry.RECOMMEND_SONGS);
+        if (recommendation == null) {
+            return false;
+        }
+        int requiredCount = state.requestedSongCount() <= 0 ? 1 : state.requestedSongCount();
+        return recommendation.songs().size() >= requiredCount;
+    }
+
+    private AgentObservation lastSuccessfulObservation(AgentLoopState state, String toolName) {
+        for (int index = state.observations().size() - 1; index >= 0; index--) {
+            AgentObservation observation = state.observations().get(index);
+            if (observation.status() == AgentObservationStatus.SUCCESS && toolName.equals(observation.toolName())) {
+                return observation;
+            }
+        }
+        return null;
     }
 
     private boolean successfulToolObserved(AgentLoopState state, String toolName) {

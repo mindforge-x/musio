@@ -119,6 +119,7 @@ class AgentTurnPlannerTest {
         assertEquals("recommend", plan.taskType());
         assertTrue(plan.usesTools());
         assertTrue(plan.toolCalls().isEmpty());
+        assertEquals(List.of(AgentRequiredOutcome.RECOMMENDATION), plan.requiredOutcomes());
         assertTrue(plan.toToolPlan().toolCalls().isEmpty());
 
         AgentTaskContext context = plan.toLegacyTaskContext("给我推荐 5 首适合深夜写代码听的歌。");
@@ -148,6 +149,7 @@ class AgentTurnPlannerTest {
         assertEquals(TurnDisposition.USE_TOOLS, plan.disposition());
         assertEquals("playlist", plan.taskType());
         assertTrue(plan.hasTool("add_song_to_musio_playlist"));
+        assertEquals(List.of(AgentRequiredOutcome.PLAYLIST, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE), plan.requiredOutcomes());
         assertTrue(plan.toToolPlan().toolCalls().isEmpty());
         assertEquals("default", plan.toolCalls().getFirst().arguments().get("playlistId"));
         assertEquals(1, plan.toolCalls().getFirst().arguments().get("songIndex"));
@@ -171,7 +173,28 @@ class AgentTurnPlannerTest {
         assertEquals("recommend", plan.taskType());
         assertTrue(plan.usesTools());
         assertTrue(plan.toolCalls().isEmpty());
+        assertEquals(List.of(AgentRequiredOutcome.RECOMMENDATION), plan.requiredOutcomes());
         assertEquals("", plan.fallbackReason());
+    }
+
+    @Test
+    void parsesStructuredRequiredOutcomesForCompositeTask() {
+        AgentTurnPlan plan = planner.parsePlan("""
+                {
+                  "disposition": "use_tools",
+                  "taskType": "recommend",
+                  "contextMode": "new_task",
+                  "effectiveRequest": "推荐一首适合专注的歌，并获取热评",
+                  "memoryUse": {"usesTaskMemory": false, "usedFields": [], "reason": "新的复合推荐任务"},
+                  "requiredOutcomes": ["recommendation", "comments"],
+                  "toolCalls": [],
+                  "confidence": 0.92
+                }
+                """, "推荐一首适合专注的歌，并获取热评").orElseThrow();
+
+        assertEquals(TurnDisposition.USE_TOOLS, plan.disposition());
+        assertEquals("recommend", plan.taskType());
+        assertEquals(List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.COMMENTS), plan.requiredOutcomes());
     }
 
     @Test

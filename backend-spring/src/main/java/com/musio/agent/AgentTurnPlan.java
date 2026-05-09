@@ -11,6 +11,7 @@ record AgentTurnPlan(
         String effectiveRequest,
         AgentTurnMemoryUse memoryUse,
         List<AgentToolCall> toolCalls,
+        List<AgentRequiredOutcome> requiredOutcomes,
         double confidence,
         String fallbackReason
 ) {
@@ -25,6 +26,24 @@ record AgentTurnPlan(
     );
     private static final Set<String> LOCAL_WRITE_TOOLS = Set.of("add_song_to_musio_playlist");
     private static final Set<String> ACCOUNT_WRITE_TOOLS = Set.of();
+
+    AgentTurnPlan(
+            TurnDisposition disposition,
+            String taskType,
+            String contextMode,
+            String effectiveRequest,
+            AgentTurnMemoryUse memoryUse,
+            List<AgentToolCall> toolCalls,
+            double confidence,
+            String fallbackReason
+    ) {
+        this(disposition, taskType, contextMode, effectiveRequest, memoryUse, toolCalls, List.of(), confidence, fallbackReason);
+    }
+
+    AgentTurnPlan {
+        toolCalls = toolCalls == null ? List.of() : List.copyOf(toolCalls);
+        requiredOutcomes = normalizeRequiredOutcomes(disposition, taskType, toolCalls, requiredOutcomes);
+    }
 
     static AgentTurnPlan respondOnly(String effectiveRequest, double confidence, String fallbackReason) {
         return new AgentTurnPlan(
@@ -79,11 +98,13 @@ record AgentTurnPlan(
     }
 
     boolean hasLocalWriteTools() {
-        return localWriteToolCalls().stream().findAny().isPresent();
+        return localWriteToolCalls().stream().findAny().isPresent()
+                || requiredOutcomes.contains(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE);
     }
 
     boolean hasAccountWriteTools() {
-        return nonBlankToolCalls().stream().anyMatch(this::isAccountWriteTool);
+        return nonBlankToolCalls().stream().anyMatch(this::isAccountWriteTool)
+                || requiredOutcomes.contains(AgentRequiredOutcome.ACCOUNT_WRITE);
     }
 
     boolean hasOnlyLocalWriteTools() {
@@ -163,6 +184,52 @@ record AgentTurnPlan(
 
     private boolean isAccountWriteTool(AgentToolCall call) {
         return call != null && ACCOUNT_WRITE_TOOLS.contains(call.toolName());
+    }
+
+    private static List<AgentRequiredOutcome> normalizeRequiredOutcomes(
+            TurnDisposition disposition,
+            String taskType,
+            List<AgentToolCall> toolCalls,
+            List<AgentRequiredOutcome> requiredOutcomes
+    ) {
+        java.util.LinkedHashSet<AgentRequiredOutcome> outcomes = new java.util.LinkedHashSet<>();
+        if (requiredOutcomes != null) {
+            outcomes.addAll(requiredOutcomes);
+        }
+        if (outcomes.isEmpty() && disposition == TurnDisposition.USE_TOOLS) {
+            outcomeForTaskType(taskType).ifPresent(outcomes::add);
+            for (AgentToolCall call : toolCalls == null ? List.<AgentToolCall>of() : toolCalls) {
+                outcomeForTool(call == null ? "" : call.toolName()).ifPresent(outcomes::add);
+            }
+        }
+        return List.copyOf(outcomes);
+    }
+
+    private static java.util.Optional<AgentRequiredOutcome> outcomeForTaskType(String taskType) {
+        return switch (safe(taskType)) {
+            case "recommend" -> java.util.Optional.of(AgentRequiredOutcome.RECOMMENDATION);
+            case "search" -> java.util.Optional.of(AgentRequiredOutcome.SEARCH);
+            case "comments" -> java.util.Optional.of(AgentRequiredOutcome.COMMENTS);
+            case "lyrics" -> java.util.Optional.of(AgentRequiredOutcome.LYRICS);
+            case "detail" -> java.util.Optional.of(AgentRequiredOutcome.DETAIL);
+            case "playlist" -> java.util.Optional.of(AgentRequiredOutcome.PLAYLIST);
+            case "profile" -> java.util.Optional.of(AgentRequiredOutcome.PROFILE);
+            case "playback" -> java.util.Optional.of(AgentRequiredOutcome.PLAYBACK);
+            default -> java.util.Optional.empty();
+        };
+    }
+
+    private static java.util.Optional<AgentRequiredOutcome> outcomeForTool(String toolName) {
+        return switch (safe(toolName)) {
+            case "search_songs" -> java.util.Optional.of(AgentRequiredOutcome.SEARCH);
+            case "get_hot_comments" -> java.util.Optional.of(AgentRequiredOutcome.COMMENTS);
+            case "get_lyrics" -> java.util.Optional.of(AgentRequiredOutcome.LYRICS);
+            case "get_song_detail" -> java.util.Optional.of(AgentRequiredOutcome.DETAIL);
+            case "get_user_playlists", "get_playlist_songs" -> java.util.Optional.of(AgentRequiredOutcome.PLAYLIST);
+            case "get_user_music_profile" -> java.util.Optional.of(AgentRequiredOutcome.PROFILE);
+            case "add_song_to_musio_playlist" -> java.util.Optional.of(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE);
+            default -> java.util.Optional.empty();
+        };
     }
 
     private static String text(Map<String, Object> arguments, String key) {

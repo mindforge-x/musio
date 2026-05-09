@@ -12,7 +12,8 @@ public record AgentGoal(
         boolean localWriteIntent,
         boolean accountWriteIntent,
         int requestedSongCount,
-        List<String> avoidSongTitles
+        List<String> avoidSongTitles,
+        List<AgentRequiredOutcome> requiredOutcomes
 ) {
     public AgentGoal {
         userMessage = safe(userMessage);
@@ -21,6 +22,7 @@ public record AgentGoal(
         contextMode = safe(contextMode).isBlank() ? "new_task" : safe(contextMode);
         requestedSongCount = Math.max(0, requestedSongCount);
         avoidSongTitles = avoidSongTitles == null ? List.of() : List.copyOf(avoidSongTitles);
+        requiredOutcomes = requiredOutcomes == null ? List.of() : List.copyOf(requiredOutcomes);
     }
 
     static AgentGoal from(String userMessage, AgentTurnPlan turnPlan, AgentTaskContext taskContext, int requestedSongCount) {
@@ -28,6 +30,7 @@ public record AgentGoal(
         String taskType = taskContext == null ? "unknown" : taskContext.taskType();
         String contextMode = taskContext == null ? "new_task" : taskContext.contextMode();
         boolean toolEvidenceExpected = taskContext != null && taskContext.toolEvidenceExpected();
+        List<AgentRequiredOutcome> requiredOutcomes = turnPlan == null ? List.of() : turnPlan.requiredOutcomes();
         return new AgentGoal(
                 userMessage,
                 effectiveRequest,
@@ -35,10 +38,11 @@ public record AgentGoal(
                 contextMode,
                 toolEvidenceExpected || (turnPlan != null && turnPlan.usesTools()),
                 toolEvidenceExpected,
-                turnPlan != null && turnPlan.hasLocalWriteTools(),
-                turnPlan != null && turnPlan.hasAccountWriteTools(),
+                (turnPlan != null && turnPlan.hasLocalWriteTools()) || requiredOutcomes.contains(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE),
+                (turnPlan != null && turnPlan.hasAccountWriteTools()) || requiredOutcomes.contains(AgentRequiredOutcome.ACCOUNT_WRITE),
                 requestedSongCount,
-                taskContext == null ? List.of() : taskContext.avoidSongTitles()
+                taskContext == null ? List.of() : taskContext.avoidSongTitles(),
+                requiredOutcomes
         );
     }
 
@@ -53,6 +57,7 @@ public record AgentGoal(
                 accountWriteIntent: %s
                 requestedSongCount: %s
                 avoidSongTitles: %s
+                requiredOutcomes: %s
                 """.formatted(
                 effectiveRequest,
                 taskType,
@@ -62,7 +67,8 @@ public record AgentGoal(
                 localWriteIntent,
                 accountWriteIntent,
                 requestedSongCount <= 0 ? "unspecified" : requestedSongCount,
-                avoidSongTitles.isEmpty() ? "none" : String.join("、", avoidSongTitles)
+                avoidSongTitles.isEmpty() ? "none" : String.join("、", avoidSongTitles),
+                requiredOutcomes.isEmpty() ? "none" : requiredOutcomes
         ).strip();
     }
 

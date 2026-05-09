@@ -1,6 +1,8 @@
 package com.musio.agent.loop;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.agent.AgentGoal;
+import com.musio.agent.AgentRequiredOutcome;
 import com.musio.agent.AgentToolExecutor;
 import com.musio.agent.capability.AgentCapability;
 import com.musio.agent.capability.AgentCapabilityArgumentContext;
@@ -530,6 +532,101 @@ class AgentLoopRunnerTest {
         assertEquals("安静", evidence.songs().getFirst().title());
     }
 
+    @Test
+    void completesPureRecommendationAfterRecommendSongsSatisfiesRequestedCount() {
+        AgentCapabilityHandler recommendationHandler = new StubRecommendationCapabilityHandler();
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler));
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "提升专注力", "count", 1), "生成推荐", 0.9, "开放推荐"),
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "提升专注力", "count", 1), "重复推荐", 0.9, "不应执行")
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler))
+        );
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "推荐一首适合提升专注力的音乐",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.readManifest(),
+                1,
+                new AgentGoal(
+                        "推荐一首适合提升专注力的音乐",
+                        "推荐一首适合提升专注力的音乐",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        false,
+                        false,
+                        1,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals("tool_completion", outcome.reason());
+        assertEquals(1, outcome.evidence().observations().size());
+        assertEquals("recommend_songs", outcome.evidence().observations().getFirst().toolName());
+        assertEquals("安静", outcome.evidence().songs().getFirst().title());
+    }
+
+    @Test
+    void doesNotAutoCompleteRecommendationWhenUserAlsoRequestsComments() {
+        AgentCapabilityHandler recommendationHandler = new StubRecommendationCapabilityHandler();
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler));
+        TrackingPlanner planner = new TrackingPlanner(List.of(
+                new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "提升专注力", "count", 1), "生成推荐", 0.9, "开放推荐"),
+                AgentStepAction.finalAnswer("用户还要求热评，继续交给 planner 决策", 0.9)
+        ));
+        AgentLoopRunner runner = new AgentLoopRunner(
+                planner,
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler))
+        );
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "推荐一首适合提升专注力的音乐，并获取热评",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.readManifest(),
+                1,
+                new AgentGoal(
+                        "推荐一首适合提升专注力的音乐，并获取热评",
+                        "推荐一首适合提升专注力的音乐，并获取热评",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        false,
+                        false,
+                        1,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.COMMENTS)
+                )
+        ));
+
+        assertEquals(2, planner.calls());
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals("用户还要求热评，继续交给 planner 决策", outcome.reason());
+        assertEquals(1, outcome.evidence().observations().size());
+        assertEquals(AgentObservationStatus.SUCCESS, outcome.evidence().observations().getFirst().status());
+    }
+
     private static class StubPlaylistCapabilityExecutor extends MusioPlaylistCapabilityExecutor {
         private final String resultJson;
 
@@ -607,6 +704,24 @@ class AgentLoopRunnerTest {
         @Override
         public AgentStepAction nextAction(MusioConfig.Ai ai, AgentLoopState state) {
             return actions.get(Math.min(index++, actions.size() - 1));
+        }
+    }
+
+    private static class TrackingPlanner extends SequencedPlanner {
+        private int calls;
+
+        private TrackingPlanner(List<AgentStepAction> actions) {
+            super(actions);
+        }
+
+        @Override
+        public AgentStepAction nextAction(MusioConfig.Ai ai, AgentLoopState state) {
+            calls++;
+            return super.nextAction(ai, state);
+        }
+
+        int calls() {
+            return calls;
         }
     }
 

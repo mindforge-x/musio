@@ -28,7 +28,7 @@ public record AgentLoopState(
         stepCount = Math.max(0, stepCount);
         capabilityManifest = capabilityManifest == null ? AgentCapabilityManifest.empty() : capabilityManifest;
         requestedSongCount = Math.max(0, requestedSongCount);
-        goal = goal == null ? new AgentGoal(userMessage, userMessage, "unknown", "new_task", false, false, false, false, requestedSongCount, List.of()) : goal;
+        goal = goal == null ? new AgentGoal(userMessage, userMessage, "unknown", "new_task", false, false, false, false, requestedSongCount, List.of(), List.of()) : goal;
     }
 
     public AgentLoopState(
