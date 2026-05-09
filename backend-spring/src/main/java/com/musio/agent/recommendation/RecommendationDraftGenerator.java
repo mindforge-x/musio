@@ -16,8 +16,10 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -91,7 +93,68 @@ public class RecommendationDraftGenerator {
         }
     }
 
+    public Optional<RecommendationDraft> generate(
+            MusioConfig.Ai ai,
+            String userRequest,
+            List<RecommendationSlot> recommendationSlots,
+            List<String> avoidSongTitles,
+            AgentTaskMemory taskMemory
+    ) {
+        List<RecommendationSlot> slots = RecommendationSlots.normalize(recommendationSlots);
+        if (slots.isEmpty()) {
+            return generate(ai, userRequest, 0, avoidSongTitles, taskMemory);
+        }
+        if (chatModelFactory == null || ai == null) {
+            return Optional.empty();
+        }
+        int count = requestedCount(RecommendationSlots.totalCount(slots));
+        try {
+            Prompt prompt = new Prompt(List.of(
+                    new SystemMessage(instruction()),
+                    new UserMessage("""
+                            当前用户请求：
+                            %s
+
+                            结构化推荐目标：
+                            %s
+
+                            需要推荐总数：%s
+
+                            当前用户音乐画像：
+                            %s
+
+                            本轮应避免重复的歌名：
+                            %s
+
+                            最近任务记忆（只作短期上下文，不是事实来源）：
+                            %s
+                            """.formatted(
+                            safe(userRequest),
+                            slotPreview(slots),
+                            count,
+                            musicProfilePreview(),
+                            avoidSongTitles == null || avoidSongTitles.isEmpty() ? "无" : String.join("、", avoidSongTitles),
+                            taskMemoryPreview(taskMemory)
+                    ))
+            ));
+            AgentLlmLogger.logRequest("recommendation_draft", ai, prompt);
+            String content = chatModelFactory.chatClient(ai)
+                    .prompt(prompt)
+                    .call()
+                    .content();
+            AgentLlmLogger.logResponse("recommendation_draft", ai, content);
+            return parseDraft(content, count, slots);
+        } catch (Exception e) {
+            log.warn("Recommendation draft generation failed", e);
+            return Optional.empty();
+        }
+    }
+
     Optional<RecommendationDraft> parseDraft(String content, int requestedCount) {
+        return parseDraft(content, requestedCount, List.of());
+    }
+
+    Optional<RecommendationDraft> parseDraft(String content, int requestedCount, List<RecommendationSlot> recommendationSlots) {
         if (content == null || content.isBlank()) {
             return Optional.empty();
         }
@@ -113,20 +176,36 @@ public class RecommendationDraftGenerator {
             }
 
             int limit = requestedCount(requestedCount);
+            List<RecommendationSlot> slots = RecommendationSlots.normalize(recommendationSlots);
+            Map<String, Integer> requestedBySlot = requestedBySlot(slots);
+            Map<String, Integer> candidateCountBySlot = new LinkedHashMap<>();
             Set<String> seen = new LinkedHashSet<>();
             List<RecommendationCandidate> candidates = new ArrayList<>();
             for (JsonNode candidateNode : candidatesNode) {
                 String title = text(candidateNode, "title");
                 String artist = text(candidateNode, "artist");
                 String reason = text(candidateNode, "reason");
+                String slotId = slotId(candidateNode, slots);
                 if (title.isBlank() || artist.isBlank() || reason.isBlank()) {
                     continue;
                 }
-                String key = normalizeKey(title) + "|" + normalizeKey(artist);
+                if (!slots.isEmpty()) {
+                    if (slotId.isBlank() || !requestedBySlot.containsKey(slotId)) {
+                        continue;
+                    }
+                    int acceptedForSlot = candidateCountBySlot.getOrDefault(slotId, 0);
+                    if (acceptedForSlot >= requestedBySlot.get(slotId)) {
+                        continue;
+                    }
+                }
+                String key = normalizeKey(title) + "|" + normalizeKey(artist) + "|" + normalizeKey(slotId);
                 if (!seen.add(key)) {
                     continue;
                 }
-                candidates.add(new RecommendationCandidate(title, artist, reason));
+                candidates.add(new RecommendationCandidate(title, artist, reason, slotId));
+                if (!slotId.isBlank()) {
+                    candidateCountBySlot.put(slotId, candidateCountBySlot.getOrDefault(slotId, 0) + 1);
+                }
                 if (candidates.size() >= limit) {
                     break;
                 }
@@ -146,10 +225,11 @@ public class RecommendationDraftGenerator {
                 你的任务是先决定“应该推荐哪些具体歌曲”，不是搜索 QQ 音乐。
 
                 输出格式：
-                {"candidates":[{"title":"歌曲名","artist":"歌手名","reason":"一句中文推荐理由"}],"confidence":0.0到1.0,"source":"model"}
+                {"candidates":[{"slotId":"推荐目标 slotId，可为空","title":"歌曲名","artist":"歌手名","reason":"一句中文推荐理由"}],"confidence":0.0到1.0,"source":"model"}
 
                 规则：
                 - 必须输出具体歌曲名和歌手名；不要输出“深夜写代码”“助眠白噪音”这类场景词作为 title。
+                - 如果用户消息提供了结构化推荐目标，每个 candidates 项必须带对应 slotId，并且每个 slotId 的数量尽量等于该 slot 的 count。
                 - 推荐理由要根据用户当前请求和音乐画像写，不要声称已经搜索或播放。
                 - title 和 artist 必须是可用于音乐平台搜索的真实歌曲信息。
                 - 避免重复“本轮应避免重复的歌名”。
@@ -193,6 +273,34 @@ public class RecommendationDraftGenerator {
             parts.add("lastResultSongTitles: " + String.join("、", memory.lastResultSongTitles().stream().limit(10).toList()));
         }
         return parts.isEmpty() ? "无" : String.join("\n", parts);
+    }
+
+    private String slotPreview(List<RecommendationSlot> slots) {
+        if (slots == null || slots.isEmpty()) {
+            return "无";
+        }
+        return String.join("\n", slots.stream()
+                .map(slot -> "- slotId=%s, targetType=%s, target=%s, count=%s".formatted(slot.slotId(), slot.targetType(), slot.target(), slot.count()))
+                .toList());
+    }
+
+    private Map<String, Integer> requestedBySlot(List<RecommendationSlot> slots) {
+        Map<String, Integer> values = new LinkedHashMap<>();
+        for (RecommendationSlot slot : slots == null ? List.<RecommendationSlot>of() : slots) {
+            values.put(slot.slotId(), slot.count());
+        }
+        return values;
+    }
+
+    private String slotId(JsonNode candidateNode, List<RecommendationSlot> slots) {
+        String value = text(candidateNode, "slotId");
+        if (!value.isBlank()) {
+            return value;
+        }
+        if (slots != null && slots.size() == 1) {
+            return slots.getFirst().slotId();
+        }
+        return "";
     }
 
     private String joinLimited(List<String> values, int limit) {

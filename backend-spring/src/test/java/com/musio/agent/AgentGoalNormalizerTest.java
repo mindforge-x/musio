@@ -64,4 +64,27 @@ class AgentGoalNormalizerTest {
                 AgentGoalNormalizer.requiredOutcomes(turnPlan, null)
         );
     }
+
+    @Test
+    void derivesRecommendationSlotsFromRepeatedArtistCounts() {
+        AgentTurnPlan turnPlan = new AgentTurnPlan(
+                TurnDisposition.USE_TOOLS,
+                "recommend",
+                "new_task",
+                "推荐一首许嵩的歌，再推荐一首许嵩的歌，一首后弦的歌，并获取热评、歌词、加入歌单",
+                AgentTurnMemoryUse.none("新任务"),
+                List.of(),
+                List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.COMMENTS, AgentRequiredOutcome.LYRICS, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE),
+                0.9,
+                ""
+        );
+
+        var slots = AgentGoalNormalizer.recommendationSlots(turnPlan, null, turnPlan.effectiveRequest());
+
+        assertEquals(2, slots.size());
+        assertEquals("许嵩", slots.get(0).target());
+        assertEquals(2, slots.get(0).count());
+        assertEquals("后弦", slots.get(1).target());
+        assertEquals(1, slots.get(1).count());
+    }
 }

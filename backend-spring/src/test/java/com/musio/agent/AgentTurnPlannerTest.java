@@ -178,6 +178,33 @@ class AgentTurnPlannerTest {
     }
 
     @Test
+    void parsesRecommendationSlotsForMultiTargetRecommendation() {
+        AgentTurnPlan plan = planner.parsePlan("""
+                {
+                  "disposition": "use_tools",
+                  "taskType": "recommend",
+                  "contextMode": "new_task",
+                  "effectiveRequest": "推荐两首许嵩的歌和一首后弦的歌，并获取热评",
+                  "memoryUse": {"usesTaskMemory": false, "usedFields": [], "reason": "新的复合推荐任务"},
+                  "requiredOutcomes": ["recommendation", "comments"],
+                  "recommendationSlots": [
+                    {"slotId": "xusong", "targetType": "artist", "target": "许嵩", "count": 2},
+                    {"slotId": "houxian", "targetType": "artist", "target": "后弦", "count": 1}
+                  ],
+                  "toolCalls": [],
+                  "confidence": 0.92
+                }
+                """, "推荐两首许嵩的歌和一首后弦的歌，并获取热评").orElseThrow();
+
+        assertEquals(TurnDisposition.USE_TOOLS, plan.disposition());
+        assertEquals(2, plan.recommendationSlots().size());
+        assertEquals("xusong", plan.recommendationSlots().getFirst().slotId());
+        assertEquals(2, plan.recommendationSlots().getFirst().count());
+        assertEquals("houxian", plan.recommendationSlots().get(1).slotId());
+        assertEquals(1, plan.recommendationSlots().get(1).count());
+    }
+
+    @Test
     void parsesStructuredRequiredOutcomesForCompositeTask() {
         AgentTurnPlan plan = planner.parsePlan("""
                 {

@@ -1,5 +1,8 @@
 package com.musio.agent.capability;
 
+import com.musio.agent.recommendation.RecommendationSlot;
+import com.musio.agent.recommendation.RecommendationSlots;
+
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,13 +20,21 @@ final class AgentCapabilityArgumentRules {
         AgentCapabilityArgumentContext safeContext = context == null ? AgentCapabilityArgumentContext.defaultContext() : context;
         if (AgentCapabilityRegistry.RECOMMEND_SONGS.equals(capabilityName)) {
             cleaned.put("request", text(cleaned, "request"));
+            List<RecommendationSlot> slots = RecommendationSlots.fromArgument(cleaned.get("slots"));
+            if (slots.isEmpty()) {
+                cleaned.remove("slots");
+            } else {
+                cleaned.put("slots", RecommendationSlots.toArgument(slots));
+            }
             Integer count = cleanRequiredLimit(cleaned.get("count"), 1, 10);
-            if (count == null && safeContext.requestedSongCount() > 0) {
+            if (!slots.isEmpty()) {
+                cleaned.put("count", RecommendationSlots.totalCount(slots));
+            } else if (count == null && safeContext.requestedSongCount() > 0) {
                 cleaned.put("count", Math.min(safeContext.requestedSongCount(), 10));
             } else if (count == null) {
                 cleaned.remove("count");
             } else {
-                cleaned.put("count", safeContext.requestedSongCount() > 0 ? Math.min(count, safeContext.requestedSongCount()) : count);
+                cleaned.put("count", count);
             }
             List<String> excludedTitles = stringList(cleaned.get("excludedTitles"));
             if (excludedTitles.isEmpty()) {
@@ -95,7 +106,8 @@ final class AgentCapabilityArgumentRules {
 
     static AgentCapabilityValidationResult validateReadRequiredArguments(String capabilityName, Map<String, Object> arguments) {
         return switch (capabilityName) {
-            case AgentCapabilityRegistry.RECOMMEND_SONGS -> hasText(arguments, "request") && integer(arguments, "count") != null
+            case AgentCapabilityRegistry.RECOMMEND_SONGS -> hasText(arguments, "request")
+                    && (integer(arguments, "count") != null || !RecommendationSlots.fromArgument(arguments == null ? null : arguments.get("slots")).isEmpty())
                     ? AgentCapabilityValidationResult.accepted()
                     : AgentCapabilityValidationResult.rejected("missing_required_argument");
             case "search_songs" -> hasText(arguments, "keyword") && integer(arguments, "limit") != null

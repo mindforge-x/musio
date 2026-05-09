@@ -16,7 +16,7 @@ public class AgentCapabilityRegistry {
     public static final String ADD_SONG_TO_MUSIO_PLAYLIST = "add_song_to_musio_playlist";
 
     private static final List<AgentCapability> DEFAULT_CAPABILITIES = List.of(
-            new AgentCapability(RECOMMEND_SONGS, CapabilityEffect.READ, "根据开放推荐、场景、风格或心境请求生成具体歌曲候选，并在音乐源中精确匹配真实歌曲。", "{\"request\": string, \"count\": number, \"excludedTitles\": string[]}", Set.of("request", "count")),
+            new AgentCapability(RECOMMEND_SONGS, CapabilityEffect.READ, "根据开放推荐、场景、风格、心境或结构化多目标请求生成具体歌曲候选，并在音乐源中精确匹配真实歌曲。", "{\"request\": string, \"count\": number, \"slots\": [{\"slotId\": string, \"targetType\": string, \"target\": string, \"count\": number}], \"excludedTitles\": string[]}", Set.of("request")),
             new AgentCapability("search_songs", CapabilityEffect.READ, "搜索歌曲、歌手、专辑或候选音乐；excludedTitles 可选。", "{\"keyword\": string, \"limit\": number, \"excludedTitles\": string[]}", Set.of("keyword", "limit")),
             new AgentCapability("get_user_music_profile", CapabilityEffect.READ, "读取本地音乐画像摘要。", "{}", Set.of()),
             new AgentCapability("get_song_detail", CapabilityEffect.READ, "读取歌曲详情。", "{\"songId\": string}", Set.of("songId")),

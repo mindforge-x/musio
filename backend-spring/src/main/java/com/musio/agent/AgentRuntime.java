@@ -13,6 +13,8 @@ import com.musio.agent.loop.AgentObservationStatus;
 import com.musio.agent.loop.AgentStepAction;
 import com.musio.agent.loop.AgentStepActionType;
 import com.musio.agent.trace.AgentTracePublisher;
+import com.musio.agent.recommendation.RecommendationSlot;
+import com.musio.agent.recommendation.RecommendationSlots;
 import com.musio.config.MusioConfig;
 import com.musio.config.MusioConfigService;
 import com.musio.events.AgentEventBus;
@@ -116,8 +118,9 @@ public class AgentRuntime {
                 turnPlan = turnPlanner.planTurn(ai, request.message(), history, taskMemory);
             }
             AgentTaskContext taskContext = turnPlan.toLegacyTaskContext(request.message());
-            int requestedSongCount = requestedSongCount(request.message(), taskContext);
-            AgentGoal goal = AgentGoal.from(request.message(), turnPlan, taskContext, requestedSongCount);
+            List<RecommendationSlot> recommendationSlots = AgentGoalNormalizer.recommendationSlots(turnPlan, taskContext, request.message());
+            int requestedSongCount = requestedSongCount(request.message(), taskContext, recommendationSlots);
+            AgentGoal goal = AgentGoal.from(request.message(), turnPlan, taskContext, requestedSongCount, recommendationSlots);
             AgentCapabilityManifest capabilityManifest = policyGate.manifestFor(goal, turnPlan);
             boolean traceEnabled = true;
             AgentRunContext.setTraceEnabled(traceEnabled);
@@ -557,33 +560,16 @@ public class AgentRuntime {
                 "");
     }
 
-    private int requestedSongCount(String userMessage, AgentTaskContext taskContext) {
-        int explicitCount = explicitSongCount(userMessage);
+    private int requestedSongCount(String userMessage, AgentTaskContext taskContext, List<RecommendationSlot> recommendationSlots) {
+        int slotTotal = RecommendationSlots.totalCount(recommendationSlots);
+        if (slotTotal > 0) {
+            return slotTotal;
+        }
+        int explicitCount = RecommendationSlots.explicitSongCount(userMessage);
         if (explicitCount > 0) {
             return explicitCount;
         }
         return taskContext == null ? 0 : Math.max(0, taskContext.searchLimit());
-    }
-
-    private int explicitSongCount(String userMessage) {
-        String text = userMessage == null ? "" : userMessage.replaceAll("\\s+", "");
-        if (text.isBlank()) {
-            return 0;
-        }
-        java.util.regex.Matcher digitMatcher = java.util.regex.Pattern
-                .compile("(\\d{1,2})(首|个|支|曲)")
-                .matcher(text);
-        if (digitMatcher.find()) {
-            try {
-                return Math.max(1, Math.min(20, Integer.parseInt(digitMatcher.group(1))));
-            } catch (NumberFormatException ignored) {
-                return 0;
-            }
-        }
-        if (text.contains("一首") || text.contains("1首") || text.contains("一支") || text.contains("一曲") || text.contains("一个")) {
-            return 1;
-        }
-        return 0;
     }
 
     private void publishAnswerDelta(String runId, MusioConfig.Ai ai, AgentAnswerStreamGuard answerGuard, String chunk, boolean traceEnabled, boolean[] composeStarted) {

@@ -627,6 +627,69 @@ class AgentLoopRunnerTest {
         assertEquals(AgentObservationStatus.SUCCESS, outcome.evidence().observations().getFirst().status());
     }
 
+    @Test
+    void allowsRepeatedRecommendationCallWhenSlotCoverageIsIncomplete() {
+        AgentCapabilityHandler recommendationHandler = new PartialThenCompleteRecommendationCapabilityHandler();
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler));
+        AgentStepAction action = new AgentStepAction(
+                AgentStepActionType.TOOL_CALL,
+                "recommend_songs",
+                Map.of(
+                        "request", "推荐两首许嵩的歌和一首后弦的歌",
+                        "count", 3,
+                        "slots", List.of(
+                                Map.of("slotId", "xusong", "targetType", "artist", "target", "许嵩", "count", 2),
+                                Map.of("slotId", "houxian", "targetType", "artist", "target", "后弦", "count", 1)
+                        )
+                ),
+                "生成推荐",
+                0.9,
+                "开放推荐"
+        );
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(action, action, AgentStepAction.finalAnswer("结束", 0.9))),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler))
+        );
+
+        AgentLoopEvidence evidence = runner.run(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "推荐两首许嵩的歌和一首后弦的歌",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.readManifest(),
+                3,
+                new AgentGoal(
+                        "推荐两首许嵩的歌和一首后弦的歌",
+                        "推荐两首许嵩的歌和一首后弦的歌",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        false,
+                        false,
+                        3,
+                        List.of(
+                                new com.musio.agent.recommendation.RecommendationSlot("xusong", "artist", "许嵩", 2),
+                                new com.musio.agent.recommendation.RecommendationSlot("houxian", "artist", "后弦", 1)
+                        ),
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION)
+                )
+        ));
+
+        assertEquals(2, evidence.observations().size());
+        assertEquals(AgentObservationStatus.SUCCESS, evidence.observations().getFirst().status());
+        assertEquals(AgentObservationStatus.SUCCESS, evidence.observations().get(1).status());
+        assertFalse(evidence.observations().get(1).resultJson().contains("duplicate_tool_call"));
+        assertEquals(3, evidence.songs().size());
+    }
+
     private static class StubPlaylistCapabilityExecutor extends MusioPlaylistCapabilityExecutor {
         private final String resultJson;
 
@@ -682,6 +745,49 @@ class AgentLoopRunnerTest {
         public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
             return Optional.of("""
                     {"success":true,"summary":"已生成并匹配 1 首推荐歌曲。","songs":[{"id":"qqmusic:quiet","provider":"QQMUSIC","title":"安静","artists":["周杰伦"],"album":"范特西","durationSeconds":334,"artworkUrl":null}],"recommendations":[{"songId":"qqmusic:quiet","title":"安静","artists":["周杰伦"],"reason":"钢琴和慢速旋律适合深夜专注。","matchedQuery":"安静 周杰伦"}]}
+                    """);
+        }
+    }
+
+    private static class PartialThenCompleteRecommendationCapabilityHandler implements AgentCapabilityHandler {
+        private static final AgentCapability CAPABILITY = new AgentCapability(
+                "recommend_songs",
+                CapabilityEffect.READ,
+                "测试推荐能力。",
+                "{\"request\": string, \"count\": number, \"slots\": []}",
+                Set.of("request")
+        );
+        private int calls;
+
+        @Override
+        public List<AgentCapability> capabilities() {
+            return List.of(CAPABILITY);
+        }
+
+        @Override
+        public boolean supports(String capabilityName) {
+            return CAPABILITY.name().equals(capabilityName);
+        }
+
+        @Override
+        public AgentCapabilityValidationResult validateArguments(
+                String capabilityName,
+                Map<String, Object> arguments,
+                AgentCapabilityArgumentContext context
+        ) {
+            return AgentCapabilityValidationResult.accepted();
+        }
+
+        @Override
+        public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
+            calls++;
+            if (calls == 1) {
+                return Optional.of("""
+                        {"success":true,"requestedTotal":3,"resolvedTotal":1,"slotResults":[{"slotId":"xusong","requested":2,"resolved":1},{"slotId":"houxian","requested":1,"resolved":0}],"songs":[{"slotId":"xusong","id":"qqmusic:x1","provider":"QQMUSIC","title":"断桥残雪","artists":["许嵩"],"album":"自定义","durationSeconds":240,"artworkUrl":null}]}
+                        """);
+            }
+            return Optional.of("""
+                    {"success":true,"requestedTotal":3,"resolvedTotal":2,"slotResults":[{"slotId":"xusong","requested":2,"resolved":1},{"slotId":"houxian","requested":1,"resolved":1}],"songs":[{"slotId":"xusong","id":"qqmusic:x2","provider":"QQMUSIC","title":"清明雨上","artists":["许嵩"],"album":"自定义","durationSeconds":240,"artworkUrl":null},{"slotId":"houxian","id":"qqmusic:h1","provider":"QQMUSIC","title":"西厢","artists":["后弦"],"album":"自定义","durationSeconds":240,"artworkUrl":null}]}
                     """);
         }
     }

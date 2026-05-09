@@ -1,5 +1,8 @@
 package com.musio.agent;
 
+import com.musio.agent.recommendation.RecommendationSlot;
+import com.musio.agent.recommendation.RecommendationSlots;
+
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -23,6 +26,25 @@ final class AgentGoalNormalizer {
             outcomeForTaskType(taskContext.taskType()).ifPresent(outcomes::add);
         }
         return List.copyOf(outcomes);
+    }
+
+    static List<RecommendationSlot> recommendationSlots(AgentTurnPlan turnPlan, AgentTaskContext taskContext, String userMessage) {
+        if (turnPlan != null && turnPlan.recommendationSlots() != null && !turnPlan.recommendationSlots().isEmpty()) {
+            return RecommendationSlots.normalize(turnPlan.recommendationSlots());
+        }
+        boolean recommendationTask = turnPlan != null && "recommend".equals(safe(turnPlan.taskType()));
+        boolean recommendationOutcome = requiredOutcomes(turnPlan, taskContext).contains(AgentRequiredOutcome.RECOMMENDATION);
+        if (!recommendationTask && !recommendationOutcome) {
+            return List.of();
+        }
+        String source = turnPlan == null || safe(turnPlan.effectiveRequest()).isBlank()
+                ? userMessage
+                : turnPlan.effectiveRequest();
+        List<RecommendationSlot> slots = RecommendationSlots.fromMessage(source);
+        if (!slots.isEmpty()) {
+            return slots;
+        }
+        return RecommendationSlots.fromMessage(userMessage);
     }
 
     private static Optional<AgentRequiredOutcome> outcomeForTaskType(String taskType) {

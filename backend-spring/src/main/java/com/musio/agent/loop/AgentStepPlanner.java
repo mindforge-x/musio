@@ -202,8 +202,10 @@ public class AgentStepPlanner {
                 - 不要编造 songId 或 playlistId；这类 id 必须来自用户输入、当前任务记忆或本轮 observations。
                 - 开放推荐、场景推荐、风格推荐或心境推荐，且 recommend_songs 出现在“本轮可用能力”时，优先调用 recommend_songs；不要直接把“深夜学习”“写代码”“治愈”等场景词塞进 search_songs.keyword。
                 - recommend_songs 会先生成具体歌曲候选，再精确匹配真实歌曲；它的 songs observation 可作为后续评论、歌词、详情或收藏的 songId 来源。
-                - recommend_songs.request 应保留用户完整推荐需求；count 应等于本轮用户要求的歌曲数量，未明确时默认 5。
-                - 如果 recommend_songs 已成功返回足够 songs，且用户没有继续要求评论、歌词、详情或写入，下一步应 final_answer。
+                - recommend_songs.request 应保留用户完整推荐需求；count 应等于本轮推荐总数，未明确时默认 5。
+                - 如果 Agent Goal 里有 recommendationSlots，recommend_songs.arguments 必须带 slots 原样传递，并让 count 等于这些 slots 的 count 总和；不要把多目标推荐压成单个“一首”。
+                - recommend_songs observation 会提供 requestedTotal、resolvedTotal、slotResults、songs、unresolved；推荐是否完成必须以这些结构化覆盖度为准。
+                - 如果 recommend_songs 已成功返回足够 songs / slotResults 已覆盖所有 slots，且用户没有继续要求评论、歌词、详情或写入，下一步应 final_answer。
                 - 如果用户要歌词、评论或歌曲详情，但当前没有目标 songId，下一步应先搜索或利用已有 observation / 任务记忆里的歌曲 id。
                 - search_songs.keyword 只写正向搜索目标，例如歌手、歌曲名或风格；不要把排除、比较或“不是 X 是 Y”这类关系拼进 keyword。
                 - search_songs.limit 必须显式填写；完全没有数量含义时默认 5。

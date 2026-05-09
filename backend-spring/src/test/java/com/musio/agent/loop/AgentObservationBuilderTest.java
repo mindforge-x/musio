@@ -63,6 +63,32 @@ class AgentObservationBuilderTest {
     }
 
     @Test
+    void buildsRecommendationObservationWithSlotCoverage() {
+        AgentObservation observation = builder.build("step-1", "recommend_songs", Map.of("request", "推荐两首许嵩和一首后弦"), """
+                {
+                  "success": true,
+                  "requestedTotal": 3,
+                  "resolvedTotal": 3,
+                  "slotResults": [
+                    {"slotId": "xusong", "requested": 2, "resolved": 2},
+                    {"slotId": "houxian", "requested": 1, "resolved": 1}
+                  ],
+                  "songs": [
+                    {"slotId": "xusong", "id": "qqmusic:x1", "provider": "QQMUSIC", "title": "断桥残雪", "artists": ["许嵩"], "album": "自定义", "durationSeconds": 240, "artworkUrl": null},
+                    {"slotId": "xusong", "id": "qqmusic:x2", "provider": "QQMUSIC", "title": "清明雨上", "artists": ["许嵩"], "album": "自定义", "durationSeconds": 240, "artworkUrl": null},
+                    {"slotId": "houxian", "id": "qqmusic:h1", "provider": "QQMUSIC", "title": "西厢", "artists": ["后弦"], "album": "自定义", "durationSeconds": 240, "artworkUrl": null}
+                  ]
+                }
+                """);
+
+        assertEquals(AgentObservationStatus.SUCCESS, observation.status());
+        assertEquals(3, observation.songs().size());
+        assertTrue(observation.plannerSummary().contains("覆盖 3/3"));
+        assertTrue(observation.plannerSummary().contains("xusong 2/2"));
+        assertTrue(observation.plannerSummary().contains("houxian 1/1"));
+    }
+
+    @Test
     void buildsFailureObservation() {
         AgentObservation observation = builder.build("step-1", "get_hot_comments", Map.of(), """
                 {"success": false, "message": "missing songId"}

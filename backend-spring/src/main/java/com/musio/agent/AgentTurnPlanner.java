@@ -7,6 +7,8 @@ import com.musio.agent.capability.AgentCapabilityArgumentContext;
 import com.musio.agent.capability.AgentCapabilityManifest;
 import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.agent.capability.AgentCapabilityValidationResult;
+import com.musio.agent.recommendation.RecommendationSlot;
+import com.musio.agent.recommendation.RecommendationSlots;
 import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.config.MusioConfig;
 import com.musio.model.AgentTaskMemory;
@@ -132,6 +134,7 @@ public class AgentTurnPlanner {
             String effectiveRequest = text(root, "effectiveRequest");
             AgentTurnMemoryUse memoryUse = parseMemoryUse(root.path("memoryUse"));
             List<AgentRequiredOutcome> requiredOutcomes = parseRequiredOutcomes(root.path("requiredOutcomes"));
+            List<RecommendationSlot> recommendationSlots = parseRecommendationSlots(root.path("recommendationSlots"));
             List<AgentToolCall> calls = parseCalls(root.path("toolCalls"));
             if (calls.isEmpty() && root.path("calls").isArray()) {
                 calls = parseCalls(root.path("calls"));
@@ -139,6 +142,7 @@ public class AgentTurnPlanner {
             if (disposition == TurnDisposition.RESPOND_ONLY) {
                 calls = List.of();
                 requiredOutcomes = List.of();
+                recommendationSlots = List.of();
             }
             if (disposition == TurnDisposition.USE_TOOLS && calls.isEmpty() && !isLoopTaskType(taskType)) {
                 return Optional.of(AgentTurnPlan.respondOnly(
@@ -155,6 +159,7 @@ public class AgentTurnPlanner {
                     memoryUse,
                     calls,
                     requiredOutcomes,
+                    recommendationSlots,
                     confidence,
                     ""
             ));
@@ -236,6 +241,15 @@ public class AgentTurnPlanner {
         return List.copyOf(outcomes);
     }
 
+    private List<RecommendationSlot> parseRecommendationSlots(JsonNode node) {
+        if (!node.isArray()) {
+            return List.of();
+        }
+        List<LinkedHashMap<String, Object>> values = objectMapper.convertValue(node, new TypeReference<List<LinkedHashMap<String, Object>>>() {
+        });
+        return RecommendationSlots.fromArgument(values);
+    }
+
     private Optional<AgentRequiredOutcome> parseRequiredOutcome(String value) {
         String normalized = value == null ? "" : value.strip().toLowerCase(Locale.ROOT);
         return switch (normalized) {
@@ -297,10 +311,12 @@ public class AgentTurnPlanner {
                 %s
 
                 输出格式：
-                {"disposition":"respond_only|use_tools|request_confirmation|unsupported","taskType":"chat|search|recommend|comments|lyrics|detail|playlist|profile|playback|unknown","contextMode":"new_task|follow_up|retry|refer_previous_song|correction","effectiveRequest":"用于本轮执行的完整请求","memoryUse":{"usesTaskMemory":true|false,"usedFields":["lastSearchKeyword"],"reason":"为什么需要或不需要短期任务记忆"},"requiredOutcomes":["recommendation|search|comments|lyrics|detail|playlist|profile|playback|local_playlist_write|account_write"],"toolCalls":[{"toolName":"工具名","arguments":{}}],"confidence":0.0到1.0}
+                {"disposition":"respond_only|use_tools|request_confirmation|unsupported","taskType":"chat|search|recommend|comments|lyrics|detail|playlist|profile|playback|unknown","contextMode":"new_task|follow_up|retry|refer_previous_song|correction","effectiveRequest":"用于本轮执行的完整请求","memoryUse":{"usesTaskMemory":true|false,"usedFields":["lastSearchKeyword"],"reason":"为什么需要或不需要短期任务记忆"},"requiredOutcomes":["recommendation|search|comments|lyrics|detail|playlist|profile|playback|local_playlist_write|account_write"],"recommendationSlots":[{"slotId":"稳定短 id","targetType":"artist|genre|scene|song|other","target":"推荐目标","count":数量}],"toolCalls":[{"toolName":"工具名","arguments":{}}],"confidence":0.0到1.0}
 
                 规则：
                 - requiredOutcomes 是本轮目标完成条件，必须覆盖用户要求的所有结果；普通聊天填 []。
+                - recommendationSlots 是推荐目标结构化事实；只有 taskType=recommend 或 requiredOutcomes 包含 recommendation 时填写，否则填 []。
+                - 多目标推荐必须拆成多个 recommendationSlots，并用 count 表示每个目标需要几首；例如“两首许嵩和一首后弦”输出两个 artist slot，count 分别是 2 和 1。
                 - toolCalls 只表达本轮权限、目标或写入意图提示，可以为空，不是执行顺序；真正下一步工具选择由 AgentStepLoop 基于 observation 决定。
                 - recommend_songs 是 StepLoop 内部推荐能力，Turn Planner 不要输出它；开放推荐只需要 disposition=use_tools、taskType=recommend、toolCalls=[]。
                 - 普通寒暄、感谢、确认、情绪表达且不需要音乐能力时，输出 disposition=respond_only、taskType=chat、toolCalls=[]。

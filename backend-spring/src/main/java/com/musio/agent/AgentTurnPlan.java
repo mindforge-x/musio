@@ -1,5 +1,8 @@
 package com.musio.agent;
 
+import com.musio.agent.recommendation.RecommendationSlot;
+import com.musio.agent.recommendation.RecommendationSlots;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -12,6 +15,7 @@ record AgentTurnPlan(
         AgentTurnMemoryUse memoryUse,
         List<AgentToolCall> toolCalls,
         List<AgentRequiredOutcome> requiredOutcomes,
+        List<RecommendationSlot> recommendationSlots,
         double confidence,
         String fallbackReason
 ) {
@@ -37,12 +41,27 @@ record AgentTurnPlan(
             double confidence,
             String fallbackReason
     ) {
-        this(disposition, taskType, contextMode, effectiveRequest, memoryUse, toolCalls, List.of(), confidence, fallbackReason);
+        this(disposition, taskType, contextMode, effectiveRequest, memoryUse, toolCalls, List.of(), List.of(), confidence, fallbackReason);
+    }
+
+    AgentTurnPlan(
+            TurnDisposition disposition,
+            String taskType,
+            String contextMode,
+            String effectiveRequest,
+            AgentTurnMemoryUse memoryUse,
+            List<AgentToolCall> toolCalls,
+            List<AgentRequiredOutcome> requiredOutcomes,
+            double confidence,
+            String fallbackReason
+    ) {
+        this(disposition, taskType, contextMode, effectiveRequest, memoryUse, toolCalls, requiredOutcomes, List.of(), confidence, fallbackReason);
     }
 
     AgentTurnPlan {
         toolCalls = toolCalls == null ? List.of() : List.copyOf(toolCalls);
         requiredOutcomes = requiredOutcomes == null ? List.of() : List.copyOf(requiredOutcomes);
+        recommendationSlots = RecommendationSlots.normalize(recommendationSlots);
     }
 
     static AgentTurnPlan respondOnly(String effectiveRequest, double confidence, String fallbackReason) {
@@ -52,6 +71,8 @@ record AgentTurnPlan(
                 "new_task",
                 safe(effectiveRequest),
                 AgentTurnMemoryUse.none("本轮不需要读取短期任务记忆。"),
+                List.of(),
+                List.of(),
                 List.of(),
                 confidence,
                 safe(fallbackReason)

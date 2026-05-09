@@ -1,5 +1,8 @@
 package com.musio.agent;
 
+import com.musio.agent.recommendation.RecommendationSlot;
+import com.musio.agent.recommendation.RecommendationSlots;
+
 import java.util.List;
 
 public record AgentGoal(
@@ -12,20 +15,45 @@ public record AgentGoal(
         boolean localWriteIntent,
         boolean accountWriteIntent,
         int requestedSongCount,
+        List<RecommendationSlot> recommendationSlots,
         List<String> avoidSongTitles,
         List<AgentRequiredOutcome> requiredOutcomes
 ) {
+    public AgentGoal(
+            String userMessage,
+            String effectiveRequest,
+            String taskType,
+            String contextMode,
+            boolean musicTask,
+            boolean toolEvidenceExpected,
+            boolean localWriteIntent,
+            boolean accountWriteIntent,
+            int requestedSongCount,
+            List<String> avoidSongTitles,
+            List<AgentRequiredOutcome> requiredOutcomes
+    ) {
+        this(userMessage, effectiveRequest, taskType, contextMode, musicTask, toolEvidenceExpected, localWriteIntent, accountWriteIntent, requestedSongCount, List.of(), avoidSongTitles, requiredOutcomes);
+    }
+
     public AgentGoal {
         userMessage = safe(userMessage);
         effectiveRequest = safe(effectiveRequest).isBlank() ? userMessage : safe(effectiveRequest);
         taskType = safe(taskType).isBlank() ? "unknown" : safe(taskType);
         contextMode = safe(contextMode).isBlank() ? "new_task" : safe(contextMode);
+        recommendationSlots = RecommendationSlots.normalize(recommendationSlots);
+        if (requestedSongCount <= 0 && !recommendationSlots.isEmpty()) {
+            requestedSongCount = RecommendationSlots.totalCount(recommendationSlots);
+        }
         requestedSongCount = Math.max(0, requestedSongCount);
         avoidSongTitles = avoidSongTitles == null ? List.of() : List.copyOf(avoidSongTitles);
         requiredOutcomes = requiredOutcomes == null ? List.of() : List.copyOf(requiredOutcomes);
     }
 
     static AgentGoal from(String userMessage, AgentTurnPlan turnPlan, AgentTaskContext taskContext, int requestedSongCount) {
+        return from(userMessage, turnPlan, taskContext, requestedSongCount, List.of());
+    }
+
+    static AgentGoal from(String userMessage, AgentTurnPlan turnPlan, AgentTaskContext taskContext, int requestedSongCount, List<RecommendationSlot> recommendationSlots) {
         String effectiveRequest = taskContext == null ? userMessage : taskContext.planningMessage();
         String taskType = taskContext == null ? "unknown" : taskContext.taskType();
         String contextMode = taskContext == null ? "new_task" : taskContext.contextMode();
@@ -41,9 +69,14 @@ public record AgentGoal(
                 (turnPlan != null && turnPlan.hasLocalWriteTools()) || requiredOutcomes.contains(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE),
                 (turnPlan != null && turnPlan.hasAccountWriteTools()) || requiredOutcomes.contains(AgentRequiredOutcome.ACCOUNT_WRITE),
                 requestedSongCount,
+                recommendationSlots,
                 taskContext == null ? List.of() : taskContext.avoidSongTitles(),
                 requiredOutcomes
         );
+    }
+
+    public int recommendationTotalCount() {
+        return recommendationSlots.isEmpty() ? requestedSongCount : RecommendationSlots.totalCount(recommendationSlots);
     }
 
     public String plannerSummary() {
@@ -56,6 +89,8 @@ public record AgentGoal(
                 localWriteIntent: %s
                 accountWriteIntent: %s
                 requestedSongCount: %s
+                recommendationSlots: %s
+                recommendationTotalCount: %s
                 avoidSongTitles: %s
                 requiredOutcomes: %s
                 """.formatted(
@@ -67,6 +102,8 @@ public record AgentGoal(
                 localWriteIntent,
                 accountWriteIntent,
                 requestedSongCount <= 0 ? "unspecified" : requestedSongCount,
+                RecommendationSlots.summary(recommendationSlots),
+                recommendationTotalCount() <= 0 ? "unspecified" : recommendationTotalCount(),
                 avoidSongTitles.isEmpty() ? "none" : String.join("、", avoidSongTitles),
                 requiredOutcomes.isEmpty() ? "none" : requiredOutcomes
         ).strip();

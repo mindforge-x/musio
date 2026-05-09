@@ -2,6 +2,7 @@ package com.musio.agent.loop;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.model.ProviderType;
 import com.musio.model.Song;
 import org.springframework.stereotype.Component;
 
@@ -77,8 +78,9 @@ public class AgentObservationBuilder {
             String suffix = unresolved.isArray() && !unresolved.isEmpty()
                     ? "，未精确匹配 " + unresolved.size() + " 首"
                     : "";
+            String coverage = recommendationCoverage(root, songs);
             if (!songs.isEmpty()) {
-                return toolName + " 成功，已生成并精确匹配 " + songs.size() + " 首推荐歌曲：" + songRefs(songs) + suffix;
+                return toolName + " 成功，" + coverage + "，已生成并精确匹配 " + songs.size() + " 首推荐歌曲：" + songRefs(songs) + suffix;
             }
             String summary = root.path("summary").asText("");
             return summary.isBlank() ? toolName + " 未匹配到可用歌曲" : summary;
@@ -131,8 +133,71 @@ public class AgentObservationBuilder {
         try {
             songs.add(objectMapper.treeToValue(songNode, Song.class));
         } catch (Exception ignored) {
-            // Ignore malformed song values; the observation summary remains usable.
+            Song song = lenientSong(songNode);
+            if (song != null) {
+                songs.add(song);
+            }
         }
+    }
+
+    private Song lenientSong(JsonNode songNode) {
+        if (songNode == null || !songNode.isObject()) {
+            return null;
+        }
+        String id = songNode.path("id").asText(songNode.path("songId").asText(""));
+        if (id.isBlank()) {
+            return null;
+        }
+        ProviderType provider = ProviderType.QQMUSIC;
+        String providerText = songNode.path("provider").asText("");
+        if (!providerText.isBlank()) {
+            try {
+                provider = ProviderType.valueOf(providerText);
+            } catch (IllegalArgumentException ignored) {
+                provider = ProviderType.QQMUSIC;
+            }
+        }
+        List<String> artists = new ArrayList<>();
+        JsonNode artistsNode = songNode.path("artists");
+        if (artistsNode.isArray()) {
+            for (JsonNode artist : artistsNode) {
+                if (artist.isTextual() && !artist.asText().isBlank()) {
+                    artists.add(artist.asText().strip());
+                }
+            }
+        }
+        if (artists.isEmpty() && songNode.path("artist").isTextual() && !songNode.path("artist").asText().isBlank()) {
+            artists.add(songNode.path("artist").asText().strip());
+        }
+        Integer durationSeconds = songNode.path("durationSeconds").isNumber() ? songNode.path("durationSeconds").asInt() : null;
+        return new Song(
+                id,
+                provider,
+                songNode.path("title").asText(""),
+                artists,
+                songNode.path("album").asText(null),
+                durationSeconds,
+                songNode.path("artworkUrl").asText(null)
+        );
+    }
+
+    private String recommendationCoverage(JsonNode root, List<Song> songs) {
+        int requestedTotal = root.path("requestedTotal").asInt(root.path("requestedCount").asInt(0));
+        int resolvedTotal = root.path("resolvedTotal").asInt(root.path("count").asInt(songs == null ? 0 : songs.size()));
+        String total = requestedTotal > 0 ? "覆盖 " + resolvedTotal + "/" + requestedTotal : "覆盖 " + resolvedTotal;
+        JsonNode slotResults = root.path("slotResults");
+        if (!slotResults.isArray() || slotResults.isEmpty()) {
+            return total;
+        }
+        List<String> slots = new ArrayList<>();
+        for (JsonNode slotResult : slotResults) {
+            String slotId = slotResult.path("slotId").asText("");
+            if (slotId.isBlank()) {
+                continue;
+            }
+            slots.add(slotId + " " + slotResult.path("resolved").asInt(0) + "/" + slotResult.path("requested").asInt(0));
+        }
+        return slots.isEmpty() ? total : total + "，slots " + String.join("，", slots);
     }
 
     private String songRefs(List<Song> songs) {

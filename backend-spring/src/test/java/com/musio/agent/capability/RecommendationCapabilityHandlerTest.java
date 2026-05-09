@@ -8,6 +8,7 @@ import com.musio.agent.recommendation.RecommendationCandidate;
 import com.musio.agent.recommendation.RecommendationOrchestrator;
 import com.musio.agent.recommendation.RecommendationResponse;
 import com.musio.agent.recommendation.RecommendationResult;
+import com.musio.agent.recommendation.RecommendationSlot;
 import com.musio.agent.recommendation.ResolvedRecommendation;
 import com.musio.config.MusioConfig;
 import com.musio.model.AgentTaskMemory;
@@ -52,11 +53,40 @@ class RecommendationCapabilityHandlerTest {
         );
 
         assertEquals("深夜写代码", arguments.get("request"));
-        assertEquals(5, arguments.get("count"));
+        assertEquals(9, arguments.get("count"));
         assertTrue(handler.validateArguments(
                 AgentCapabilityRegistry.RECOMMEND_SONGS,
                 arguments,
                 AgentCapabilityArgumentContext.stepPlanner(5)
+        ).valid());
+    }
+
+    @Test
+    void normalizesSlotsAndDerivesCountFromSlotTotal() {
+        RecommendationCapabilityHandler handler = new RecommendationCapabilityHandler(
+                new StubRecommendationOrchestrator(),
+                null,
+                objectMapper
+        );
+
+        Map<String, Object> arguments = handler.normalizeArguments(
+                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                Map.of(
+                        "request", "推荐两首许嵩的歌和一首后弦的歌",
+                        "slots", List.of(
+                                Map.of("slotId", "xusong", "targetType", "artist", "target", "许嵩", "count", 2),
+                                Map.of("slotId", "houxian", "targetType", "artist", "target", "后弦", "count", 1)
+                        )
+                ),
+                AgentCapabilityArgumentContext.stepPlanner(1)
+        );
+
+        assertEquals(3, arguments.get("count"));
+        assertEquals(2, ((List<?>) arguments.get("slots")).size());
+        assertTrue(handler.validateArguments(
+                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                arguments,
+                AgentCapabilityArgumentContext.stepPlanner(1)
         ).valid());
     }
 
@@ -87,6 +117,43 @@ class RecommendationCapabilityHandlerTest {
         assertEquals(1, root.path("songs").size());
         assertEquals("安静", root.path("songs").get(0).path("title").asText());
         assertEquals("钢琴和慢速旋律适合深夜专注。", root.path("recommendations").get(0).path("reason").asText());
+    }
+
+    @Test
+    void executesMultiSlotRecommendationAndReturnsCoverage() throws Exception {
+        RecommendationCapabilityHandler handler = new RecommendationCapabilityHandler(
+                new StubRecommendationOrchestrator(),
+                null,
+                objectMapper
+        );
+
+        String resultJson = handler.execute(
+                new AgentLoopState(
+                        "run-1",
+                        "local",
+                        "推荐两首许嵩的歌和一首后弦的歌",
+                        List.of(),
+                        AgentTaskMemory.empty("local"),
+                        List.of(),
+                        0
+                ),
+                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                Map.of(
+                        "request", "推荐两首许嵩的歌和一首后弦的歌",
+                        "slots", List.of(
+                                Map.of("slotId", "xusong", "targetType", "artist", "target", "许嵩", "count", 2),
+                                Map.of("slotId", "houxian", "targetType", "artist", "target", "后弦", "count", 1)
+                        )
+                )
+        ).orElseThrow();
+
+        var root = objectMapper.readTree(resultJson);
+        assertTrue(root.path("success").asBoolean());
+        assertEquals(3, root.path("requestedTotal").asInt());
+        assertEquals(3, root.path("resolvedTotal").asInt());
+        assertEquals("xusong", root.path("songs").get(0).path("slotId").asText());
+        assertEquals(2, root.path("slotResults").get(0).path("resolved").asInt());
+        assertEquals(1, root.path("slotResults").get(1).path("resolved").asInt());
     }
 
     @Test
@@ -147,6 +214,29 @@ class RecommendationCapabilityHandlerTest {
                     "已可信匹配 1 首歌曲，未匹配 1 首。"
             );
             return new RecommendationResponse("已推荐《安静》。", List.of(song), result);
+        }
+
+        @Override
+        public RecommendationResponse recommend(
+                MusioConfig.Ai ai,
+                String userRequest,
+                List<RecommendationSlot> recommendationSlots,
+                List<String> avoidSongTitles,
+                AgentTaskMemory taskMemory
+        ) {
+            Song one = new Song("qqmusic:x1", ProviderType.QQMUSIC, "断桥残雪", List.of("许嵩"), "自定义", 240, null);
+            Song two = new Song("qqmusic:x2", ProviderType.QQMUSIC, "清明雨上", List.of("许嵩"), "自定义", 240, null);
+            Song three = new Song("qqmusic:h1", ProviderType.QQMUSIC, "西厢", List.of("后弦"), "自定义", 240, null);
+            RecommendationResult result = new RecommendationResult(
+                    List.of(
+                            new ResolvedRecommendation(one, "许嵩代表作。", "断桥残雪 许嵩", "xusong"),
+                            new ResolvedRecommendation(two, "古风旋律。", "清明雨上 许嵩", "xusong"),
+                            new ResolvedRecommendation(three, "后弦代表作。", "西厢 后弦", "houxian")
+                    ),
+                    List.of(),
+                    "已可信匹配 3 首歌曲。"
+            );
+            return new RecommendationResponse("已推荐 3 首。", List.of(one, two, three), result, recommendationSlots);
         }
     }
 }

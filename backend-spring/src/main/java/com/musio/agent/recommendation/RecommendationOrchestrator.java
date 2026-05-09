@@ -46,7 +46,30 @@ public class RecommendationOrchestrator {
                 .orElseGet(this::draftFailure);
     }
 
+    public RecommendationResponse recommend(
+            MusioConfig.Ai ai,
+            String userRequest,
+            List<RecommendationSlot> recommendationSlots,
+            List<String> avoidSongTitles,
+            AgentTaskMemory taskMemory
+    ) {
+        List<RecommendationSlot> slots = RecommendationSlots.normalize(recommendationSlots);
+        if (slots.isEmpty()) {
+            return recommend(ai, userRequest, DEFAULT_COUNT, avoidSongTitles, taskMemory);
+        }
+        int count = requestedCount(RecommendationSlots.totalCount(slots));
+        AgentRunContext.runId().ifPresent(tracePublisher::publishRecommendationRunning);
+        return draftGenerator.generate(ai, userRequest, slots, avoidSongTitles, taskMemory)
+                .map(draft -> resolve(draft, count, slots))
+                .orElseGet(this::draftFailure);
+    }
+
     private RecommendationResponse resolve(RecommendationDraft draft, int requestedCount) {
+        return resolve(draft, requestedCount, List.of());
+    }
+
+    private RecommendationResponse resolve(RecommendationDraft draft, int requestedCount, List<RecommendationSlot> recommendationSlots) {
+        List<RecommendationSlot> slots = RecommendationSlots.normalize(recommendationSlots);
         AgentRunContext.runId().ifPresent(runId -> tracePublisher.publishRecommendationDone(runId, draft.candidates().size()));
         AgentRunContext.runId().ifPresent(tracePublisher::publishRecommendationResolveRunning);
         AgentRunContext.runId().ifPresent(runId -> tracePublisher.publishRecommendationResolveToolStart(runId, draft.candidates().size()));
@@ -69,14 +92,14 @@ public class RecommendationOrchestrator {
         ));
 
         if (result.resolved().isEmpty()) {
-            return new RecommendationResponse(resolveFailureText(), List.of(), result);
+            return new RecommendationResponse(resolveFailureText(), List.of(), result, slots);
         }
 
         List<Song> songs = result.resolved().stream()
                 .map(ResolvedRecommendation::song)
                 .toList();
         AgentRunContext.userId().ifPresent(userId -> taskMemoryService.recordResultSongs(userId, songs));
-        return new RecommendationResponse(answerText(result, requestedCount), songs, result);
+        return new RecommendationResponse(answerText(result, requestedCount, slots), songs, result, slots);
     }
 
     private RecommendationResponse draftFailure() {
@@ -98,6 +121,10 @@ public class RecommendationOrchestrator {
     }
 
     private String answerText(RecommendationResult result, int requestedCount) {
+        return answerText(result, requestedCount, List.of());
+    }
+
+    private String answerText(RecommendationResult result, int requestedCount, List<RecommendationSlot> recommendationSlots) {
         StringBuilder builder = new StringBuilder();
         builder.append("我先按你的请求和音乐画像定了候选，再在 QQ 音乐里精确匹配到这些可播放版本：\n\n");
         for (int index = 0; index < result.resolved().size(); index++) {
@@ -112,13 +139,28 @@ public class RecommendationOrchestrator {
                     .append(item.reason())
                     .append("\n\n");
         }
-        int missing = Math.max(0, requestedCount(requestedCount) - result.resolved().size());
+        int missing = missingCount(result, requestedCount, recommendationSlots);
         if (missing > 0) {
             builder.append("还有 ")
                     .append(missing)
                     .append(" 首候选没有在 QQ 音乐里精确匹配到，所以我没有用不确定的搜索结果补卡片。");
         }
         return builder.toString().strip();
+    }
+
+    private int missingCount(RecommendationResult result, int requestedCount, List<RecommendationSlot> recommendationSlots) {
+        List<RecommendationSlot> slots = RecommendationSlots.normalize(recommendationSlots);
+        if (slots.isEmpty()) {
+            return Math.max(0, requestedCount(requestedCount) - result.resolved().size());
+        }
+        int missing = 0;
+        for (RecommendationSlot slot : slots) {
+            long resolved = result.resolved().stream()
+                    .filter(item -> slot.slotId().equals(item.slotId()))
+                    .count();
+            missing += Math.max(0, slot.count() - (int) resolved);
+        }
+        return missing;
     }
 
     private String titleWithArtist(String title, List<String> artists) {

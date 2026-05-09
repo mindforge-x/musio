@@ -8,6 +8,8 @@ import com.musio.agent.capability.AgentCapabilityManifest;
 import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.agent.capability.AgentCapabilityValidationResult;
 import com.musio.agent.capability.MusioPlaylistCapabilityExecutor;
+import com.musio.agent.recommendation.RecommendationSlot;
+import com.musio.agent.recommendation.RecommendationSlots;
 import com.musio.config.MusioConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
@@ -15,6 +17,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -143,7 +146,7 @@ public class AgentLoopRunner {
         if (capabilityExecutor == null || !capabilityExecutor.canExecute(action.toolName())) {
             return ValidationResult.rejected("tool_not_executable");
         }
-        if (executedCalls.contains(callKey(action))) {
+        if (executedCalls.contains(callKey(action)) && !recommendationCallStillNeedsWork(state, action)) {
             return ValidationResult.rejected("duplicate_tool_call");
         }
         AgentCapabilityValidationResult capabilityValidation = capabilityExecutor.validate(state, action.toolName(), action.arguments());
@@ -183,12 +186,7 @@ public class AgentLoopRunner {
         if (!state.goal().requiredOutcomes().equals(List.of(AgentRequiredOutcome.RECOMMENDATION))) {
             return false;
         }
-        AgentObservation recommendation = lastSuccessfulObservation(state, AgentCapabilityRegistry.RECOMMEND_SONGS);
-        if (recommendation == null) {
-            return false;
-        }
-        int requiredCount = state.requestedSongCount() <= 0 ? 1 : state.requestedSongCount();
-        return recommendation.songs().size() >= requiredCount;
+        return recommendationSatisfied(state, action);
     }
 
     private AgentObservation lastSuccessfulObservation(AgentLoopState state, String toolName) {
@@ -204,6 +202,120 @@ public class AgentLoopRunner {
     private boolean successfulToolObserved(AgentLoopState state, String toolName) {
         return state.observations().stream()
                 .anyMatch(observation -> observation.status() == AgentObservationStatus.SUCCESS && toolName.equals(observation.toolName()));
+    }
+
+    private boolean recommendationCallStillNeedsWork(AgentLoopState state, AgentStepAction action) {
+        if (action == null || !AgentCapabilityRegistry.RECOMMEND_SONGS.equals(action.toolName())) {
+            return false;
+        }
+        return !recommendationSatisfied(state, action);
+    }
+
+    private boolean recommendationSatisfied(AgentLoopState state, AgentStepAction action) {
+        if (state == null || action == null || !AgentCapabilityRegistry.RECOMMEND_SONGS.equals(action.toolName())) {
+            return false;
+        }
+        List<RecommendationSlot> slots = recommendationSlots(state, action);
+        if (!slots.isEmpty()) {
+            Map<String, Integer> resolvedBySlot = new LinkedHashMap<>();
+            for (AgentObservation observation : state.observations()) {
+                if (observation.status() != AgentObservationStatus.SUCCESS || !AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName())) {
+                    continue;
+                }
+                Map<String, Integer> observationSlots = resolvedSlots(observation);
+                for (Map.Entry<String, Integer> entry : observationSlots.entrySet()) {
+                    resolvedBySlot.merge(entry.getKey(), entry.getValue(), Integer::sum);
+                }
+            }
+            if (resolvedBySlot.isEmpty()) {
+                return successfulRecommendationSongIds(state).size() >= RecommendationSlots.totalCount(slots);
+            }
+            for (RecommendationSlot slot : slots) {
+                if (resolvedBySlot.getOrDefault(slot.slotId(), 0) < slot.count()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        int requiredCount = requestedRecommendationCount(state, action);
+        return successfulRecommendationSongIds(state).size() >= requiredCount;
+    }
+
+    private List<RecommendationSlot> recommendationSlots(AgentLoopState state, AgentStepAction action) {
+        List<RecommendationSlot> slots = RecommendationSlots.fromArgument(action.arguments() == null ? null : action.arguments().get("slots"));
+        if (!slots.isEmpty()) {
+            return slots;
+        }
+        if (state != null && state.goal() != null) {
+            return RecommendationSlots.normalize(state.goal().recommendationSlots());
+        }
+        return List.of();
+    }
+
+    private int requestedRecommendationCount(AgentLoopState state, AgentStepAction action) {
+        Integer actionCount = integer(action.arguments() == null ? null : action.arguments().get("count"));
+        if (actionCount != null) {
+            return Math.max(1, actionCount);
+        }
+        if (state != null && state.goal() != null && state.goal().recommendationTotalCount() > 0) {
+            return state.goal().recommendationTotalCount();
+        }
+        return state == null || state.requestedSongCount() <= 0 ? 1 : state.requestedSongCount();
+    }
+
+    private Set<String> successfulRecommendationSongIds(AgentLoopState state) {
+        Set<String> songIds = new LinkedHashSet<>();
+        if (state == null || state.observations() == null) {
+            return songIds;
+        }
+        for (AgentObservation observation : state.observations()) {
+            if (observation.status() != AgentObservationStatus.SUCCESS || !AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName())) {
+                continue;
+            }
+            observation.songs().stream()
+                    .filter(song -> song != null && song.id() != null && !song.id().isBlank())
+                    .map(song -> song.id().strip())
+                    .forEach(songIds::add);
+        }
+        return songIds;
+    }
+
+    private Map<String, Integer> resolvedSlots(AgentObservation observation) {
+        if (observation == null || observation.resultJson().isBlank()) {
+            return Map.of();
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(observation.resultJson());
+            com.fasterxml.jackson.databind.JsonNode slotResults = root.path("slotResults");
+            if (!slotResults.isArray()) {
+                return Map.of();
+            }
+            Map<String, Integer> values = new LinkedHashMap<>();
+            for (com.fasterxml.jackson.databind.JsonNode slotResult : slotResults) {
+                String slotId = slotResult.path("slotId").asText("");
+                int resolved = slotResult.path("resolved").asInt(0);
+                if (!slotId.isBlank() && resolved > 0) {
+                    values.put(slotId, resolved);
+                }
+            }
+            return values;
+        } catch (Exception ignored) {
+            return Map.of();
+        }
+    }
+
+    private Integer integer(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Integer.parseInt(text.strip());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private AgentCapabilityManifest manifestFor(AgentLoopState state) {

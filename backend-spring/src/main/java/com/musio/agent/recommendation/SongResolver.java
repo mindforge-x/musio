@@ -62,7 +62,7 @@ public class SongResolver {
             }
             Optional<Song> match = strictMatch(candidate);
             if (match.isPresent() && resolvedSongIds.add(match.get().id())) {
-                resolved.add(new ResolvedRecommendation(match.get(), safe(candidate.reason()), query(candidate)));
+                resolved.add(new ResolvedRecommendation(match.get(), safe(candidate.reason()), query(candidate), safe(candidate.slotId())));
             } else {
                 unresolved.add(candidate);
             }

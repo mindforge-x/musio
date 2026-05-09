@@ -57,7 +57,7 @@ class AgentStepPlannerTest {
     }
 
     @Test
-    void parsesRecommendToolCallAndClampsCountToRequestedSongCount() {
+    void parsesRecommendToolCallWithoutClampingToRequestedSongCount() {
         AgentStepAction action = planner.parseAction("""
                 {
                   "action": "tool_call",
@@ -72,7 +72,7 @@ class AgentStepPlannerTest {
         assertEquals(AgentStepActionType.TOOL_CALL, action.action());
         assertEquals(AgentCapabilityRegistry.RECOMMEND_SONGS, action.toolName());
         assertEquals("推荐适合深夜学习和写代码听的歌", action.arguments().get("request"));
-        assertEquals(5, action.arguments().get("count"));
+        assertEquals(8, action.arguments().get("count"));
     }
 
     @Test
