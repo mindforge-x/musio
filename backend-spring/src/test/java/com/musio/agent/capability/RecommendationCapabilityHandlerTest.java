@@ -2,6 +2,8 @@ package com.musio.agent.capability;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.loop.AgentLoopState;
+import com.musio.agent.loop.AgentObservation;
+import com.musio.agent.loop.AgentObservationStatus;
 import com.musio.agent.recommendation.RecommendationCandidate;
 import com.musio.agent.recommendation.RecommendationOrchestrator;
 import com.musio.agent.recommendation.RecommendationResponse;
@@ -17,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RecommendationCapabilityHandlerTest {
@@ -84,6 +87,43 @@ class RecommendationCapabilityHandlerTest {
         assertEquals(1, root.path("songs").size());
         assertEquals("安静", root.path("songs").get(0).path("title").asText());
         assertEquals("钢琴和慢速旋律适合深夜专注。", root.path("recommendations").get(0).path("reason").asText());
+    }
+
+    @Test
+    void rejectsSameRecommendationRequestButAllowsDistinctRecommendationRequest() {
+        RecommendationCapabilityHandler handler = new RecommendationCapabilityHandler(
+                new StubRecommendationOrchestrator(),
+                null,
+                objectMapper
+        );
+        AgentLoopState state = new AgentLoopState(
+                "run-1",
+                "local",
+                "推荐一首许嵩的歌，一首后弦的歌",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(new AgentObservation(
+                        "loop.step.1",
+                        AgentCapabilityRegistry.RECOMMEND_SONGS,
+                        Map.of("request", "推荐一首许嵩的歌", "count", 1),
+                        AgentObservationStatus.SUCCESS,
+                        "{\"success\":true}",
+                        "已推荐许嵩",
+                        List.of(new Song("qqmusic:xusong", ProviderType.QQMUSIC, "有何不可", List.of("许嵩"), "自定义", 240, null))
+                )),
+                1
+        );
+
+        assertFalse(handler.validate(
+                state,
+                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                Map.of("request", " 推荐一首许嵩的歌 ", "count", 1)
+        ).valid());
+        assertTrue(handler.validate(
+                state,
+                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                Map.of("request", "推荐一首后弦的歌", "count", 1)
+        ).valid());
     }
 
     private static final class StubRecommendationOrchestrator extends RecommendationOrchestrator {

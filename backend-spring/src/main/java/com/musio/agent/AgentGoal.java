@@ -30,7 +30,7 @@ public record AgentGoal(
         String taskType = taskContext == null ? "unknown" : taskContext.taskType();
         String contextMode = taskContext == null ? "new_task" : taskContext.contextMode();
         boolean toolEvidenceExpected = taskContext != null && taskContext.toolEvidenceExpected();
-        List<AgentRequiredOutcome> requiredOutcomes = turnPlan == null ? List.of() : turnPlan.requiredOutcomes();
+        List<AgentRequiredOutcome> requiredOutcomes = AgentGoalNormalizer.requiredOutcomes(turnPlan, taskContext);
         return new AgentGoal(
                 userMessage,
                 effectiveRequest,

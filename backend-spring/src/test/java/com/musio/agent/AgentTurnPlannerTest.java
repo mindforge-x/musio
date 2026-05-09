@@ -119,7 +119,7 @@ class AgentTurnPlannerTest {
         assertEquals("recommend", plan.taskType());
         assertTrue(plan.usesTools());
         assertTrue(plan.toolCalls().isEmpty());
-        assertEquals(List.of(AgentRequiredOutcome.RECOMMENDATION), plan.requiredOutcomes());
+        assertTrue(plan.requiredOutcomes().isEmpty());
         assertTrue(plan.toToolPlan().toolCalls().isEmpty());
 
         AgentTaskContext context = plan.toLegacyTaskContext("给我推荐 5 首适合深夜写代码听的歌。");
@@ -149,7 +149,7 @@ class AgentTurnPlannerTest {
         assertEquals(TurnDisposition.USE_TOOLS, plan.disposition());
         assertEquals("playlist", plan.taskType());
         assertTrue(plan.hasTool("add_song_to_musio_playlist"));
-        assertEquals(List.of(AgentRequiredOutcome.PLAYLIST, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE), plan.requiredOutcomes());
+        assertTrue(plan.requiredOutcomes().isEmpty());
         assertTrue(plan.toToolPlan().toolCalls().isEmpty());
         assertEquals("default", plan.toolCalls().getFirst().arguments().get("playlistId"));
         assertEquals(1, plan.toolCalls().getFirst().arguments().get("songIndex"));
@@ -173,7 +173,7 @@ class AgentTurnPlannerTest {
         assertEquals("recommend", plan.taskType());
         assertTrue(plan.usesTools());
         assertTrue(plan.toolCalls().isEmpty());
-        assertEquals(List.of(AgentRequiredOutcome.RECOMMENDATION), plan.requiredOutcomes());
+        assertTrue(plan.requiredOutcomes().isEmpty());
         assertEquals("", plan.fallbackReason());
     }
 

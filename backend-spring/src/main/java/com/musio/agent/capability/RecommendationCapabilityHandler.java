@@ -2,6 +2,7 @@ package com.musio.agent.capability;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.loop.AgentLoopState;
+import com.musio.agent.loop.AgentObservation;
 import com.musio.agent.loop.AgentObservationStatus;
 import com.musio.agent.recommendation.RecommendationCandidate;
 import com.musio.agent.recommendation.RecommendationOrchestrator;
@@ -85,9 +86,9 @@ public class RecommendationCapabilityHandler implements AgentCapabilityHandler {
         if (!required.valid()) {
             return required;
         }
+        String currentSignature = recommendationSignature(arguments == null ? Map.of() : arguments);
         if (state != null && state.observations().stream()
-                .anyMatch(observation -> observation.status() == AgentObservationStatus.SUCCESS
-                        && AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName()))) {
+                .anyMatch(observation -> sameSuccessfulRecommendationRequest(observation, currentSignature))) {
             return AgentCapabilityValidationResult.rejected("recommendation_already_observed");
         }
         return AgentCapabilityValidationResult.accepted();
@@ -192,6 +193,27 @@ public class RecommendationCapabilityHandler implements AgentCapabilityHandler {
                 .toList();
     }
 
+    private boolean sameSuccessfulRecommendationRequest(AgentObservation observation, String currentSignature) {
+        return observation != null
+                && observation.status() == AgentObservationStatus.SUCCESS
+                && AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName())
+                && !currentSignature.isBlank()
+                && currentSignature.equals(recommendationSignature(observation.arguments()));
+    }
+
+    private String recommendationSignature(Map<String, Object> arguments) {
+        String request = normalizeText(text(arguments == null ? Map.of() : arguments, "request"));
+        if (request.isBlank()) {
+            return "";
+        }
+        List<String> excludedTitles = stringList(arguments == null ? null : arguments.get("excludedTitles")).stream()
+                .map(this::normalizeText)
+                .filter(value -> !value.isBlank())
+                .sorted()
+                .toList();
+        return request + "|excluded=" + String.join(",", excludedTitles);
+    }
+
     private String text(Map<String, Object> arguments, String key) {
         Object value = arguments.get(key);
         return value instanceof String text ? text.strip() : "";
@@ -226,5 +248,9 @@ public class RecommendationCapabilityHandler implements AgentCapabilityHandler {
 
     private String safe(String value) {
         return value == null ? "" : value.strip();
+    }
+
+    private String normalizeText(String value) {
+        return value == null ? "" : value.toLowerCase(java.util.Locale.ROOT).replaceAll("\\s+", "");
     }
 }
