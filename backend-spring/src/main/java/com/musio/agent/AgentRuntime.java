@@ -3,6 +3,7 @@ package com.musio.agent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.capability.AgentCapabilityManifest;
 import com.musio.agent.capability.AgentCapabilityRegistry;
+import com.musio.agent.capability.CapabilityEffect;
 import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.agent.loop.AgentLoopEvidence;
 import com.musio.agent.loop.AgentLoopOutcome;
@@ -103,6 +104,7 @@ public class AgentRuntime {
             AgentRunContext.setUserId(userId);
             List<ConversationHistoryMessage> history = conversationHistoryService.load(userId);
             AgentTaskMemory taskMemory = taskMemoryService.read(userId);
+            AgentTaskMemory previousTaskMemory = taskMemory;
             tracePublisher.publishRequestReceived(runId, request.message());
             // 统一入口：每轮都进入 Agent runtime；respond_only 只是 planner 不调工具的结果。
             tracePublisher.publishPlanningRunning(runId);
@@ -122,10 +124,17 @@ public class AgentRuntime {
             int requestedSongCount = requestedSongCount(request.message(), taskContext, recommendationSlots);
             AgentGoal goal = AgentGoal.from(request.message(), turnPlan, taskContext, requestedSongCount, recommendationSlots);
             AgentCapabilityManifest capabilityManifest = policyGate.manifestFor(goal, turnPlan);
+            boolean deferLocalPlaylistWrite = goal.localWriteIntent();
+            AgentCapabilityManifest executionCapabilityManifest = deferLocalPlaylistWrite
+                    ? readOnlyManifest(capabilityManifest)
+                    : capabilityManifest;
+            AgentGoal executionGoal = deferLocalPlaylistWrite
+                    ? withoutLocalPlaylistWriteRequirement(goal)
+                    : goal;
             boolean traceEnabled = true;
             AgentRunContext.setTraceEnabled(traceEnabled);
             logTurnRuntimePlan(runId, ai, turnPlan, traceEnabled);
-            logAgentGoal(runId, ai, goal, capabilityManifest);
+            logAgentGoal(runId, ai, goal, executionCapabilityManifest);
             tracePublisher.publishPlanningDone(runId, String.valueOf(turnPlan.disposition()), turnPlan.taskType(), toolNameList(turnPlan.toolCalls()));
             if (isLocalPlaylistCancelIntent(request.message())) {
                 handleLocalPlaylistCancel(runId, ai, userId, request.message(), traceEnabled);
@@ -138,7 +147,7 @@ public class AgentRuntime {
             boolean shouldRunLoop = turnPlan.usesTools()
                     || taskContext.toolEvidenceExpected()
                     || goal.musicTask()
-                    || capabilityManifest.allowsLocalWrite()
+                    || goal.localWriteIntent()
                     || tracePublisher.shouldTraceUserMessage(request.message());
             if (shouldRunLoop) {
                 taskMemory = taskMemoryService.recordTask(
@@ -160,7 +169,7 @@ public class AgentRuntime {
                     "还在根据工具 observation 决定下一步。"
             )) {
                 preludeContext = shouldRunLoop
-                        ? agentLoopPreludeContext(ai, runId, userId, request.message(), history, taskMemory, taskContext, turnPlan, capabilityManifest, requestedSongCount, goal)
+                        ? agentLoopPreludeContext(ai, runId, userId, request.message(), history, taskMemory, previousTaskMemory, taskContext, turnPlan, executionCapabilityManifest, requestedSongCount, executionGoal, goal.localWriteIntent())
                         : PreludeContext.empty();
             }
             logComposerPolicy(runId, ai, turnPlan, preludeContext);
@@ -236,6 +245,37 @@ public class AgentRuntime {
     @PreDestroy
     public void shutdownProgressExecutor() {
         progressExecutor.shutdownNow();
+    }
+
+    static AgentCapabilityManifest readOnlyManifest(AgentCapabilityManifest manifest) {
+        if (manifest == null || manifest.isEmpty()) {
+            return AgentCapabilityManifest.empty();
+        }
+        return new AgentCapabilityManifest(manifest.capabilities().stream()
+                .filter(capability -> capability.effect() == CapabilityEffect.READ)
+                .toList());
+    }
+
+    static AgentGoal withoutLocalPlaylistWriteRequirement(AgentGoal goal) {
+        if (goal == null || (!goal.localWriteIntent() && !goal.requiredOutcomes().contains(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE))) {
+            return goal;
+        }
+        return new AgentGoal(
+                goal.userMessage(),
+                goal.effectiveRequest(),
+                goal.taskType(),
+                goal.contextMode(),
+                goal.musicTask(),
+                goal.toolEvidenceExpected(),
+                false,
+                goal.accountWriteIntent(),
+                goal.requestedSongCount(),
+                goal.recommendationSlots(),
+                goal.avoidSongTitles(),
+                goal.requiredOutcomes().stream()
+                        .filter(outcome -> outcome != AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)
+                        .toList()
+        );
     }
 
     static boolean isLocalPlaylistConfirmationIntent(String userMessage, List<ConversationHistoryMessage> history, AgentTaskMemory taskMemory) {
@@ -490,11 +530,13 @@ public class AgentRuntime {
             String userMessage,
             List<ConversationHistoryMessage> history,
             AgentTaskMemory taskMemory,
+            AgentTaskMemory previousTaskMemory,
             AgentTaskContext taskContext,
             AgentTurnPlan turnPlan,
             AgentCapabilityManifest capabilityManifest,
             int requestedSongCount,
-            AgentGoal goal
+            AgentGoal goal,
+            boolean deferLocalPlaylistWrite
     ) {
         AgentLoopOutcome outcome = agentLoopRunner.runOutcome(ai, new AgentLoopState(
                 runId,
@@ -509,6 +551,9 @@ public class AgentRuntime {
                 goal
         ));
         AgentLoopEvidence evidence = outcome.evidence();
+        PendingLocalPlaylistAdd pendingLocalPlaylistAdd = deferLocalPlaylistWrite
+                ? savePendingLocalPlaylistAdd(userId, userMessage, evidence, taskMemory, previousTaskMemory)
+                : null;
         if (evidence.hasObservations()) {
             taskMemoryService.recordLoopEvidence(
                     userId,
@@ -528,6 +573,20 @@ public class AgentRuntime {
                 songTitles(evidence.songs())
         );
         if (!evidence.hasObservations()) {
+            if (pendingLocalPlaylistAdd != null) {
+                return new PreludeContext("""
+
+                        本轮用户表达了加入本地 Musio 歌单的意图，但本地歌单写入必须二次确认。
+                        本轮尚未执行 add_song_to_musio_playlist，不能说已经加入歌单。
+                        已保存待确认收藏目标：%s。
+                        最终回答必须明确说明：尚未加入本地 Musio 歌单，需要用户回复“确认收藏”后才会写入。
+                        工具调用阶段已经结束；最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
+                        你必须直接生成面向用户的中文自然语言回答。
+                        """.formatted(songTitle(pendingLocalPlaylistAdd.song())),
+                        true,
+                        List.of(pendingLocalPlaylistAdd.song()),
+                        "");
+            }
             if (taskContext.toolEvidenceExpected() || capabilityManifest.allowsLocalWrite()) {
                 return new PreludeContext("""
 
@@ -552,12 +611,74 @@ public class AgentRuntime {
                 工具状态以“状态”行和 result.success 为准：success=true 的工具不得写成失败、HTTP 500 或没有拿到结果。
                 如果评论、歌词或详情 observation 不存在，正文不得声称已经读取到对应内容。
                 如果出现 add_song_to_musio_playlist observation，最终回答必须明确说明歌曲已加入本地 Musio 默认歌单，不要写成 QQ 音乐账号歌单。
+                %s
                 工具调用阶段已经结束；最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
                 你必须直接生成面向用户的中文自然语言回答。
-                """.formatted(outcome.type(), outcome.reason(), loopExecutionContext(evidence.observations()), songTitles(evidence.songs())),
+                """.formatted(
+                        outcome.type(),
+                        outcome.reason(),
+                        loopExecutionContext(evidence.observations()),
+                        songTitles(evidence.songs()),
+                        pendingLocalPlaylistInstruction(pendingLocalPlaylistAdd)
+                ),
                 true,
                 evidence.songs(),
                 "");
+    }
+
+    private PendingLocalPlaylistAdd savePendingLocalPlaylistAdd(
+            String userId,
+            String userMessage,
+            AgentLoopEvidence evidence,
+            AgentTaskMemory taskMemory,
+            AgentTaskMemory previousTaskMemory
+    ) {
+        Song targetSong = pendingLocalPlaylistSong(evidence, taskMemory, previousTaskMemory);
+        if (targetSong == null || targetSong.id() == null || targetSong.id().isBlank()) {
+            taskMemoryService.clearPendingLocalPlaylistAdd(userId);
+            return null;
+        }
+        PendingLocalPlaylistAdd pending = new PendingLocalPlaylistAdd("default", targetSong, userMessage, null);
+        taskMemoryService.recordPendingLocalPlaylistAdd(userId, pending);
+        return pending;
+    }
+
+    private Song pendingLocalPlaylistSong(AgentLoopEvidence evidence, AgentTaskMemory taskMemory, AgentTaskMemory previousTaskMemory) {
+        if (evidence != null) {
+            if (evidence.targetSong() != null) {
+                return evidence.targetSong();
+            }
+            if (!evidence.songs().isEmpty()) {
+                return evidence.songs().getFirst();
+            }
+        }
+        Song fromCurrentMemory = memoryTargetSong(taskMemory);
+        if (fromCurrentMemory != null) {
+            return fromCurrentMemory;
+        }
+        return memoryTargetSong(previousTaskMemory);
+    }
+
+    private Song memoryTargetSong(AgentTaskMemory memory) {
+        if (memory == null) {
+            return null;
+        }
+        if (memory.lastTargetSong() != null) {
+            return memory.lastTargetSong();
+        }
+        return memory.lastResultSongs().isEmpty() ? null : memory.lastResultSongs().getFirst();
+    }
+
+    private String pendingLocalPlaylistInstruction(PendingLocalPlaylistAdd pending) {
+        if (pending == null || pending.song() == null) {
+            return "";
+        }
+        return """
+                本轮用户表达了加入本地 Musio 歌单的意图，但本地歌单写入必须二次确认。
+                本轮尚未执行 add_song_to_musio_playlist，不能说已经加入歌单。
+                已保存待确认收藏目标：%s。
+                最终回答必须明确说明：尚未加入本地 Musio 歌单，需要用户回复“确认收藏”后才会写入。
+                """.formatted(songTitle(pending.song())).strip();
     }
 
     private int requestedSongCount(String userMessage, AgentTaskContext taskContext, List<RecommendationSlot> recommendationSlots) {

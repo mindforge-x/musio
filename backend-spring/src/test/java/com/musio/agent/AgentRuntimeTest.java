@@ -1,5 +1,7 @@
 package com.musio.agent;
 
+import com.musio.agent.capability.AgentCapabilityManifest;
+import com.musio.agent.capability.AgentCapabilityRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -71,5 +73,37 @@ class AgentRuntimeTest {
     @Test
     void explicitNewSaveRequestIsNotTreatedAsConfirmationFallback() {
         assertFalse(AgentRuntime.isLocalPlaylistConfirmationIntent("帮我收藏李荣浩的不遗憾", List.of()));
+    }
+
+    @Test
+    void initialLocalPlaylistWriteUsesReadOnlyLoopManifest() {
+        AgentCapabilityManifest manifest = new AgentCapabilityRegistry().manifest(true);
+
+        AgentCapabilityManifest readOnly = AgentRuntime.readOnlyManifest(manifest);
+
+        assertFalse(readOnly.allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST));
+        assertTrue(readOnly.allows(AgentCapabilityRegistry.RECOMMEND_SONGS));
+    }
+
+    @Test
+    void initialLocalPlaylistWriteRequirementIsDeferredUntilConfirmation() {
+        AgentGoal goal = new AgentGoal(
+                "给我推荐一首许嵩的歌曲，并将其加入歌单",
+                "给我推荐一首许嵩的歌曲，并将其加入歌单",
+                "recommend",
+                "new_task",
+                true,
+                true,
+                true,
+                false,
+                1,
+                List.of(),
+                List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)
+        );
+
+        AgentGoal deferred = AgentRuntime.withoutLocalPlaylistWriteRequirement(goal);
+
+        assertFalse(deferred.localWriteIntent());
+        assertEquals(List.of(AgentRequiredOutcome.RECOMMENDATION), deferred.requiredOutcomes());
     }
 }
