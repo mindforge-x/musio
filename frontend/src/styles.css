@@ -1051,6 +1051,19 @@ textarea {
   background: rgba(42, 44, 51, 0.76);
 }
 
+.chat-response-stack {
+  width: min(78%, 640px);
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-response-stack > .chat-bubble {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 .chat-message.user .chat-bubble {
   background: rgba(52, 55, 64, 0.88);
   color: var(--text-display);
@@ -1187,9 +1200,21 @@ textarea {
 
 .trace-steps.retained {
   gap: 0;
-  margin: 12px 0 0;
-  padding: 9px 0 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 0;
+  padding: 0 2px 1px;
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.chat-bubble > .trace-steps.retained {
+  margin: -2px 0 2px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chat-bubble > .trace-steps.retained:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
   border-bottom: 0;
 }
 
@@ -1201,7 +1226,7 @@ textarea {
 .trace-steps.retained .trace-history {
   max-height: 220px;
   overflow: auto;
-  padding-top: 9px;
+  padding-top: 8px;
 }
 
 .trace-steps.retained .trace-step {
@@ -6338,6 +6363,18 @@ canvas.magnetic-dot-field::before {
   box-shadow: none;
 }
 
+.workspace-workbench .agent-workspace .chat-message.agent .chat-response-stack,
+.workspace-workbench .agent-workspace .chat-message.agent.streaming .chat-response-stack {
+  width: calc(100% - 44px);
+  max-width: calc(100% - 44px);
+}
+
+.workspace-workbench .agent-workspace .chat-message.agent .chat-response-stack > .chat-bubble,
+.workspace-workbench .agent-workspace .chat-message.agent.streaming .chat-response-stack > .chat-bubble {
+  width: 100%;
+  max-width: 100%;
+}
+
 .workspace-workbench .agent-workspace .chat-message.user .chat-bubble {
   max-width: min(76%, calc(100% - 46px));
   padding: 12px 14px;
@@ -6687,6 +6724,12 @@ canvas.magnetic-dot-field::before {
     padding: 13px 14px;
   }
 
+  .workspace-workbench .agent-workspace .chat-message.agent .chat-response-stack,
+  .workspace-workbench .agent-workspace .chat-message.agent.streaming .chat-response-stack {
+    width: calc(100% - 40px);
+    max-width: calc(100% - 40px);
+  }
+
   .workspace-workbench .agent-workspace .chat-message.user .chat-bubble {
     max-width: min(84%, calc(100% - 44px));
   }
@@ -6748,6 +6791,14 @@ canvas.magnetic-dot-field::before {
   font-size: 12px;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.chat-message.agent .chat-response-stack > .chat-bubble,
+.chat-message.agent.streaming .chat-response-stack > .chat-bubble,
+.workspace-workbench .agent-workspace .chat-message.agent .chat-response-stack > .chat-bubble,
+.workspace-workbench .agent-workspace .chat-message.agent.streaming .chat-response-stack > .chat-bubble {
+  width: 100%;
+  max-width: 100%;
 }
 
 /* Temporary agent progress bubble: visible only before the answer body streams. */

@@ -58,13 +58,14 @@ export function AgentMessageList({
           return null;
         }
 
-        return (
-          <article key={message.id} className={`chat-message ${message.role} ${message.state}`}>
-            {message.role === "agent" ? <div className="chat-avatar">M</div> : null}
-            <div className="chat-bubble">
-              <span>{message.role === "agent" ? "MUSIO" : "YOU"}</span>
-              {message.role === "agent" ? (
-                <>
+        if (message.role === "agent") {
+          return (
+            <article key={message.id} className={`chat-message ${message.role} ${message.state}`}>
+              <div className="chat-avatar">M</div>
+              <div className="chat-response-stack">
+                <div className="chat-bubble">
+                  <span>MUSIO</span>
+                  <RetainedTraceSteps steps={message.traceSteps} state={message.state} />
                   {message.content.trim() ? <MarkdownContent text={message.content} /> : null}
                   <InlineSongCards
                     songs={message.state === "done" ? message.songs : undefined}
@@ -80,15 +81,21 @@ export function AgentMessageList({
                       onAction={onConfirmationAction}
                     />
                   ) : null}
-                  <RetainedTraceSteps steps={message.traceSteps} state={message.state} />
-                </>
-              ) : (
-                <p>{message.content}</p>
-              )}
-              {answerStreaming ? <small>正在回复</small> : null}
-              {message.state === "error" ? <small>回复中断</small> : null}
+                  {answerStreaming ? <small>正在回复</small> : null}
+                  {message.state === "error" ? <small>回复中断</small> : null}
+                </div>
+              </div>
+            </article>
+          );
+        }
+
+        return (
+          <article key={message.id} className={`chat-message ${message.role} ${message.state}`}>
+            <div className="chat-bubble">
+              <span>YOU</span>
+              <p>{message.content}</p>
             </div>
-            {message.role === "user" ? <div className="chat-avatar user">Y</div> : null}
+            <div className="chat-avatar user">Y</div>
           </article>
         );
       })}
