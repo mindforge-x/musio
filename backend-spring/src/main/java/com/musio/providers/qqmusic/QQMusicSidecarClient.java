@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.agent.capability.CapabilityEffect;
 import com.musio.config.MusioConfigService;
 import com.musio.model.Comment;
 import com.musio.model.Lyrics;
@@ -16,9 +17,14 @@ import com.musio.model.Song;
 import com.musio.model.SongDetail;
 import com.musio.model.SongUrl;
 import com.musio.model.UserProfile;
+import com.musio.providers.SourceCapability;
+import com.musio.providers.SourceManifest;
+import com.musio.providers.SourceToolCall;
 import okhttp3.HttpUrl;
+import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
+import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 import org.springframework.http.HttpStatus;
@@ -27,12 +33,16 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 @Component
 public class QQMusicSidecarClient {
+    private static final MediaType JSON_MEDIA_TYPE = MediaType.get("application/json; charset=utf-8");
+
     private final MusioConfigService configService;
     private final ObjectMapper objectMapper;
     private final OkHttpClient httpClient;
@@ -76,6 +86,25 @@ public class QQMusicSidecarClient {
                 parseInstant(musicGene.generatedAt()),
                 musicGene.data() == null ? Map.of() : musicGene.data()
         );
+    }
+
+    public SourceManifest manifest() {
+        SidecarManifest manifest = get("/manifest", SidecarManifest.class);
+        return new SourceManifest(
+                manifest.sourceId(),
+                manifest.displayName(),
+                manifest.capabilities() == null ? List.of() : manifest.capabilities().stream()
+                        .map(this::toSourceCapability)
+                        .toList()
+        );
+    }
+
+    public Map<String, Object> executeTool(SourceToolCall call) {
+        SourceToolCall safeCall = call == null ? new SourceToolCall(ProviderType.QQMUSIC.sourceId(), "", Map.of()) : call;
+        HttpUrl url = appendPath("/tools/" + safeCall.toolName());
+        Map<String, Object> payload = Map.of("arguments", safeCall.arguments());
+        JsonNode root = post(url, payload, JsonNode.class);
+        return toToolResult(root);
     }
 
     public List<Playlist> playlists() {
@@ -164,6 +193,62 @@ public class QQMusicSidecarClient {
         );
     }
 
+    private SourceCapability toSourceCapability(SidecarCapability capability) {
+        return new SourceCapability(
+                capability.name(),
+                effect(capability.effect()),
+                capability.description(),
+                capability.inputSchema() == null ? Map.of() : capability.inputSchema(),
+                capability.required() == null ? Set.of() : Set.copyOf(capability.required()),
+                capability.enabled() == null || capability.enabled(),
+                capability.disabledReason(),
+                capability.resultType()
+        );
+    }
+
+    private CapabilityEffect effect(String value) {
+        if (value == null || value.isBlank()) {
+            return CapabilityEffect.READ;
+        }
+        return switch (value.strip().toLowerCase(java.util.Locale.ROOT)) {
+            case "local_write" -> CapabilityEffect.LOCAL_WRITE;
+            case "account_write" -> CapabilityEffect.ACCOUNT_WRITE;
+            default -> CapabilityEffect.READ;
+        };
+    }
+
+    private Map<String, Object> toToolResult(JsonNode root) {
+        if (root == null || root.isMissingNode() || root.isNull()) {
+            return Map.of("success", false, "message", "QQ Music sidecar returned an empty tool result.");
+        }
+        Map<String, Object> result = objectMapper.convertValue(root, new TypeReference<LinkedHashMap<String, Object>>() {
+        });
+        if (root.has("songs")) {
+            result.put("songs", objectMapper.convertValue(root.get("songs"), new TypeReference<List<SidecarSong>>() {
+            }).stream().map(this::toSong).toList());
+        }
+        if (root.has("song")) {
+            result.put("song", toSongDetail(objectMapper.convertValue(root.get("song"), SidecarSongDetail.class)));
+        }
+        if (root.has("songUrl")) {
+            SidecarSongUrl songUrl = objectMapper.convertValue(root.get("songUrl"), SidecarSongUrl.class);
+            result.put("songUrl", new SongUrl(songUrl.songId(), ProviderType.QQMUSIC, songUrl.url(), songUrl.expiresInSeconds()));
+        }
+        if (root.has("lyrics")) {
+            SidecarLyrics lyrics = objectMapper.convertValue(root.get("lyrics"), SidecarLyrics.class);
+            result.put("lyrics", new Lyrics(lyrics.songId(), ProviderType.QQMUSIC, lyrics.plainText(), lyrics.syncedText()));
+        }
+        if (root.has("comments")) {
+            result.put("comments", objectMapper.convertValue(root.get("comments"), new TypeReference<List<SidecarComment>>() {
+            }).stream().map(this::toComment).toList());
+        }
+        if (root.has("playlists")) {
+            result.put("playlists", objectMapper.convertValue(root.get("playlists"), new TypeReference<List<SidecarPlaylist>>() {
+            }).stream().map(this::toPlaylist).toList());
+        }
+        return result;
+    }
+
     private <T> T get(String path, Class<T> responseType) {
         HttpUrl url = appendPath(path);
         try {
@@ -193,6 +278,25 @@ public class QQMusicSidecarClient {
                 throw sidecarHttpException(response.code(), url, body);
             }
             return reader.read(body);
+        }
+    }
+
+    private <T> T post(HttpUrl url, Map<String, Object> payload, Class<T> responseType) {
+        try {
+            String json = objectMapper.writeValueAsString(payload == null ? Map.of() : payload);
+            Request request = new Request.Builder()
+                    .url(url)
+                    .post(RequestBody.create(json, JSON_MEDIA_TYPE))
+                    .build();
+            try (Response response = httpClient.newCall(request).execute()) {
+                ResponseBody body = response.body();
+                if (!response.isSuccessful() || body == null) {
+                    throw sidecarHttpException(response.code(), url, body);
+                }
+                return objectMapper.readValue(body.string(), responseType);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("QQ Music sidecar request failed: " + url, e);
         }
     }
 
@@ -308,6 +412,25 @@ public class QQMusicSidecarClient {
             String name,
             @JsonProperty("song_count") Integer songCount,
             @JsonProperty("artwork_url") String artworkUrl
+    ) {
+    }
+
+    private record SidecarCapability(
+            String name,
+            String effect,
+            String description,
+            @JsonProperty("input_schema") Map<String, Object> inputSchema,
+            List<String> required,
+            Boolean enabled,
+            @JsonProperty("disabled_reason") String disabledReason,
+            @JsonProperty("result_type") String resultType
+    ) {
+    }
+
+    private record SidecarManifest(
+            @JsonProperty("source_id") String sourceId,
+            @JsonProperty("display_name") String displayName,
+            List<SidecarCapability> capabilities
     ) {
     }
 

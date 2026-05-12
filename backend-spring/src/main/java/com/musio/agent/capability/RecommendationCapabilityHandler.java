@@ -7,6 +7,7 @@ import com.musio.agent.loop.AgentObservationStatus;
 import com.musio.agent.recommendation.RecommendationCandidate;
 import com.musio.agent.recommendation.RecommendationOrchestrator;
 import com.musio.agent.recommendation.RecommendationResponse;
+import com.musio.agent.recommendation.RecommendationResult;
 import com.musio.agent.recommendation.ResolvedRecommendation;
 import com.musio.agent.recommendation.RecommendationSlot;
 import com.musio.agent.recommendation.RecommendationSlotResult;
@@ -120,28 +121,62 @@ public class RecommendationCapabilityHandler implements AgentCapabilityHandler {
         int count = slots.isEmpty()
                 ? remainingCount(state, requestedCount)
                 : RecommendationSlots.totalCount(slots);
+        boolean retry = hasSuccessfulRecommendationObservation(state);
+        List<RecommendationSlot> executionSlots = retry ? expandedRetrySlots(slots) : slots;
+        int executionCount = retry && slots.isEmpty() ? expandedRetryCount(count) : count;
         List<String> excludedTitles = excludedTitles(safeArguments, state);
-        RecommendationResponse response = slots.isEmpty()
+        RecommendationResponse response = executionSlots.isEmpty()
                 ? recommendationOrchestrator.recommend(
                         ai(),
                         request,
-                        count,
+                        executionCount,
                         excludedTitles,
                         state == null ? null : state.taskMemory()
                 )
                 : recommendationOrchestrator.recommend(
                         ai(),
                         request,
-                        slots,
+                        executionSlots,
                         excludedTitles,
                         state == null ? null : state.taskMemory()
                 );
+        response = retry ? uniqueIncrementalResponse(response, state, slots, count) : response;
         return Optional.of(writeResult(response, slots, count));
     }
 
     private int remainingCount(AgentLoopState state, int requestedCount) {
         int resolved = successfulRecommendationSongIds(state).size();
         return Math.max(1, requestedCount - resolved);
+    }
+
+    private boolean hasSuccessfulRecommendationObservation(AgentLoopState state) {
+        return state != null && state.observations() != null && state.observations().stream()
+                .anyMatch(observation -> observation.status() == AgentObservationStatus.SUCCESS
+                        && AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName()));
+    }
+
+    private int expandedRetryCount(int missingCount) {
+        return Math.max(1, Math.min(10, missingCount + Math.max(2, missingCount)));
+    }
+
+    private List<RecommendationSlot> expandedRetrySlots(List<RecommendationSlot> slots) {
+        List<RecommendationSlot> normalized = RecommendationSlots.normalize(slots);
+        if (normalized.isEmpty()) {
+            return List.of();
+        }
+        int total = RecommendationSlots.totalCount(normalized);
+        int budget = Math.max(total, Math.min(10, total + Math.max(2, total)));
+        List<RecommendationSlot> expanded = new ArrayList<>();
+        int remainingBudget = budget;
+        for (int index = 0; index < normalized.size(); index++) {
+            RecommendationSlot slot = normalized.get(index);
+            int remainingSlots = normalized.size() - index - 1;
+            int extra = Math.max(1, slot.count());
+            int count = Math.min(slot.count() + extra, Math.max(slot.count(), remainingBudget - remainingSlots));
+            expanded.add(new RecommendationSlot(slot.slotId(), slot.targetType(), slot.target(), count));
+            remainingBudget -= count;
+        }
+        return expanded;
     }
 
     private List<RecommendationSlot> remainingSlots(AgentLoopState state, List<RecommendationSlot> requestedSlots) {
@@ -308,6 +343,73 @@ public class RecommendationCapabilityHandler implements AgentCapabilityHandler {
         return values;
     }
 
+    private RecommendationResponse uniqueIncrementalResponse(
+            RecommendationResponse response,
+            AgentLoopState state,
+            List<RecommendationSlot> requestedSlots,
+            int requestedCount
+    ) {
+        if (response == null || response.result() == null || response.result().resolved() == null) {
+            return response;
+        }
+        Set<String> seenSongIds = successfulRecommendationSongIds(state);
+        Set<String> seenTitles = successfulRecommendationTitles(state);
+        List<RecommendationSlot> slots = RecommendationSlots.normalize(requestedSlots);
+        Map<String, Integer> capBySlot = requestedBySlot(slots);
+        Map<String, Integer> acceptedBySlot = new LinkedHashMap<>();
+        Set<String> acceptedIds = new LinkedHashSet<>();
+        Set<String> acceptedTitles = new LinkedHashSet<>();
+        List<ResolvedRecommendation> resolved = new ArrayList<>();
+        int totalCap = slots.isEmpty() ? Math.max(1, requestedCount) : RecommendationSlots.totalCount(slots);
+
+        for (ResolvedRecommendation item : response.result().resolved()) {
+            if (item == null || item.song() == null || item.song().id() == null || item.song().id().isBlank()) {
+                continue;
+            }
+            Song song = item.song();
+            String songId = song.id().strip();
+            String title = normalizeText(song.title());
+            if (seenSongIds.contains(songId) || acceptedIds.contains(songId)) {
+                continue;
+            }
+            if (!title.isBlank() && (seenTitles.contains(title) || acceptedTitles.contains(title))) {
+                continue;
+            }
+            if (!slots.isEmpty()) {
+                String slotId = item.slotId();
+                if (slotId == null || slotId.isBlank() || !capBySlot.containsKey(slotId)) {
+                    continue;
+                }
+                int acceptedForSlot = acceptedBySlot.getOrDefault(slotId, 0);
+                if (acceptedForSlot >= capBySlot.get(slotId)) {
+                    continue;
+                }
+                acceptedBySlot.put(slotId, acceptedForSlot + 1);
+            }
+            resolved.add(item);
+            acceptedIds.add(songId);
+            if (!title.isBlank()) {
+                acceptedTitles.add(title);
+            }
+            if (resolved.size() >= totalCap) {
+                break;
+            }
+        }
+
+        List<Song> songs = resolved.stream()
+                .map(ResolvedRecommendation::song)
+                .toList();
+        RecommendationResult result = new RecommendationResult(
+                resolved,
+                response.result().unresolved() == null ? List.of() : response.result().unresolved(),
+                response.result().summary()
+        );
+        String answerText = songs.isEmpty()
+                ? "补充推荐没有拿到新的可用歌曲。"
+                : "已补充匹配到 %s 首新的推荐歌曲。".formatted(songs.size());
+        return new RecommendationResponse(answerText, songs, result, requestedSlots);
+    }
+
     private List<String> excludedTitles(Map<String, Object> arguments, AgentLoopState state) {
         List<String> values = new ArrayList<>(stringList(arguments.get("excludedTitles")));
         if (state != null && state.goal() != null) {
@@ -331,6 +433,25 @@ public class RecommendationCapabilityHandler implements AgentCapabilityHandler {
                 .distinct()
                 .limit(20)
                 .toList();
+    }
+
+    private Set<String> successfulRecommendationTitles(AgentLoopState state) {
+        Set<String> titles = new LinkedHashSet<>();
+        if (state == null || state.observations() == null) {
+            return titles;
+        }
+        for (AgentObservation observation : state.observations()) {
+            if (observation.status() != AgentObservationStatus.SUCCESS
+                    || !AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName())) {
+                continue;
+            }
+            observation.songs().stream()
+                    .map(Song::title)
+                    .map(this::normalizeText)
+                    .filter(value -> !value.isBlank())
+                    .forEach(titles::add);
+        }
+        return titles;
     }
 
     private boolean shouldAvoidRecentRecommendations(AgentLoopState state) {
@@ -379,6 +500,14 @@ public class RecommendationCapabilityHandler implements AgentCapabilityHandler {
             return RecommendationSlots.normalize(state.goal().recommendationSlots());
         }
         return List.of();
+    }
+
+    private Map<String, Integer> requestedBySlot(List<RecommendationSlot> slots) {
+        Map<String, Integer> values = new LinkedHashMap<>();
+        for (RecommendationSlot slot : RecommendationSlots.normalize(slots)) {
+            values.put(slot.slotId(), slot.count());
+        }
+        return values;
     }
 
     private List<Map<String, Object>> songs(RecommendationResponse response) {

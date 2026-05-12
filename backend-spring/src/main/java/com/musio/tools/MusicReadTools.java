@@ -15,6 +15,8 @@ import com.musio.model.SongDetail;
 import com.musio.memory.AgentTaskMemoryService;
 import com.musio.memory.MusicProfileService;
 import com.musio.providers.MusicProviderGateway;
+import com.musio.providers.SourceCapability;
+import com.musio.providers.SourceToolCall;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
@@ -60,9 +62,11 @@ public class MusicReadTools {
             @ToolParam(description = "Maximum number of songs to return. Default 5, maximum 20") Integer limit) {
         int actualLimit = clamp(limit, 5, 1, 20);
         return runTool("search_songs", Map.of("keyword", keyword, "limit", actualLimit), () -> {
-            List<Song> songs = providerGateway.defaultProvider().searchSongs(keyword, actualLimit);
+            Map<String, Object> result = sourceToolResult("search_songs", Map.of("keyword", keyword, "limit", actualLimit));
+            List<Song> songs = songsFrom(result);
+            result.putIfAbsent("count", songs.size());
             publish("song_cards", Map.of("songs", songs));
-            return Map.of("success", true, "count", songs.size(), "songs", songs);
+            return result;
         });
     }
 
@@ -78,7 +82,8 @@ public class MusicReadTools {
         input.put("limit", actualLimit);
         input.put("excludedTitles", excludedTitles);
         return runTool("search_songs", input, () -> {
-            List<Song> songs = providerGateway.defaultProvider().searchSongs(keyword, searchLimit).stream()
+            Map<String, Object> sourceResult = sourceToolResult("search_songs", Map.of("keyword", keyword, "limit", searchLimit));
+            List<Song> songs = songsFrom(sourceResult).stream()
                     .filter(song -> !isExcludedTitle(song, normalizedExclusions))
                     .limit(actualLimit)
                     .toList();
@@ -106,8 +111,7 @@ public class MusicReadTools {
     public String getSongDetail(
             @ToolParam(description = "Song id, preferably provider-prefixed, for example qqmusic:003OUlho2HcRHC") String songId) {
         return runTool("get_song_detail", Map.of("songId", songId), () -> {
-            SongDetail detail = providerGateway.defaultProvider().getSongDetail(songId);
-            return Map.of("success", true, "song", detail);
+            return sourceToolResult("get_song_detail", Map.of("songId", songId));
         });
     }
 
@@ -115,8 +119,7 @@ public class MusicReadTools {
     public String getLyrics(
             @ToolParam(description = "Song id, preferably provider-prefixed, for example qqmusic:003OUlho2HcRHC") String songId) {
         return runTool("get_lyrics", Map.of("songId", songId), () -> {
-            Lyrics lyrics = providerGateway.defaultProvider().getLyrics(songId);
-            return Map.of("success", true, "lyrics", lyrics);
+            return sourceToolResult("get_lyrics", Map.of("songId", songId));
         });
     }
 
@@ -135,7 +138,8 @@ public class MusicReadTools {
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("songId", id);
                 try {
-                    Lyrics lyrics = providerGateway.defaultProvider().getLyrics(id);
+                    Map<String, Object> sourceResult = sourceToolResult("get_lyrics", Map.of("songId", id));
+                    Lyrics lyrics = sourceResult.get("lyrics") instanceof Lyrics value ? value : null;
                     item.put("success", true);
                     item.put("lyrics", lyrics);
                     if (firstLyrics == null) {
@@ -223,10 +227,12 @@ public class MusicReadTools {
             @ToolParam(description = "Maximum number of playlists to return. Default 20, maximum 50") Integer limit) {
         int actualLimit = clamp(limit, 20, 1, 50);
         return runTool("get_user_playlists", Map.of("limit", actualLimit), () -> {
-            List<Playlist> playlists = providerGateway.defaultProvider().getPlaylists("local").stream()
-                    .limit(actualLimit)
-                    .toList();
-            return Map.of("success", true, "count", playlists.size(), "playlists", playlists);
+            Map<String, Object> result = sourceToolResult("get_user_playlists", Map.of("limit", actualLimit));
+            Object playlists = result.get("playlists");
+            if (playlists instanceof List<?> list) {
+                result.putIfAbsent("count", list.size());
+            }
+            return result;
         });
     }
 
@@ -236,12 +242,29 @@ public class MusicReadTools {
             @ToolParam(description = "Maximum number of songs to return. Default 20, maximum 50") Integer limit) {
         int actualLimit = clamp(limit, 20, 1, 50);
         return runTool("get_playlist_songs", Map.of("playlistId", playlistId, "limit", actualLimit), () -> {
-            List<Song> songs = providerGateway.defaultProvider().getPlaylistSongs(playlistId).stream()
-                    .limit(actualLimit)
-                    .toList();
+            Map<String, Object> result = sourceToolResult("get_playlist_songs", Map.of("playlistId", playlistId, "limit", actualLimit));
+            List<Song> songs = songsFrom(result).stream().limit(actualLimit).toList();
+            result.put("songs", songs);
+            result.put("count", songs.size());
             publish("song_cards", Map.of("songs", songs));
-            return Map.of("success", true, "count", songs.size(), "songs", songs);
+            return result;
         });
+    }
+
+    public String executeSourceTool(String toolName, Map<String, Object> arguments) {
+        Map<String, Object> input = arguments == null ? Map.of() : arguments;
+        return runTool(toolName, input, () -> {
+            Map<String, Object> result = sourceToolResult(toolName, input);
+            List<Song> songs = songsFrom(result);
+            if (!songs.isEmpty()) {
+                publish("song_cards", Map.of("songs", songs));
+            }
+            return result;
+        });
+    }
+
+    public List<SourceCapability> sourceCapabilities() {
+        return providerGateway.capabilities(AgentRunContext.sourceContextOrDefault());
     }
 
     private String runTool(String toolName, Map<String, Object> input, Supplier<Map<String, Object>> action) {
@@ -378,10 +401,40 @@ public class MusicReadTools {
     }
 
     private List<Comment> hotComments(String songId, int limit) {
-        return providerGateway.defaultProvider().getComments(songId).stream()
+        return commentsFrom(sourceToolResult("get_hot_comments", Map.of("songId", songId, "limit", limit))).stream()
                 .filter(this::isUserHotComment)
                 .sorted(Comparator.comparingInt(this::likedCount).reversed())
                 .limit(limit)
+                .toList();
+    }
+
+    private Map<String, Object> sourceToolResult(String toolName, Map<String, Object> arguments) {
+        Map<String, Object> result = providerGateway.execute(
+                new SourceToolCall("", toolName, arguments == null ? Map.of() : arguments),
+                AgentRunContext.sourceContextOrDefault()
+        );
+        return new LinkedHashMap<>(result == null ? Map.of() : result);
+    }
+
+    private List<Song> songsFrom(Map<String, Object> result) {
+        Object songs = result.get("songs");
+        if (!(songs instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .filter(Song.class::isInstance)
+                .map(Song.class::cast)
+                .toList();
+    }
+
+    private List<Comment> commentsFrom(Map<String, Object> result) {
+        Object comments = result.get("comments");
+        if (!(comments instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .filter(Comment.class::isInstance)
+                .map(Comment.class::cast)
                 .toList();
     }
 

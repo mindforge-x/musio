@@ -9,14 +9,20 @@ import com.musio.model.ProviderType;
 import com.musio.model.Song;
 import com.musio.model.SongDetail;
 import com.musio.model.SongUrl;
+import com.musio.model.SourceContext;
 import com.musio.model.UserProfile;
 import com.musio.providers.MusicProvider;
+import com.musio.providers.MusicSourceDefaults;
+import com.musio.providers.MusicSourceProvider;
+import com.musio.providers.SourceCapability;
+import com.musio.providers.SourceToolCall;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 
 @Component
-public class QQMusicProvider implements MusicProvider {
+public class QQMusicProvider implements MusicProvider, MusicSourceProvider {
     private final QQMusicAuthService authService;
     private final QQMusicSidecarClient sidecarClient;
 
@@ -28,6 +34,25 @@ public class QQMusicProvider implements MusicProvider {
     @Override
     public ProviderType type() {
         return ProviderType.QQMUSIC;
+    }
+
+    @Override
+    public String sourceId() {
+        return type().sourceId();
+    }
+
+    @Override
+    public List<SourceCapability> capabilities(SourceContext context) {
+        try {
+            return sidecarClient.manifest().enabledCapabilities();
+        } catch (RuntimeException ignored) {
+            return MusicSourceDefaults.readCapabilities();
+        }
+    }
+
+    @Override
+    public Map<String, Object> execute(SourceToolCall call, SourceContext context) {
+        return sidecarClient.executeTool(call);
     }
 
     @Override

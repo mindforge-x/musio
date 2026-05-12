@@ -1,6 +1,9 @@
 package com.musio.agent.capability;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.loop.AgentLoopState;
+import com.musio.providers.SourceCapability;
 import com.musio.tools.MusicReadTools;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -10,10 +13,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 
 @Component
 @Order(0)
 public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     private final MusicReadTools musicReadTools;
     private final Map<String, ReadCapability> capabilities;
 
@@ -24,14 +30,18 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
 
     @Override
     public List<AgentCapability> capabilities() {
-        return capabilities.values().stream()
-                .map(ReadCapability::spec)
+        Map<String, AgentCapability> values = new LinkedHashMap<>();
+        for (SourceCapability capability : sourceCapabilities(SourceCapability::enabled)) {
+            values.put(capability.name(), capability.toAgentCapability(argumentSpec(capability.inputSchema())));
+        }
+        values.put("get_user_music_profile", capabilities.get("get_user_music_profile").spec());
+        return values.values().stream()
                 .toList();
     }
 
     @Override
     public boolean supports(String capabilityName) {
-        return capabilities.containsKey(capabilityName);
+        return capabilities.containsKey(capabilityName) || sourceCapability(capabilityName).isPresent();
     }
 
     @Override
@@ -43,7 +53,10 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
         if (!supports(capabilityName)) {
             return arguments == null ? Map.of() : Map.copyOf(arguments);
         }
-        return AgentCapabilityArgumentRules.normalizeKnownCapability(capabilityName, arguments, context);
+        if (capabilities.containsKey(capabilityName)) {
+            return AgentCapabilityArgumentRules.normalizeKnownCapability(capabilityName, arguments, context);
+        }
+        return arguments == null ? Map.of() : Map.copyOf(arguments);
     }
 
     @Override
@@ -55,11 +68,17 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
         if (!supports(capabilityName)) {
             return AgentCapabilityValidationResult.rejected("unknown_tool");
         }
+        if (!capabilities.containsKey(capabilityName)) {
+            return validateSourceRequiredArguments(capabilityName, arguments == null ? Map.of() : arguments);
+        }
         return AgentCapabilityArgumentRules.validateReadRequiredArguments(capabilityName, arguments == null ? Map.of() : arguments);
     }
 
     @Override
     public AgentCapabilityValidationResult validate(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
+        if (!capabilities.containsKey(capabilityName) && sourceCapability(capabilityName).isPresent()) {
+            return validateSourceRequiredArguments(capabilityName, arguments == null ? Map.of() : arguments);
+        }
         return MusicReadCapabilityValidator.validate(state, capabilityName, arguments, supports(capabilityName));
     }
 
@@ -67,7 +86,8 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
     public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
         ReadCapability capability = capabilities.get(capabilityName);
         if (capability == null) {
-            return Optional.empty();
+            return sourceCapability(capabilityName)
+                    .map(ignored -> musicReadTools.executeSourceTool(capabilityName, arguments == null ? Map.of() : arguments));
         }
         return Optional.of(capability.executor().execute(state, arguments == null ? Map.of() : arguments));
     }
@@ -82,6 +102,51 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
         register(values, new AgentCapability("get_user_playlists", CapabilityEffect.READ, "读取用户歌单。", "{\"limit\": number}", Set.of()), (state, arguments) -> musicReadTools.getUserPlaylists(integer(arguments, "limit")));
         register(values, new AgentCapability("get_playlist_songs", CapabilityEffect.READ, "读取歌单歌曲。", "{\"playlistId\": string, \"limit\": number}", Set.of("playlistId")), (state, arguments) -> musicReadTools.getPlaylistSongs(text(arguments, "playlistId"), integer(arguments, "limit")));
         return values;
+    }
+
+    private List<SourceCapability> sourceCapabilities(Predicate<SourceCapability> filter) {
+        try {
+            return musicReadTools.sourceCapabilities().stream()
+                    .filter(capability -> capability != null && !capability.name().isBlank())
+                    .filter(filter)
+                    .toList();
+        } catch (RuntimeException ignored) {
+            return List.of();
+        }
+    }
+
+    private Optional<SourceCapability> sourceCapability(String capabilityName) {
+        if (capabilityName == null || capabilityName.isBlank()) {
+            return Optional.empty();
+        }
+        return sourceCapabilities(SourceCapability::enabled).stream()
+                .filter(capability -> capabilityName.equals(capability.name()))
+                .findFirst();
+    }
+
+    private AgentCapabilityValidationResult validateSourceRequiredArguments(String capabilityName, Map<String, Object> arguments) {
+        Optional<SourceCapability> capability = sourceCapability(capabilityName);
+        if (capability.isEmpty()) {
+            return AgentCapabilityValidationResult.rejected("unknown_tool");
+        }
+        for (String required : capability.get().required()) {
+            Object value = arguments.get(required);
+            if (value == null || (value instanceof String text && text.isBlank())) {
+                return AgentCapabilityValidationResult.rejected("missing_required_argument");
+            }
+        }
+        return AgentCapabilityValidationResult.accepted();
+    }
+
+    private String argumentSpec(Map<String, Object> inputSchema) {
+        if (inputSchema == null || inputSchema.isEmpty()) {
+            return "{}";
+        }
+        try {
+            return OBJECT_MAPPER.writeValueAsString(inputSchema);
+        } catch (JsonProcessingException ignored) {
+            return inputSchema.toString();
+        }
     }
 
     private void register(Map<String, ReadCapability> values, AgentCapability spec, ReadExecutor executor) {

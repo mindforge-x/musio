@@ -28,15 +28,18 @@ public class AgentCapabilityRegistry {
     );
 
     private final List<AgentCapability> capabilities;
+    private final List<AgentCapabilityHandler> handlerList;
     private final Map<String, AgentCapabilityHandler> handlers;
 
     public AgentCapabilityRegistry() {
         this.capabilities = DEFAULT_CAPABILITIES;
+        this.handlerList = List.of();
         this.handlers = Map.of();
     }
 
     @Autowired
     public AgentCapabilityRegistry(List<AgentCapabilityHandler> handlers) {
+        this.handlerList = handlers == null ? List.of() : List.copyOf(handlers);
         List<AgentCapability> registered = handlers == null ? List.of() : handlers.stream()
                 .filter(handler -> handler != null && handler.capabilities() != null)
                 .flatMap(handler -> handler.capabilities().stream())
@@ -47,14 +50,14 @@ public class AgentCapabilityRegistry {
     }
 
     public AgentCapabilityManifest readManifest() {
-        return new AgentCapabilityManifest(capabilities.stream()
+        return new AgentCapabilityManifest(currentCapabilities().stream()
                 .filter(capability -> capability.effect() == CapabilityEffect.READ)
                 .toList());
     }
 
     public AgentCapabilityManifest manifest(boolean allowLocalWrites) {
         List<AgentCapability> allowed = new ArrayList<>();
-        for (AgentCapability capability : capabilities) {
+        for (AgentCapability capability : currentCapabilities()) {
             if (capability.effect() == CapabilityEffect.READ
                     || (allowLocalWrites && capability.effect() == CapabilityEffect.LOCAL_WRITE)) {
                 allowed.add(capability);
@@ -72,7 +75,7 @@ public class AgentCapabilityRegistry {
             Map<String, Object> arguments,
             AgentCapabilityArgumentContext context
     ) {
-        AgentCapabilityHandler handler = handlers.get(capabilityName);
+        AgentCapabilityHandler handler = handlerFor(capabilityName);
         if (handler != null) {
             return handler.normalizeArguments(capabilityName, arguments, context);
         }
@@ -84,11 +87,39 @@ public class AgentCapabilityRegistry {
             Map<String, Object> arguments,
             AgentCapabilityArgumentContext context
     ) {
-        AgentCapabilityHandler handler = handlers.get(capabilityName);
+        AgentCapabilityHandler handler = handlerFor(capabilityName);
         if (handler != null) {
             return handler.validateArguments(capabilityName, arguments, context);
         }
         return AgentCapabilityArgumentRules.validateKnownCapability(capabilityName, arguments == null ? Map.of() : arguments, context);
+    }
+
+    private List<AgentCapability> currentCapabilities() {
+        if (handlerList.isEmpty()) {
+            return capabilities;
+        }
+        List<AgentCapability> registered = handlerList.stream()
+                .filter(handler -> handler != null && handler.capabilities() != null)
+                .flatMap(handler -> handler.capabilities().stream())
+                .filter(capability -> capability != null && !capability.name().isBlank())
+                .toList();
+        return registered.isEmpty() ? DEFAULT_CAPABILITIES : registered;
+    }
+
+    private AgentCapabilityHandler handlerFor(String capabilityName) {
+        AgentCapabilityHandler handler = handlers.get(capabilityName);
+        if (handler != null) {
+            return handler;
+        }
+        if (capabilityName == null || capabilityName.isBlank()) {
+            return null;
+        }
+        for (AgentCapabilityHandler candidate : handlerList) {
+            if (candidate != null && candidate.supports(capabilityName)) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     private Map<String, AgentCapabilityHandler> handlerMap(List<AgentCapabilityHandler> handlers) {

@@ -9,14 +9,19 @@ import com.musio.model.ProviderType;
 import com.musio.model.Song;
 import com.musio.model.SongDetail;
 import com.musio.model.SongUrl;
+import com.musio.model.SourceContext;
 import com.musio.model.UserProfile;
+import com.musio.providers.MusicSourceProvider;
 import com.musio.providers.MusicProvider;
+import com.musio.providers.MusicSourceDefaults;
+import com.musio.providers.SourceCapability;
+import com.musio.providers.SourceToolCall;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-public class ObservedMusicProvider implements MusicProvider {
+public class ObservedMusicProvider implements MusicProvider, MusicSourceProvider {
     private final MusicProvider delegate;
     private final ProviderCallObserver observer;
 
@@ -94,6 +99,37 @@ public class ObservedMusicProvider implements MusicProvider {
         ));
     }
 
+    @Override
+    public String sourceId() {
+        if (delegate instanceof MusicSourceProvider sourceProvider) {
+            return sourceProvider.sourceId();
+        }
+        return type().sourceId();
+    }
+
+    @Override
+    public List<SourceCapability> capabilities(SourceContext context) {
+        if (!(delegate instanceof MusicSourceProvider sourceProvider)) {
+            return MusicSourceDefaults.readCapabilities();
+        }
+        return observe("manifest", Map.of("sourceId", sourceId()), () -> sourceProvider.capabilities(context), capabilities -> Map.of(
+                "count", capabilities == null ? 0 : capabilities.size()
+        ));
+    }
+
+    @Override
+    public Map<String, Object> execute(SourceToolCall call, SourceContext context) {
+        if (!(delegate instanceof MusicSourceProvider sourceProvider)) {
+            return observe("tools." + (call == null ? "" : call.toolName()), Map.of(), () -> MusicSourceDefaults.executeLegacy(delegate, call), this::toolResultPreview);
+        }
+        Map<String, Object> input = call == null ? Map.of() : Map.of(
+                "sourceId", safe(call.sourceId()),
+                "toolName", safe(call.toolName()),
+                "arguments", call.arguments() == null ? Map.of() : call.arguments()
+        );
+        return observe("tools." + (call == null ? "" : call.toolName()), input, () -> sourceProvider.execute(call, context), this::toolResultPreview);
+    }
+
     private <T> T observe(String operation, Map<String, Object> inputPreview, java.util.function.Supplier<T> action, java.util.function.Function<T, Map<String, Object>> resultPreview) {
         if (observer == null) {
             return action.get();
@@ -143,6 +179,24 @@ public class ObservedMusicProvider implements MusicProvider {
         preview.put("title", safe(song.title()));
         preview.put("artists", song.artists() == null ? List.of() : song.artists().stream().limit(4).toList());
         return preview;
+    }
+
+    private Map<String, Object> toolResultPreview(Map<String, Object> result) {
+        if (result == null) {
+            return Map.of();
+        }
+        Map<String, Object> preview = new LinkedHashMap<>();
+        putIfPresent(preview, "success", result.get("success"));
+        putIfPresent(preview, "resultType", result.get("resultType"));
+        putIfPresent(preview, "count", result.get("count"));
+        putIfPresent(preview, "message", result.get("message"));
+        return preview;
+    }
+
+    private void putIfPresent(Map<String, Object> target, String key, Object value) {
+        if (value != null) {
+            target.put(key, value);
+        }
     }
 
     private String songTitle(Song song) {

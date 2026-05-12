@@ -285,7 +285,7 @@ class RecommendationCapabilityHandlerTest {
         ).orElseThrow();
 
         var root = objectMapper.readTree(resultJson);
-        assertEquals(1, orchestrator.lastRequestedCount);
+        assertEquals(3, orchestrator.lastRequestedCount);
         assertEquals(1, root.path("requestedTotal").asInt());
         assertTrue(orchestrator.lastAvoidSongTitles.containsAll(List.of("第一首", "第二首", "第三首", "第四首")));
     }
@@ -336,8 +336,8 @@ class RecommendationCapabilityHandlerTest {
 
         var root = objectMapper.readTree(resultJson);
         assertEquals(2, orchestrator.lastRecommendationSlots.size());
-        assertEquals(1, orchestrator.lastRecommendationSlots.get(0).count());
-        assertEquals(1, orchestrator.lastRecommendationSlots.get(1).count());
+        assertEquals(2, orchestrator.lastRecommendationSlots.get(0).count());
+        assertEquals(2, orchestrator.lastRecommendationSlots.get(1).count());
         assertEquals(2, root.path("requestedTotal").asInt());
     }
 
@@ -395,8 +395,10 @@ class RecommendationCapabilityHandlerTest {
         var root = objectMapper.readTree(resultJson);
         assertEquals(1, orchestrator.lastRecommendationSlots.size());
         assertEquals("late_night_coding", orchestrator.lastRecommendationSlots.getFirst().slotId());
-        assertEquals(1, orchestrator.lastRecommendationSlots.getFirst().count());
+        assertEquals(2, orchestrator.lastRecommendationSlots.getFirst().count());
         assertEquals(1, root.path("requestedTotal").asInt());
+        assertEquals(1, root.path("resolvedTotal").asInt());
+        assertEquals("第五首", root.path("songs").get(0).path("title").asText());
         assertTrue(orchestrator.lastAvoidSongTitles.containsAll(List.of("第一首", "第二首", "第三首", "第四首")));
     }
 
@@ -469,6 +471,19 @@ class RecommendationCapabilityHandlerTest {
             lastAvoidSongTitles = avoidSongTitles == null ? List.of() : List.copyOf(avoidSongTitles);
             lastRequestedCount = recommendationSlots == null ? 0 : recommendationSlots.stream().mapToInt(RecommendationSlot::count).sum();
             lastRecommendationSlots = recommendationSlots == null ? List.of() : List.copyOf(recommendationSlots);
+            if (recommendationSlots != null && recommendationSlots.stream().anyMatch(slot -> "late_night_coding".equals(slot.slotId()))) {
+                Song duplicate = new Song("qqmusic:1", ProviderType.QQMUSIC, "第一首", List.of("A"), "测试", 180, null);
+                Song newSong = new Song("qqmusic:5", ProviderType.QQMUSIC, "第五首", List.of("B"), "测试", 180, null);
+                RecommendationResult result = new RecommendationResult(
+                        List.of(
+                                new ResolvedRecommendation(duplicate, "重复候选。", "第一首 A", "late_night_coding"),
+                                new ResolvedRecommendation(newSong, "新的补充候选。", "第五首 B", "late_night_coding")
+                        ),
+                        List.of(),
+                        "已可信匹配 2 首歌曲。"
+                );
+                return new RecommendationResponse("已推荐 2 首。", List.of(duplicate, newSong), result, recommendationSlots);
+            }
             Song one = new Song("qqmusic:x1", ProviderType.QQMUSIC, "断桥残雪", List.of("许嵩"), "自定义", 240, null);
             Song two = new Song("qqmusic:x2", ProviderType.QQMUSIC, "清明雨上", List.of("许嵩"), "自定义", 240, null);
             Song three = new Song("qqmusic:h1", ProviderType.QQMUSIC, "西厢", List.of("后弦"), "自定义", 240, null);

@@ -221,7 +221,6 @@ public class AgentRuntime {
                         .stream()
                         .content()
                         .doOnNext(chunk -> {
-                            AgentLlmLogger.logStreamChunk("final_answer", ai, chunk);
                             publishAnswerDelta(runId, ai, answerGuard, chunk, traceEnabled, composeStarted);
                         })
                         .blockLast();

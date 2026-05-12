@@ -74,3 +74,20 @@ class UserMusicGene(BaseModel):
     euin: str
     generated_at: str
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+class SourceCapability(BaseModel):
+    name: str
+    effect: str = "read"
+    description: str = ""
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+    required: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    disabled_reason: str | None = None
+    result_type: str = "generic"
+
+
+class SourceManifest(BaseModel):
+    source_id: str = "qqmusic"
+    display_name: str = "QQ 音乐"
+    capabilities: list[SourceCapability] = Field(default_factory=list)
