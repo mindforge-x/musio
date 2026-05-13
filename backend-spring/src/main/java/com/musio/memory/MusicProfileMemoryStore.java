@@ -11,6 +11,8 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
@@ -48,6 +50,24 @@ public class MusicProfileMemoryStore {
             objectMapper.writeValue(profilePath.toFile(), profile);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to store music profile memory.", e);
+        }
+    }
+
+    public List<MusicProfileMemory> readAll() {
+        if (!Files.isDirectory(profileRoot)) {
+            return List.of();
+        }
+        try (var paths = Files.walk(profileRoot)) {
+            List<MusicProfileMemory> profiles = new ArrayList<>();
+            for (Path profilePath : paths
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".json"))
+                    .toList()) {
+                profiles.add(objectMapper.readValue(profilePath.toFile(), MusicProfileMemory.class));
+            }
+            return List.copyOf(profiles);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read music profile memories.", e);
         }
     }
 

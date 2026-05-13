@@ -55,6 +55,27 @@ class AgentMemoryRouterTest {
     }
 
     @Test
+    void routesReferencedPreviousSongReplacementWithoutExplicitTitle() {
+        AgentTurnPlan planned = AgentTurnPlan.respondOnly("换一首，不要重复刚才那首", 0.0, "planner_exception");
+
+        AgentTurnPlan repaired = router.repairPlan("换一首，不要重复刚才那首", planned, previousCompositeRecommendationMemory())
+                .orElseThrow();
+
+        assertEquals(TurnDisposition.USE_TOOLS, repaired.disposition());
+        assertEquals("recommend", repaired.taskType());
+        assertEquals("correction", repaired.contextMode());
+        assertEquals(List.of(
+                AgentRequiredOutcome.RECOMMENDATION,
+                AgentRequiredOutcome.COMMENTS,
+                AgentRequiredOutcome.LYRICS,
+                AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE
+        ), repaired.requiredOutcomes());
+        assertEquals("xusong", repaired.recommendationSlots().getFirst().slotId());
+        assertEquals("许嵩", repaired.recommendationSlots().getFirst().target());
+        assertTrue(repaired.avoidSongTitles().contains("素颜"));
+    }
+
+    @Test
     void doesNotOverrideWithoutSongMatch() {
         assertFalse(router.repairPlan("这首是不是重复了", AgentTurnPlan.respondOnly("这首是不是重复了", 0.9, ""), previousCompositeRecommendationMemory()).isPresent());
     }

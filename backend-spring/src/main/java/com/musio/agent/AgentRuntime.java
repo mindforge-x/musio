@@ -30,6 +30,8 @@ import com.musio.model.PendingLocalPlaylistAdd;
 import com.musio.model.Song;
 import com.musio.model.SourceContext;
 import com.musio.memory.AgentTaskMemoryService;
+import com.musio.memory.MemoryWriteRequest;
+import com.musio.memory.MemoryWriter;
 import com.musio.memory.MusicProfileService;
 import com.musio.memory.context.MemoryContextPackage;
 import com.musio.memory.context.MemoryContextService;
@@ -70,6 +72,7 @@ public class AgentRuntime {
     private final AgentTurnPlanner turnPlanner;
     private final AgentMemoryRouter memoryRouter;
     private final MemoryContextService memoryContextService;
+    private final MemoryWriter memoryWriter;
     private final AgentLoopRunner agentLoopRunner;
     private final AgentPolicyGate policyGate;
     private final ObjectMapper objectMapper;
@@ -91,6 +94,7 @@ public class AgentRuntime {
             AgentTurnPlanner turnPlanner,
             AgentMemoryRouter memoryRouter,
             MemoryContextService memoryContextService,
+            MemoryWriter memoryWriter,
             AgentLoopRunner agentLoopRunner,
             AgentPolicyGate policyGate,
             ObjectMapper objectMapper
@@ -106,6 +110,7 @@ public class AgentRuntime {
         this.turnPlanner = turnPlanner;
         this.memoryRouter = memoryRouter;
         this.memoryContextService = memoryContextService;
+        this.memoryWriter = memoryWriter;
         this.agentLoopRunner = agentLoopRunner;
         this.policyGate = policyGate;
         this.objectMapper = objectMapper;
@@ -233,6 +238,7 @@ public class AgentRuntime {
                 }
                 recordDirectPreludeMemory(userId, taskContext, preludeContext);
                 conversationHistoryService.appendTurn(userId, request.visibleMessage(), preludeContext.answerPrefix(), preludeContext.songs(), preludeContext.confirmation());
+                writeTurnMemory(userId, request.message(), goal, memoryContext, preludeContext.evidence(), preludeContext.answerPrefix());
                 eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
                 return;
             }
@@ -269,6 +275,7 @@ public class AgentRuntime {
 
             answerText = combineAnswer(preludeContext.answerPrefix(), answerText);
             conversationHistoryService.appendTurn(userId, request.visibleMessage(), answerText, preludeContext.songs(), preludeContext.confirmation());
+            writeTurnMemory(userId, request.message(), goal, memoryContext, preludeContext.evidence(), answerText);
 
             eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
         } catch (Exception e) {
@@ -540,7 +547,9 @@ public class AgentRuntime {
         taskMemoryService.clearPendingLocalPlaylistAdd(userId);
         List<Song> songs = evidence.songs().isEmpty() ? selectedSongs : evidence.songs();
         publishSongCards(runId, songs);
-        publishDirectAnswer(runId, ai, userId, visibleUserMessage, localPlaylistConfirmationAnswer(outcome, pending), songs, traceEnabled);
+        String answerText = localPlaylistConfirmationAnswer(outcome, pending);
+        writeTurnMemory(userId, userMessage, goal, MemoryContextPackage.empty(), evidence, answerText);
+        publishDirectAnswer(runId, ai, userId, visibleUserMessage, answerText, songs, traceEnabled);
     }
 
     private List<Song> selectedPendingSongs(PendingLocalPlaylistAdd pending, String userMessage) {
@@ -830,7 +839,34 @@ public class AgentRuntime {
                 true,
                 evidence.songs(),
                 "",
-                confirmationFor(pendingLocalPlaylistAdd));
+                confirmationFor(pendingLocalPlaylistAdd),
+                evidence);
+    }
+
+    private void writeTurnMemory(
+            String userId,
+            String userMessage,
+            AgentGoal goal,
+            MemoryContextPackage memoryContext,
+            AgentLoopEvidence evidence,
+            String finalAnswer
+    ) {
+        if (memoryWriter == null) {
+            return;
+        }
+        try {
+            memoryWriter.writeAfterTurn(new MemoryWriteRequest(
+                    userId,
+                    userMessage,
+                    goal,
+                    memoryContext,
+                    evidence,
+                    finalAnswer,
+                    null
+            ));
+        } catch (Exception e) {
+            log.warn("Memory writer failed for user {}", userId, e);
+        }
     }
 
     static boolean loopHandledLocalPlaylistWrite(AgentLoopEvidence evidence) {
@@ -1292,22 +1328,27 @@ public class AgentRuntime {
         return new TraceHeartbeat(future);
     }
 
-    private record PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix, boolean directAnswer, ChatConfirmation confirmation) {
+    private record PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix, boolean directAnswer, ChatConfirmation confirmation, AgentLoopEvidence evidence) {
         static PreludeContext empty() {
             return new PreludeContext("", false, List.of(), "");
         }
 
         private PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix) {
-            this(text, evidenceBound, songs, answerPrefix, false, null);
+            this(text, evidenceBound, songs, answerPrefix, false, null, AgentLoopEvidence.empty());
         }
 
         private PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix, ChatConfirmation confirmation) {
-            this(text, evidenceBound, songs, answerPrefix, false, confirmation);
+            this(text, evidenceBound, songs, answerPrefix, false, confirmation, AgentLoopEvidence.empty());
+        }
+
+        private PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix, ChatConfirmation confirmation, AgentLoopEvidence evidence) {
+            this(text, evidenceBound, songs, answerPrefix, false, confirmation, evidence);
         }
 
         private PreludeContext {
             songs = songs == null ? List.of() : List.copyOf(songs);
             answerPrefix = answerPrefix == null ? "" : answerPrefix;
+            evidence = evidence == null ? AgentLoopEvidence.empty() : evidence;
         }
 
         private boolean hasSongCards() {

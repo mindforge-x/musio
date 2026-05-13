@@ -1,12 +1,21 @@
 package com.musio.memory.context;
 
+import com.musio.memory.BehaviorSummary;
+import com.musio.memory.BehaviorSummaryService;
+import com.musio.memory.ConversationSummary;
+import com.musio.memory.ConversationSummaryStore;
+import com.musio.memory.MusicCacheEntry;
+import com.musio.memory.MusicCacheStore;
 import com.musio.memory.MusicProfileService;
+import com.musio.memory.PreferenceItem;
+import com.musio.memory.PreferenceStore;
 import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.AgentTaskRecommendationSlot;
 import com.musio.model.MusicProfileMemory;
 import com.musio.model.PendingLocalPlaylistAdd;
 import com.musio.model.Song;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -16,9 +25,28 @@ import java.util.List;
 @Component
 public class MemoryRetriever {
     private final MusicProfileService musicProfileService;
+    private final BehaviorSummaryService behaviorSummaryService;
+    private final MusicCacheStore musicCacheStore;
+    private final ConversationSummaryStore conversationSummaryStore;
+    private final PreferenceStore preferenceStore;
 
     public MemoryRetriever(MusicProfileService musicProfileService) {
+        this(musicProfileService, null, null, null, null);
+    }
+
+    @Autowired
+    public MemoryRetriever(
+            MusicProfileService musicProfileService,
+            BehaviorSummaryService behaviorSummaryService,
+            MusicCacheStore musicCacheStore,
+            ConversationSummaryStore conversationSummaryStore,
+            PreferenceStore preferenceStore
+    ) {
         this.musicProfileService = musicProfileService;
+        this.behaviorSummaryService = behaviorSummaryService;
+        this.musicCacheStore = musicCacheStore;
+        this.conversationSummaryStore = conversationSummaryStore;
+        this.preferenceStore = preferenceStore;
     }
 
     public List<MemoryEvidence> retrieve(MemoryRouteRequest request, MemoryReadPlan plan) {
@@ -30,9 +58,15 @@ public class MemoryRetriever {
             switch (item.type()) {
                 case TASK_MEMORY -> evidence.addAll(taskMemoryEvidence(request == null ? null : request.taskMemory(), item));
                 case PENDING_ACTION -> evidence.addAll(pendingActionEvidence(request == null ? null : request.taskMemory(), item));
-                case PROFILE_MEMORY -> evidence.addAll(profileEvidence(item));
-                case BEHAVIOR_SUMMARY, MUSIC_CACHE, CONVERSATION_SUMMARY, CURRENT_STATE -> {
-                    // First stage intentionally reserves these types without reading new stores.
+                case PROFILE_MEMORY -> {
+                    evidence.addAll(profileEvidence(item));
+                    evidence.addAll(preferenceEvidence(request == null ? "" : request.userId(), item));
+                }
+                case BEHAVIOR_SUMMARY -> evidence.addAll(behaviorSummaryEvidence(request, item));
+                case MUSIC_CACHE -> evidence.addAll(musicCacheEvidence(request, item));
+                case CONVERSATION_SUMMARY -> evidence.addAll(conversationSummaryEvidence(request, item));
+                case CURRENT_STATE -> {
+                    // Current playback/queue will be connected when player state is durable.
                 }
             }
         }
@@ -40,6 +74,70 @@ public class MemoryRetriever {
                 .filter(item -> item != null && !item.text().isBlank())
                 .sorted((left, right) -> Double.compare(right.score(), left.score()))
                 .limit(20)
+                .toList();
+    }
+
+    private List<MemoryEvidence> behaviorSummaryEvidence(MemoryRouteRequest request, MemoryReadItem item) {
+        if (behaviorSummaryService == null || request == null) {
+            return List.of();
+        }
+        BehaviorSummary summary = behaviorSummaryService.summarize(request.userId());
+        List<String> parts = new ArrayList<>();
+        for (String field : item.fields()) {
+            switch (field) {
+                case "last24HoursSummary" -> add(parts, "最近 24 小时行为", summary.last24HoursSummary());
+                case "last7DaysSummary" -> add(parts, "最近 7 天行为", summary.last7DaysSummary());
+                case "negativeSignals" -> add(parts, "近期负向信号", join(summary.negativeSignals(), item.limit()));
+                case "sceneSignals" -> add(parts, "近期场景信号", join(summary.sceneSignals(), item.limit()));
+                default -> {
+                }
+            }
+        }
+        if (parts.isEmpty()) {
+            return List.of();
+        }
+        return List.of(new MemoryEvidence(MemoryType.BEHAVIOR_SUMMARY, summary.userId(), String.join("\n", parts), score(item), 0.7, item.reason(), summary.generatedAt()));
+    }
+
+    private List<MemoryEvidence> musicCacheEvidence(MemoryRouteRequest request, MemoryReadItem item) {
+        if (musicCacheStore == null || request == null) {
+            return List.of();
+        }
+        String query = item.query().isBlank() ? request.effectiveRequest() : item.query();
+        List<MusicCacheEntry> entries = musicCacheStore.search(request.userId(), item.fields(), query, item.limit());
+        return entries.stream()
+                .map(entry -> new MemoryEvidence(
+                        MemoryType.MUSIC_CACHE,
+                        entry.id(),
+                        "%s%s%s".formatted(
+                                cacheTypeLabel(entry.cacheType()),
+                                entry.title().isBlank() ? "" : "：" + entry.title(),
+                                "\n" + entry.content()
+                        ).strip(),
+                        score(item) * 0.95,
+                        0.75,
+                        entry.evidence().isBlank() ? item.reason() : entry.evidence(),
+                        entry.updatedAt()
+                ))
+                .toList();
+    }
+
+    private List<MemoryEvidence> conversationSummaryEvidence(MemoryRouteRequest request, MemoryReadItem item) {
+        if (conversationSummaryStore == null || request == null) {
+            return List.of();
+        }
+        String query = item.query().isBlank() ? request.effectiveRequest() : item.query();
+        List<ConversationSummary> summaries = conversationSummaryStore.search(request.userId(), query, item.limit());
+        return summaries.stream()
+                .map(summary -> new MemoryEvidence(
+                        MemoryType.CONVERSATION_SUMMARY,
+                        summary.id(),
+                        summary.summary(),
+                        score(item) * 0.85,
+                        0.65,
+                        item.reason(),
+                        summary.updatedAt()
+                ))
                 .toList();
     }
 
@@ -116,6 +214,37 @@ public class MemoryRetriever {
         return List.of(new MemoryEvidence(MemoryType.PROFILE_MEMORY, profile.accountKey(), String.join("\n", parts), score(item), 0.75, item.reason(), updatedAt));
     }
 
+    private List<MemoryEvidence> preferenceEvidence(String userId, MemoryReadItem item) {
+        if (preferenceStore == null) {
+            return List.of();
+        }
+        List<PreferenceItem> preferences = preferenceStore.items(userId, Math.max(5, item.limit()));
+        if (preferences.isEmpty()) {
+            return List.of();
+        }
+        List<String> parts = new ArrayList<>();
+        if (item.fields().contains("strongPreferences") || item.fields().contains("recommendationHints")) {
+            add(parts, "偏好候选聚合", join(preferences.stream()
+                    .filter(preference -> "positive".equals(preference.polarity()))
+                    .map(preference -> preference.label() + "（" + confidence(preference.confidence()) + "）")
+                    .toList(), item.limit()));
+        }
+        if (item.fields().contains("avoid")) {
+            add(parts, "负向偏好候选聚合", join(preferences.stream()
+                    .filter(preference -> "negative".equals(preference.polarity()))
+                    .map(preference -> preference.label() + "（" + confidence(preference.confidence()) + "）")
+                    .toList(), item.limit()));
+        }
+        if (parts.isEmpty()) {
+            return List.of();
+        }
+        Instant updatedAt = preferences.stream()
+                .map(PreferenceItem::updatedAt)
+                .max(Instant::compareTo)
+                .orElse(Instant.EPOCH);
+        return List.of(new MemoryEvidence(MemoryType.PROFILE_MEMORY, userId, String.join("\n", parts), score(item) * 0.9, 0.65, "本地偏好候选聚合。", updatedAt));
+    }
+
     private double score(MemoryReadItem item) {
         return Math.max(0.1, item.priority() / 100.0);
     }
@@ -179,6 +308,20 @@ public class MemoryRetriever {
                 .map(String::strip)
                 .limit(limit)
                 .toList());
+    }
+
+    private String cacheTypeLabel(String cacheType) {
+        return switch (cacheType == null ? "" : cacheType) {
+            case "songDetail" -> "歌曲详情缓存";
+            case "lyricsSummary" -> "歌词缓存";
+            case "commentSummary", "comments" -> "评论缓存";
+            case "playlistSummary" -> "歌单缓存";
+            default -> "音乐缓存";
+        };
+    }
+
+    private String confidence(double confidence) {
+        return String.format(java.util.Locale.ROOT, "%.2f", confidence);
     }
 
     private String safe(String value) {
