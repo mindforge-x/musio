@@ -25,6 +25,7 @@ import com.musio.model.ChatRequest;
 import com.musio.model.MusicProfileMemory;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.AgentTaskRecommendationSlot;
+import com.musio.model.PendingConfirmation;
 import com.musio.model.PendingLocalPlaylistAdd;
 import com.musio.model.Song;
 import com.musio.model.SourceContext;
@@ -283,6 +284,84 @@ public class AgentRuntime {
         }
     }
 
+    public boolean resolvePendingLocalPlaylistConfirmation(String runId, String userId, PendingConfirmation confirmation) {
+        String normalizedUserId = conversationHistoryService.normalizeUserId(userId);
+        AgentTaskMemory taskMemory = taskMemoryService.read(normalizedUserId);
+        PendingLocalPlaylistAdd pending = taskMemory == null ? null : taskMemory.pendingLocalPlaylistAdd();
+        if (pending == null) {
+            return false;
+        }
+        if (confirmation == null || !confirmation.approved()) {
+            taskMemoryService.clearPendingLocalPlaylistAdd(normalizedUserId);
+            return true;
+        }
+        List<Song> selectedSongs = selectedPendingSongs(pending, selectedSongIds(confirmation));
+        if (selectedSongs.isEmpty()) {
+            return false;
+        }
+        MusioConfig.Ai ai = configService.config().ai();
+        String effectiveRunId = runId == null || runId.isBlank() ? "pending-local-playlist-confirmation" : runId;
+        AgentRunContext.setRunId(effectiveRunId);
+        AgentRunContext.setUserId(normalizedUserId);
+        AgentRunContext.setTraceEnabled(false);
+        try {
+            Map<String, Object> addArguments = pendingAddArguments(pending, selectedSongs);
+            AgentTurnPlan confirmPlan = new AgentTurnPlan(
+                    TurnDisposition.USE_TOOLS,
+                    "playlist",
+                    "refer_previous_song",
+                    pending.sourceRequest(),
+                    new AgentTurnMemoryUse(true, List.of("pendingLocalPlaylistAdd"), "用户确认执行本地 Musio 歌单写入。"),
+                    List.of(new AgentToolCall("add_song_to_musio_playlist", addArguments)),
+                    1.0,
+                    ""
+            );
+            AgentTaskContext taskContext = confirmPlan.toLegacyTaskContext(pending.sourceRequest());
+            AgentGoal goal = AgentGoal.from(pending.sourceRequest(), confirmPlan, taskContext, selectedSongs.size());
+            AgentCapabilityManifest capabilityManifest = policyGate.manifestFor(goal, confirmPlan);
+            AgentLoopOutcome outcome = agentLoopRunner.runOutcome(
+                    ai,
+                    new AgentLoopState(
+                            effectiveRunId,
+                            normalizedUserId,
+                            pending.sourceRequest(),
+                            conversationHistoryService.load(normalizedUserId),
+                            taskMemory,
+                            List.of(),
+                            0,
+                            capabilityManifest,
+                            selectedSongs.size(),
+                            goal
+                    ),
+                    List.of(new AgentStepAction(
+                            AgentStepActionType.TOOL_CALL,
+                            AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+                            addArguments,
+                            "收藏到 Musio 歌单",
+                            1.0,
+                            "pending_local_playlist_confirmation"
+                    ))
+            );
+            AgentLoopEvidence evidence = outcome.evidence();
+            if (evidence.hasObservations()) {
+                taskMemoryService.recordLoopEvidence(
+                        normalizedUserId,
+                        evidence.targetSong(),
+                        evidence.completedTaskType(),
+                        evidence.observationSummaries()
+                );
+                recordStructuredLoopMemory(normalizedUserId, goal, evidence);
+            }
+            boolean handled = loopHandledLocalPlaylistWrite(evidence);
+            if (handled) {
+                taskMemoryService.clearPendingLocalPlaylistAdd(normalizedUserId);
+            }
+            return handled;
+        } finally {
+            AgentRunContext.clear();
+        }
+    }
+
     @PreDestroy
     public void shutdownProgressExecutor() {
         progressExecutor.shutdownNow();
@@ -468,7 +547,13 @@ public class AgentRuntime {
         if (pending == null || pending.songs().isEmpty()) {
             return List.of();
         }
-        List<String> selectedIds = selectedSongIds(userMessage);
+        return selectedPendingSongs(pending, selectedSongIds(userMessage));
+    }
+
+    private List<Song> selectedPendingSongs(PendingLocalPlaylistAdd pending, List<String> selectedIds) {
+        if (pending == null || pending.songs().isEmpty()) {
+            return List.of();
+        }
         if (selectedIds.isEmpty()) {
             return pending.songs();
         }
@@ -484,6 +569,23 @@ public class AgentRuntime {
             }
         }
         return selected;
+    }
+
+    private List<String> selectedSongIds(PendingConfirmation confirmation) {
+        if (confirmation == null || confirmation.editedInput() == null) {
+            return List.of();
+        }
+        Object selectedSongIds = confirmation.editedInput().get("selectedSongIds");
+        if (!(selectedSongIds instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .filter(id -> !id.isBlank())
+                .map(String::strip)
+                .distinct()
+                .toList();
     }
 
     private List<String> selectedSongIds(String userMessage) {
@@ -654,7 +756,7 @@ public class AgentRuntime {
             taskMemoryService.clearPendingLocalPlaylistAdd(userId);
         }
         PendingLocalPlaylistAdd pendingLocalPlaylistAdd = deferLocalPlaylistWrite && !loopHandledLocalPlaylistWrite
-                ? savePendingLocalPlaylistAdd(userId, userMessage, evidence, taskMemory, previousTaskMemory)
+                ? savePendingLocalPlaylistAdd(userId, userMessage, evidence, taskMemory, previousTaskMemory, goal)
                 : null;
         if (evidence.hasObservations()) {
             taskMemoryService.recordLoopEvidence(
@@ -744,9 +846,10 @@ public class AgentRuntime {
             String userMessage,
             AgentLoopEvidence evidence,
             AgentTaskMemory taskMemory,
-            AgentTaskMemory previousTaskMemory
+            AgentTaskMemory previousTaskMemory,
+            AgentGoal goal
     ) {
-        List<Song> targetSongs = pendingLocalPlaylistSongs(userMessage, evidence, taskMemory, previousTaskMemory);
+        List<Song> targetSongs = pendingLocalPlaylistSongs(userMessage, evidence, taskMemory, previousTaskMemory, goal);
         if (targetSongs.isEmpty()) {
             taskMemoryService.clearPendingLocalPlaylistAdd(userId);
             return null;
@@ -756,10 +859,10 @@ public class AgentRuntime {
         return pending;
     }
 
-    private List<Song> pendingLocalPlaylistSongs(String userMessage, AgentLoopEvidence evidence, AgentTaskMemory taskMemory, AgentTaskMemory previousTaskMemory) {
+    private List<Song> pendingLocalPlaylistSongs(String userMessage, AgentLoopEvidence evidence, AgentTaskMemory taskMemory, AgentTaskMemory previousTaskMemory, AgentGoal goal) {
         List<Song> evidenceSongs = evidence == null ? List.of() : evidence.songs();
         if (!evidenceSongs.isEmpty()) {
-            int writeCount = pendingLocalPlaylistWriteCount(userMessage, evidenceSongs.size());
+            int writeCount = pendingLocalPlaylistWriteCount(userMessage, evidenceSongs.size(), goal);
             return evidenceSongs.stream()
                     .filter(song -> song != null && song.id() != null && !song.id().isBlank())
                     .limit(writeCount <= 0 ? 1 : writeCount)
@@ -769,11 +872,21 @@ public class AgentRuntime {
         return fallback == null || fallback.id() == null || fallback.id().isBlank() ? List.of() : List.of(fallback);
     }
 
-    private int pendingLocalPlaylistWriteCount(String userMessage, int availableSongCount) {
+    private int pendingLocalPlaylistWriteCount(String userMessage, int availableSongCount, AgentGoal goal) {
         if (availableSongCount <= 1) {
             return availableSongCount;
         }
+        if (goal != null) {
+            int goalCount = goal.recommendationTotalCount() > 0 ? goal.recommendationTotalCount() : goal.requestedSongCount();
+            if (goalCount > 1 && goal.localWriteIntent()) {
+                return Math.min(availableSongCount, goalCount);
+            }
+        }
         String normalized = normalizeConfirmationText(userMessage);
+        int explicitCount = RecommendationSlots.explicitSongCount(userMessage);
+        if (explicitCount > 1 && containsAny(normalized, "加入歌单", "添加到歌单", "保存到歌单", "收藏到歌单", "收藏")) {
+            return Math.min(availableSongCount, explicitCount);
+        }
         if (containsAny(normalized, "全部加入", "全都加入", "都加入歌单", "都收藏", "这几首加入", "这些歌加入", "全部收藏")) {
             return availableSongCount;
         }

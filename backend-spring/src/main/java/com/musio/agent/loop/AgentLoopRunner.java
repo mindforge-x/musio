@@ -139,6 +139,7 @@ public class AgentLoopRunner {
         for (; step < MAX_STEPS; step++) {
             publishLoopThinking(state, step);
             AgentStepAction action = safeAction(stepPlanner.nextAction(ai, state));
+            action = normalizeReadAction(state, action);
             publishLoopAction(state, step, action);
             if (action.action() == AgentStepActionType.FINAL_ANSWER) {
                 AgentStepAction recoveryAction = recoveryActionForMissingReadOutcome(state);
@@ -182,6 +183,7 @@ public class AgentLoopRunner {
                 state = appendSkipped(state, step, action, "unsupported_action");
                 continue;
             }
+            action = normalizeReadAction(state, action);
             state = executeToolAction(state, step, action, executedCalls);
             if (shouldFinishAfterTool(state, action)) {
                 return outcome(AgentLoopOutcomeType.COMPLETED, state, "tool_completion");
@@ -220,6 +222,38 @@ public class AgentLoopRunner {
             case LOCAL_PLAYLIST_WRITE -> localPlaylistWriteRecoveryAction(state);
             default -> null;
         };
+    }
+
+    private AgentStepAction normalizeReadAction(AgentLoopState state, AgentStepAction action) {
+        if (action == null || action.action() != AgentStepActionType.TOOL_CALL || !isBatchReadableTool(action.toolName())) {
+            return action;
+        }
+        List<String> unreadTargetIds = unreadReadTargetSongIds(state, action.toolName());
+        if (unreadTargetIds.size() <= 1) {
+            return action;
+        }
+        List<String> requestedIds = requestedSongIds(action);
+        if (!requestedIds.isEmpty() && requestedIds.containsAll(unreadTargetIds)) {
+            return action;
+        }
+        Map<String, Object> arguments = new LinkedHashMap<>(action.arguments() == null ? Map.of() : action.arguments());
+        arguments.put("songIds", unreadTargetIds);
+        arguments.remove("songId");
+        if ("get_hot_comments".equals(action.toolName()) && !arguments.containsKey("limit")) {
+            arguments.put("limit", 10);
+        }
+        return new AgentStepAction(
+                action.action(),
+                action.toolName(),
+                arguments,
+                action.publicActivity(),
+                action.confidence(),
+                action.reason()
+        );
+    }
+
+    private boolean isBatchReadableTool(String toolName) {
+        return "get_hot_comments".equals(toolName) || "get_lyrics".equals(toolName);
     }
 
     private AgentStepAction localPlaylistWriteRecoveryAction(AgentLoopState state) {
@@ -269,10 +303,10 @@ public class AgentLoopRunner {
     }
 
     private AgentStepAction readBySongIdsAction(AgentLoopState state, AgentCapabilityManifest manifest, String toolName, String publicActivity, String reason) {
-        if (manifest == null || !manifest.allows(toolName) || successfulToolObserved(state, toolName)) {
+        if (manifest == null || !manifest.allows(toolName) || readOutcomeSatisfied(state, toolName)) {
             return null;
         }
-        List<String> songIds = observedSongIds(state);
+        List<String> songIds = unreadReadTargetSongIds(state, toolName);
         if (songIds.isEmpty()) {
             return null;
         }
@@ -370,7 +404,7 @@ public class AgentLoopRunner {
     }
 
     private AgentLoopState executeToolAction(AgentLoopState state, int step, AgentStepAction action, Set<String> executedCalls) {
-        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(action.toolName())) {
+        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(action.toolName()) && !preConfirmedLocalPlaylistWrite(action)) {
             ConfirmationDecision decision = confirmLocalPlaylistWrite(state, step, action);
             if (!decision.approved()) {
                 return appendSkipped(state, step, action, decision.reason());
@@ -386,6 +420,10 @@ public class AgentLoopRunner {
         executedCalls.add(callKey(action));
         publishLoopObservation(state, step, observation);
         return state.withObservation(observation);
+    }
+
+    private boolean preConfirmedLocalPlaylistWrite(AgentStepAction action) {
+        return action != null && "pending_local_playlist_confirmation".equals(action.reason());
     }
 
     private ConfirmationDecision confirmLocalPlaylistWrite(AgentLoopState state, int step, AgentStepAction action) {
@@ -506,6 +544,9 @@ public class AgentLoopRunner {
 
     private List<String> localPlaylistWriteTargetSongIds(AgentLoopState state, AgentStepAction action) {
         List<String> explicitIds = requestedSongIds(action);
+        if (explicitIds.isEmpty()) {
+            explicitIds = requestedSongIdsByIndex(state, action);
+        }
         List<String> scopedIds = scopedLocalPlaylistWriteSongIds(state);
         if (!explicitIds.isEmpty()) {
             if (scopedIds.isEmpty() || localPlaylistWriteAllTargetsRequested(state)) {
@@ -640,8 +681,87 @@ public class AgentLoopRunner {
         if (localPlaylistWriteAllTargetsRequested(state)) {
             return availableSongCount;
         }
-        int writeCount = writeIntentOccurrenceCount(localPlaylistWriteText(state));
+        String text = localPlaylistWriteText(state);
+        if (localPlaylistWriteSingleTargetRequested(text)) {
+            return 1;
+        }
+        if (state != null && state.goal() != null && state.goal().localWriteIntent()) {
+            int goalCount = state.goal().recommendationTotalCount() > 0
+                    ? state.goal().recommendationTotalCount()
+                    : state.goal().requestedSongCount();
+            if (goalCount > 1) {
+                return Math.min(availableSongCount, goalCount);
+            }
+        }
+        int writeCount = writeIntentOccurrenceCount(text);
         return Math.max(1, Math.min(availableSongCount, writeCount));
+    }
+
+    private List<String> requestedSongIdsByIndex(AgentLoopState state, AgentStepAction action) {
+        List<Integer> indexes = requestedSongIndexes(action);
+        if (indexes.isEmpty()) {
+            return List.of();
+        }
+        List<String> observedIds = observedSongIds(state);
+        if (observedIds.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        for (Integer index : indexes) {
+            if (index != null && index >= 1 && index <= observedIds.size()) {
+                ids.add(observedIds.get(index - 1));
+            }
+        }
+        return List.copyOf(ids);
+    }
+
+    private List<Integer> requestedSongIndexes(AgentStepAction action) {
+        if (action == null || action.arguments() == null) {
+            return List.of();
+        }
+        LinkedHashSet<Integer> indexes = new LinkedHashSet<>();
+        Object songIndexes = action.arguments().get("songIndexes");
+        if (songIndexes instanceof List<?> list) {
+            list.stream()
+                    .map(this::integerValue)
+                    .filter(index -> index != null && index > 0)
+                    .forEach(indexes::add);
+        }
+        Integer songIndex = integerValue(action.arguments().get("songIndex"));
+        if (songIndex != null && songIndex > 0) {
+            indexes.add(songIndex);
+        }
+        return List.copyOf(indexes);
+    }
+
+    private Integer integerValue(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Integer.parseInt(text.strip());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private boolean localPlaylistWriteSingleTargetRequested(String text) {
+        int ordinalTargets = 0;
+        for (String ordinal : List.of("第一首", "第二首", "第三首", "第四首", "第五首", "第1首", "第2首", "第3首", "第4首", "第5首")) {
+            if (text != null && text.contains(ordinal)) {
+                ordinalTargets++;
+            }
+        }
+        if (ordinalTargets > 1) {
+            return false;
+        }
+        if (ordinalTargets == 1) {
+            return true;
+        }
+        return containsAny(text, "这首", "这歌", "这首歌", "刚才那首", "上一首", "上首", "其中一首");
     }
 
     private String localPlaylistWriteText(AgentLoopState state) {
@@ -795,8 +915,8 @@ public class AgentLoopRunner {
                     "outcome_verification"
             ));
             case SEARCH -> successfulToolObserved(state, "search_songs");
-            case COMMENTS -> successfulToolObserved(state, "get_hot_comments");
-            case LYRICS -> successfulToolObserved(state, "get_lyrics");
+            case COMMENTS -> readOutcomeSatisfied(state, "get_hot_comments");
+            case LYRICS -> readOutcomeSatisfied(state, "get_lyrics");
             case DETAIL -> successfulToolObserved(state, "get_song_detail");
             case PLAYLIST -> successfulToolObserved(state, "get_user_playlists")
                     || successfulToolObserved(state, "get_playlist_songs")
@@ -833,6 +953,60 @@ public class AgentLoopRunner {
     private boolean successfulToolObserved(AgentLoopState state, String toolName) {
         return state.observations().stream()
                 .anyMatch(observation -> observation.status() == AgentObservationStatus.SUCCESS && toolName.equals(observation.toolName()));
+    }
+
+    private boolean readOutcomeSatisfied(AgentLoopState state, String toolName) {
+        List<String> targetIds = readTargetSongIds(state);
+        if (targetIds.isEmpty()) {
+            return successfulToolObserved(state, toolName);
+        }
+        return successfulReadSongIds(state, toolName).containsAll(targetIds);
+    }
+
+    private List<String> unreadReadTargetSongIds(AgentLoopState state, String toolName) {
+        List<String> targetIds = readTargetSongIds(state);
+        if (targetIds.isEmpty()) {
+            targetIds = observedSongIds(state);
+        }
+        if (targetIds.isEmpty()) {
+            return List.of();
+        }
+        Set<String> readIds = successfulReadSongIds(state, toolName);
+        return targetIds.stream()
+                .filter(id -> !readIds.contains(id))
+                .toList();
+    }
+
+    private List<String> readTargetSongIds(AgentLoopState state) {
+        Set<String> recommendationIds = successfulRecommendationSongIds(state);
+        if (!recommendationIds.isEmpty()) {
+            return List.copyOf(recommendationIds);
+        }
+        return observedSongIds(state);
+    }
+
+    private Set<String> successfulReadSongIds(AgentLoopState state, String toolName) {
+        Set<String> ids = new LinkedHashSet<>();
+        if (state == null || state.observations() == null || toolName == null || toolName.isBlank()) {
+            return ids;
+        }
+        for (AgentObservation observation : state.observations()) {
+            if (observation.status() != AgentObservationStatus.SUCCESS || !toolName.equals(observation.toolName())) {
+                continue;
+            }
+            List<String> argumentIds = requestedSongIds(new AgentStepAction(
+                    AgentStepActionType.TOOL_CALL,
+                    toolName,
+                    observation.arguments(),
+                    "",
+                    1.0,
+                    ""
+            ));
+            if (!argumentIds.isEmpty()) {
+                ids.addAll(argumentIds);
+            }
+        }
+        return ids;
     }
 
     private boolean successfulLocalPlaylistWriteObserved(AgentLoopState state) {

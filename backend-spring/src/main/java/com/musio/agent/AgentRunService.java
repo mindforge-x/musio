@@ -98,6 +98,9 @@ public class AgentRunService {
 
     public ChatRunResponse confirm(String runId, PendingConfirmation confirmation) {
         boolean accepted = confirmationService.confirm(runId, confirmation);
+        if (!accepted && agentRuntime.resolvePendingLocalPlaylistConfirmation(runId, "local", confirmation)) {
+            accepted = true;
+        }
         String state = accepted ? "confirmed" : "not_waiting";
         log.info(
                 "AGENT_CONFIRMATION_RESPONSE runId={} actionId={} approved={} state={}",

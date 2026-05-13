@@ -199,6 +199,55 @@ class AgentLoopRunnerTest {
     }
 
     @Test
+    void normalizesSingleSongReadIntoBatchReadForRecommendedSongs() {
+        BatchReadCapabilityHandler handler = new BatchReadCapabilityHandler();
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(handler));
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, AgentCapabilityRegistry.RECOMMEND_SONGS, Map.of("request", "推荐2首歌", "count", 2), "推荐", 0.9, "推荐"),
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_hot_comments", Map.of("songId", "qqmusic:1", "limit", 10), "读评论", 0.9, "读第一首"),
+                        AgentStepAction.finalAnswer("完成", 0.9)
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(handler))
+        );
+
+        AgentLoopEvidence evidence = runner.run(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "给我推荐2首歌，获取其热门评论",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(false),
+                2,
+                new AgentGoal(
+                        "给我推荐2首歌，获取其热门评论",
+                        "给我推荐2首歌，获取其热门评论",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        false,
+                        false,
+                        2,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.COMMENTS)
+                )
+        ));
+
+        assertEquals(2, evidence.observations().size());
+        AgentObservation comments = evidence.observations().get(1);
+        assertEquals("get_hot_comments", comments.toolName());
+        assertEquals(List.of("qqmusic:1", "qqmusic:2"), comments.arguments().get("songIds"));
+        assertFalse(comments.arguments().containsKey("songId"));
+        assertEquals(List.of("qqmusic:1", "qqmusic:2"), handler.commentSongIds);
+    }
+
+    @Test
     void rejectsDuplicateToolCall() {
         AgentStepAction search = new AgentStepAction(
                 AgentStepActionType.TOOL_CALL,
@@ -834,6 +883,82 @@ class AgentLoopRunnerTest {
     }
 
     @Test
+    void inlineLocalWriteUsesRecommendationCountForPronounWriteIntentAfterBatchReads() {
+        AgentCapabilityHandler recommendationHandler = new TwoSongRecommendationCapabilityHandler();
+        CapturingPlaylistCapabilityExecutor playlistExecutor = new CapturingPlaylistCapabilityExecutor("""
+                {"success":true,"summary":"已帮你收藏到 Musio 歌单 2 首。","playlistId":"default","requestedCount":2,"count":2,"songs":[{"id":"qqmusic:flower","provider":"QQMUSIC","title":"繁花","artists":["董真"],"album":"三生三世十里桃花 电视剧原声专辑","durationSeconds":225,"artworkUrl":null},{"id":"qqmusic:heartbreak","provider":"QQMUSIC","title":"虐心","artists":["徐良","孙羽幽"],"album":"那时雨","durationSeconds":257,"artworkUrl":null}]}
+                """);
+        MusicReadCapabilityHandler readHandler = musicReadCapabilityHandler();
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(playlistExecutor);
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler, readHandler, playlistHandler));
+        AgentEventBus eventBus = new AgentEventBus();
+        ConfirmationService confirmationService = new ConfirmationService();
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "给我推荐2首歌，获取其热门评论，并将其加入歌单，然后分享一句你觉得值得分享的歌词", "count", 2), "生成推荐", 0.9, "开放推荐"),
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_hot_comments", Map.of("songId", "qqmusic:flower", "limit", 1), "读评论", 0.9, "用户要热评"),
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_lyrics", Map.of("songId", "qqmusic:flower"), "读歌词", 0.9, "用户要歌词"),
+                        new AgentStepAction(AgentStepActionType.REQUEST_CONFIRMATION, "", Map.of(), "请求收藏确认", 0.9, "planner_requested_confirmation"),
+                        AgentStepAction.finalAnswer("结束", 0.9)
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler, readHandler, playlistHandler)),
+                null,
+                eventBus,
+                confirmationService
+        );
+        List<com.musio.model.ChatConfirmation> confirmations = new java.util.ArrayList<>();
+        eventBus.subscribe("run-1", event -> {
+            if ("confirmation_request".equals(event.type())) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) event.data();
+                var confirmation = (com.musio.model.ChatConfirmation) data.get("confirmation");
+                confirmations.add(confirmation);
+                confirmationService.confirm("run-1", new PendingConfirmation(confirmation.actionId(), true, Map.of("selectedSongIds", confirmation.defaultSelectedSongIds())));
+            }
+        });
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "给我推荐2首歌，获取其热门评论，并将其加入歌单，然后分享一句你觉得值得分享的歌词",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(true),
+                2,
+                new AgentGoal(
+                        "给我推荐2首歌，获取其热门评论，并将其加入歌单，然后分享一句你觉得值得分享的歌词",
+                        "给我推荐2首歌，获取其热门评论，并将其加入歌单，然后分享一句你觉得值得分享的歌词",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        true,
+                        false,
+                        2,
+                        List.of(),
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.COMMENTS, AgentRequiredOutcome.LYRICS, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(4, outcome.evidence().observations().size());
+        assertEquals(List.of("qqmusic:flower", "qqmusic:heartbreak"), outcome.evidence().observations().get(1).arguments().get("songIds"));
+        assertEquals(List.of("qqmusic:flower", "qqmusic:heartbreak"), outcome.evidence().observations().get(2).arguments().get("songIds"));
+        assertEquals(1, confirmations.size());
+        assertEquals(List.of("qqmusic:flower", "qqmusic:heartbreak"), confirmations.getFirst().defaultSelectedSongIds());
+        assertEquals(2, confirmations.getFirst().songs().size());
+        assertEquals(1, playlistExecutor.calls.size());
+        assertEquals(List.of("qqmusic:flower", "qqmusic:heartbreak"), playlistExecutor.calls.getFirst().get("songIds"));
+        assertFalse(playlistExecutor.calls.getFirst().containsKey("songId"));
+    }
+
+    @Test
     void convertsPlannerConfirmationRequestIntoInlineLocalWriteThenContinues() {
         AgentCapabilityHandler recommendationHandler = new StubRecommendationCapabilityHandler();
         MusioPlaylistCapabilityExecutor playlistExecutor = new StubPlaylistCapabilityExecutor("""
@@ -1405,6 +1530,51 @@ class AgentLoopRunnerTest {
         }
     }
 
+    private static class TwoSongRecommendationCapabilityHandler implements AgentCapabilityHandler {
+        private static final AgentCapability CAPABILITY = new AgentCapability(
+                "recommend_songs",
+                CapabilityEffect.READ,
+                "测试两首推荐能力。",
+                "{\"request\": string, \"count\": number}",
+                Set.of("request", "count")
+        );
+
+        @Override
+        public List<AgentCapability> capabilities() {
+            return List.of(CAPABILITY);
+        }
+
+        @Override
+        public boolean supports(String capabilityName) {
+            return CAPABILITY.name().equals(capabilityName);
+        }
+
+        @Override
+        public Map<String, Object> normalizeArguments(
+                String capabilityName,
+                Map<String, Object> arguments,
+                AgentCapabilityArgumentContext context
+        ) {
+            return arguments == null ? Map.of() : arguments;
+        }
+
+        @Override
+        public AgentCapabilityValidationResult validateArguments(
+                String capabilityName,
+                Map<String, Object> arguments,
+                AgentCapabilityArgumentContext context
+        ) {
+            return AgentCapabilityValidationResult.accepted();
+        }
+
+        @Override
+        public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
+            return Optional.of("""
+                    {"success":true,"requestedTotal":2,"resolvedTotal":2,"songs":[{"id":"qqmusic:flower","provider":"QQMUSIC","title":"繁花","artists":["董真"],"album":"三生三世十里桃花 电视剧原声专辑","durationSeconds":225,"artworkUrl":null},{"id":"qqmusic:heartbreak","provider":"QQMUSIC","title":"虐心","artists":["徐良","孙羽幽"],"album":"那时雨","durationSeconds":257,"artworkUrl":null}],"recommendations":[{"songId":"qqmusic:flower","title":"繁花","artists":["董真"],"reason":"古风旋律适合安静聆听","matchedQuery":"繁花 董真"},{"songId":"qqmusic:heartbreak","title":"虐心","artists":["徐良","孙羽幽"],"reason":"情绪表达直接","matchedQuery":"虐心 徐良"}]}
+                    """);
+        }
+    }
+
     private static class TwoSlotRecommendationCapabilityHandler implements AgentCapabilityHandler {
         private static final AgentCapability CAPABILITY = new AgentCapability(
                 "recommend_songs",
@@ -1580,6 +1750,47 @@ class AgentLoopRunnerTest {
             }
             return Optional.of("""
                     {"success":true,"requestedTotal":1,"resolvedTotal":1,"slotResults":[{"slotId":"late_night_coding","requested":1,"resolved":1}],"songs":[{"slotId":"late_night_coding","id":"qqmusic:5","provider":"QQMUSIC","title":"第五首","artists":["B"],"album":"测试","durationSeconds":180,"artworkUrl":null}]}
+                    """);
+        }
+    }
+
+    private static class BatchReadCapabilityHandler implements AgentCapabilityHandler {
+        private final List<String> commentSongIds = new java.util.ArrayList<>();
+
+        @Override
+        public List<AgentCapability> capabilities() {
+            return List.of(
+                    new AgentCapability(AgentCapabilityRegistry.RECOMMEND_SONGS, CapabilityEffect.READ, "推荐", "{\"request\": string, \"count\": number}", Set.of("request")),
+                    new AgentCapability("get_hot_comments", CapabilityEffect.READ, "评论", "{\"songId\": string, \"songIds\": string[], \"limit\": number}", Set.of())
+            );
+        }
+
+        @Override
+        public boolean supports(String capabilityName) {
+            return AgentCapabilityRegistry.RECOMMEND_SONGS.equals(capabilityName) || "get_hot_comments".equals(capabilityName);
+        }
+
+        @Override
+        public AgentCapabilityValidationResult validateArguments(String capabilityName, Map<String, Object> arguments, AgentCapabilityArgumentContext context) {
+            return AgentCapabilityValidationResult.accepted();
+        }
+
+        @Override
+        public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
+            if (AgentCapabilityRegistry.RECOMMEND_SONGS.equals(capabilityName)) {
+                return Optional.of("""
+                        {"success":true,"requestedTotal":2,"resolvedTotal":2,"songs":[{"id":"qqmusic:1","provider":"QQMUSIC","title":"第一首","artists":["A"],"album":"测试","durationSeconds":180,"artworkUrl":null},{"id":"qqmusic:2","provider":"QQMUSIC","title":"第二首","artists":["B"],"album":"测试","durationSeconds":180,"artworkUrl":null}],"recommendations":[{"songId":"qqmusic:1","title":"第一首","artists":["A"],"reason":"测试","matchedQuery":"第一首 A"},{"songId":"qqmusic:2","title":"第二首","artists":["B"],"reason":"测试","matchedQuery":"第二首 B"}]}
+                        """);
+            }
+            Object songIds = arguments.get("songIds");
+            if (songIds instanceof List<?> list) {
+                list.stream()
+                        .filter(String.class::isInstance)
+                        .map(String.class::cast)
+                        .forEach(commentSongIds::add);
+            }
+            return Optional.of("""
+                    {"success":true,"commentsBySong":[{"songId":"qqmusic:1","comments":[]},{"songId":"qqmusic:2","comments":[]}],"count":0}
                     """);
         }
     }

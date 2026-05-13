@@ -162,10 +162,7 @@ export function AgentChatPanel({
               item.role === "agent" && item.runId === run.runId
                 ? {
                   ...item,
-                  state: "done",
-                  confirmation: item.confirmation && isOpenConfirmationStatus(item.confirmation.status ?? "pending")
-                    ? { ...item.confirmation, status: "expired" }
-                    : item.confirmation
+                  state: "done"
                 }
                 : item
             )
@@ -200,16 +197,6 @@ export function AgentChatPanel({
     const confirmationStatus = targetMessage?.confirmation?.status ?? "pending";
     const lockKey = confirmationActionKey(runId ?? "legacy", actionId ?? messageId);
     if (confirmationLocksRef.current.has(lockKey)) {
-      return;
-    }
-    if ((targetMessage?.state === "done" || targetMessage?.state === "error") && confirmationStatus === "pending") {
-      onMessagesChange((current) =>
-        current.map((item) =>
-          item.id === messageId && item.confirmation
-            ? { ...item, confirmation: { ...item.confirmation, status: "expired" } }
-            : item
-        )
-      );
       return;
     }
     if (confirmationStatus !== "pending") {

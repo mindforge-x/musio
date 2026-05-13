@@ -6,11 +6,13 @@ import com.musio.memory.AgentTaskMemoryService;
 import com.musio.model.AgentEvent;
 import com.musio.model.ChatRequest;
 import com.musio.model.ChatRunResponse;
+import com.musio.model.PendingConfirmation;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
@@ -50,5 +52,29 @@ class AgentRunServiceTest {
         } finally {
             service.shutdown();
         }
+    }
+
+    @Test
+    void confirmsFinishedRunThroughPendingLocalPlaylistFallback() {
+        AgentRuntime agentRuntime = mock(AgentRuntime.class);
+        ConfirmationService confirmationService = mock(ConfirmationService.class);
+        AgentRunService service = new AgentRunService(
+                agentRuntime,
+                mock(SseEventPublisher.class),
+                new AgentEventBus(),
+                mock(ConversationHistoryService.class),
+                mock(AgentTaskMemoryService.class),
+                confirmationService
+        );
+        PendingConfirmation confirmation = new PendingConfirmation("add_song_to_musio_playlist:deferred", true, Map.of(
+                "selectedSongIds", java.util.List.of("qqmusic:1", "qqmusic:2")
+        ));
+        when(confirmationService.confirm("run-1", confirmation)).thenReturn(false);
+        when(agentRuntime.resolvePendingLocalPlaylistConfirmation("run-1", "local", confirmation)).thenReturn(true);
+
+        ChatRunResponse response = service.confirm("run-1", confirmation);
+
+        assertEquals("confirmed", response.state());
+        verify(agentRuntime).resolvePendingLocalPlaylistConfirmation("run-1", "local", confirmation);
     }
 }
