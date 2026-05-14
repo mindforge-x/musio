@@ -18,7 +18,9 @@ class AgentMemoryRouter {
         if (!shouldConsiderRepair(userMessage, planned, memory)) {
             return Optional.empty();
         }
-        MatchedSong matchedSong = matchSong(userMessage, memory).orElse(null);
+        MatchedSong matchedSong = matchSong(userMessage, memory)
+                .or(() -> fallbackReferencedSong(userMessage, memory))
+                .orElse(null);
         if (matchedSong == null) {
             return Optional.empty();
         }
@@ -77,6 +79,19 @@ class AgentMemoryRouter {
                 "不要重复");
     }
 
+    private boolean hasReplacementIntent(String normalized) {
+        return containsAny(normalized,
+                "换一首",
+                "换首",
+                "重新推荐",
+                "别重复",
+                "不要重复",
+                "推荐过了",
+                "推过了",
+                "已经推荐过了",
+                "已经推过了");
+    }
+
     private Optional<MatchedSong> matchSong(String userMessage, AgentTaskMemory memory) {
         List<MatchedSong> candidates = new ArrayList<>();
         for (Song song : memory.lastResultSongs()) {
@@ -95,6 +110,32 @@ class AgentMemoryRouter {
         return candidates.stream()
                 .filter(candidate -> titleMentioned(message, candidate.title()))
                 .findFirst();
+    }
+
+    private Optional<MatchedSong> fallbackReferencedSong(String userMessage, AgentTaskMemory memory) {
+        String normalized = normalize(userMessage);
+        if (!hasReplacementIntent(normalized) || !mentionsPreviousSong(normalized)) {
+            return Optional.empty();
+        }
+        Song song = memory.lastTargetSong() == null
+                ? memory.lastResultSongs().getFirst()
+                : memory.lastTargetSong();
+        if (song == null || song.title() == null || song.title().isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(new MatchedSong(song.title(), song, slotForSong(memory.lastRecommendationSlots(), song)));
+    }
+
+    private boolean mentionsPreviousSong(String normalized) {
+        return containsAny(normalized,
+                "这首",
+                "这歌",
+                "刚才那首",
+                "刚刚那首",
+                "上一首",
+                "上首",
+                "刚才推荐",
+                "刚刚推荐");
     }
 
     private AgentTaskRecommendationSlot slotForSong(List<AgentTaskRecommendationSlot> slots, Song song) {

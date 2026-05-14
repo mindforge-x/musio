@@ -24,12 +24,13 @@ import com.musio.model.ChatConfirmation;
 import com.musio.model.ChatRequest;
 import com.musio.model.MusicProfileMemory;
 import com.musio.model.AgentTaskMemory;
-import com.musio.model.AgentTaskRecommendationSlot;
 import com.musio.model.PendingConfirmation;
 import com.musio.model.PendingLocalPlaylistAdd;
 import com.musio.model.Song;
 import com.musio.model.SourceContext;
 import com.musio.memory.AgentTaskMemoryService;
+import com.musio.memory.MemoryWriteRequest;
+import com.musio.memory.MemoryWriter;
 import com.musio.memory.MusicProfileService;
 import com.musio.memory.context.MemoryContextPackage;
 import com.musio.memory.context.MemoryContextService;
@@ -46,7 +47,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -70,6 +70,7 @@ public class AgentRuntime {
     private final AgentTurnPlanner turnPlanner;
     private final AgentMemoryRouter memoryRouter;
     private final MemoryContextService memoryContextService;
+    private final MemoryWriter memoryWriter;
     private final AgentLoopRunner agentLoopRunner;
     private final AgentPolicyGate policyGate;
     private final ObjectMapper objectMapper;
@@ -91,6 +92,7 @@ public class AgentRuntime {
             AgentTurnPlanner turnPlanner,
             AgentMemoryRouter memoryRouter,
             MemoryContextService memoryContextService,
+            MemoryWriter memoryWriter,
             AgentLoopRunner agentLoopRunner,
             AgentPolicyGate policyGate,
             ObjectMapper objectMapper
@@ -106,6 +108,7 @@ public class AgentRuntime {
         this.turnPlanner = turnPlanner;
         this.memoryRouter = memoryRouter;
         this.memoryContextService = memoryContextService;
+        this.memoryWriter = memoryWriter;
         this.agentLoopRunner = agentLoopRunner;
         this.policyGate = policyGate;
         this.objectMapper = objectMapper;
@@ -172,7 +175,7 @@ public class AgentRuntime {
             boolean traceEnabled = true;
             AgentRunContext.setTraceEnabled(traceEnabled);
             logTurnRuntimePlan(runId, ai, turnPlan, traceEnabled);
-            logAgentGoal(runId, ai, goal, executionCapabilityManifest);
+            logAgentGoal(runId, ai, goal, executionCapabilityManifest, turnPlan, taskContext);
             tracePublisher.publishPlanningDone(runId, String.valueOf(turnPlan.disposition()), turnPlan.taskType(), toolNameList(turnPlan.toolCalls()));
             if (isLocalPlaylistCancelIntent(request.message())) {
                 handleLocalPlaylistCancel(runId, ai, userId, request.visibleMessage(), traceEnabled);
@@ -231,8 +234,9 @@ public class AgentRuntime {
                     }
                     tracePublisher.publishComposeDone(runId);
                 }
-                recordDirectPreludeMemory(userId, taskContext, preludeContext);
+                recordDirectPreludeMemory(userId, preludeContext);
                 conversationHistoryService.appendTurn(userId, request.visibleMessage(), preludeContext.answerPrefix(), preludeContext.songs(), preludeContext.confirmation());
+                writeTurnMemory(userId, request.message(), goal, memoryContext, preludeContext.evidence(), preludeContext.answerPrefix());
                 eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
                 return;
             }
@@ -269,6 +273,7 @@ public class AgentRuntime {
 
             answerText = combineAnswer(preludeContext.answerPrefix(), answerText);
             conversationHistoryService.appendTurn(userId, request.visibleMessage(), answerText, preludeContext.songs(), preludeContext.confirmation());
+            writeTurnMemory(userId, request.message(), goal, memoryContext, preludeContext.evidence(), answerText);
 
             eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
         } catch (Exception e) {
@@ -344,13 +349,7 @@ public class AgentRuntime {
             );
             AgentLoopEvidence evidence = outcome.evidence();
             if (evidence.hasObservations()) {
-                taskMemoryService.recordLoopEvidence(
-                        normalizedUserId,
-                        evidence.targetSong(),
-                        evidence.completedTaskType(),
-                        evidence.observationSummaries()
-                );
-                recordStructuredLoopMemory(normalizedUserId, goal, evidence);
+                writeTurnMemory(normalizedUserId, pending.sourceRequest(), goal, MemoryContextPackage.empty(), evidence, "");
             }
             boolean handled = loopHandledLocalPlaylistWrite(evidence);
             if (handled) {
@@ -528,19 +527,12 @@ public class AgentRuntime {
                 ))
         );
         AgentLoopEvidence evidence = outcome.evidence();
-        if (evidence.hasObservations()) {
-            taskMemoryService.recordLoopEvidence(
-                    userId,
-                    evidence.targetSong(),
-                    evidence.completedTaskType(),
-                    evidence.observationSummaries()
-            );
-            recordStructuredLoopMemory(userId, goal, evidence);
-        }
         taskMemoryService.clearPendingLocalPlaylistAdd(userId);
         List<Song> songs = evidence.songs().isEmpty() ? selectedSongs : evidence.songs();
         publishSongCards(runId, songs);
-        publishDirectAnswer(runId, ai, userId, visibleUserMessage, localPlaylistConfirmationAnswer(outcome, pending), songs, traceEnabled);
+        String answerText = localPlaylistConfirmationAnswer(outcome, pending);
+        writeTurnMemory(userId, userMessage, goal, MemoryContextPackage.empty(), evidence, answerText);
+        publishDirectAnswer(runId, ai, userId, visibleUserMessage, answerText, songs, traceEnabled);
     }
 
     private List<Song> selectedPendingSongs(PendingLocalPlaylistAdd pending, String userMessage) {
@@ -690,26 +682,11 @@ public class AgentRuntime {
         eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
     }
 
-    private boolean preludeHasLocalPlaylistWrite(PreludeContext preludeContext) {
-        return preludeContext != null
-                && preludeContext.text() != null
-                && preludeContext.text().contains("工具：add_song_to_musio_playlist");
-    }
-
-    private void recordDirectPreludeMemory(String userId, AgentTaskContext taskContext, PreludeContext preludeContext) {
+    private void recordDirectPreludeMemory(String userId, PreludeContext preludeContext) {
         if (preludeContext == null || preludeContext.songs().isEmpty()) {
             return;
         }
         taskMemoryService.recordResultSongs(userId, preludeContext.songs());
-        String completedTaskType = preludeHasLocalPlaylistWrite(preludeContext)
-                ? "playlist"
-                : taskContext == null || taskContext.taskType().isBlank() ? "search" : taskContext.taskType();
-        taskMemoryService.recordLoopEvidence(
-                userId,
-                preludeContext.songs().getFirst(),
-                completedTaskType,
-                List.of("本轮直接回答已返回歌曲 " + preludeContext.songs().size() + " 首：" + songTitles(preludeContext.songs()))
-        );
     }
 
     private String songTitle(Song song) {
@@ -758,15 +735,6 @@ public class AgentRuntime {
         PendingLocalPlaylistAdd pendingLocalPlaylistAdd = deferLocalPlaylistWrite && !loopHandledLocalPlaylistWrite
                 ? savePendingLocalPlaylistAdd(userId, userMessage, evidence, taskMemory, previousTaskMemory, goal)
                 : null;
-        if (evidence.hasObservations()) {
-            taskMemoryService.recordLoopEvidence(
-                    userId,
-                    evidence.targetSong(),
-                    evidence.completedTaskType(),
-                    evidence.observationSummaries()
-            );
-            recordStructuredLoopMemory(userId, goal, evidence);
-        }
         log.info(
                 "TURN_EXECUTOR stage=agent_loop runId={} userId={} taskType={} outcome={} observationCount={} songCardCount={} songCardTitles={}",
                 runId,
@@ -830,7 +798,36 @@ public class AgentRuntime {
                 true,
                 evidence.songs(),
                 "",
-                confirmationFor(pendingLocalPlaylistAdd));
+                confirmationFor(pendingLocalPlaylistAdd),
+                evidence);
+    }
+
+    private void writeTurnMemory(
+            String userId,
+            String userMessage,
+            AgentGoal goal,
+            MemoryContextPackage memoryContext,
+            AgentLoopEvidence evidence,
+            String finalAnswer
+    ) {
+        if (memoryWriter == null) {
+            return;
+        }
+        try {
+            AgentTaskMemory taskMemory = taskMemoryService == null ? AgentTaskMemory.empty(userId) : taskMemoryService.read(userId);
+            memoryWriter.writeAfterTurn(new MemoryWriteRequest(
+                    userId,
+                    userMessage,
+                    goal,
+                    memoryContext,
+                    evidence,
+                    taskMemory,
+                    finalAnswer,
+                    null
+            ));
+        } catch (Exception e) {
+            log.warn("Memory writer failed for user {}", userId, e);
+        }
     }
 
     static boolean loopHandledLocalPlaylistWrite(AgentLoopEvidence evidence) {
@@ -952,97 +949,7 @@ public class AgentRuntime {
                 """.formatted(songTitles(pending.songs())).strip();
     }
 
-    private void recordStructuredLoopMemory(String userId, AgentGoal goal, AgentLoopEvidence evidence) {
-        if (goal == null || evidence == null || !evidence.hasObservations()) {
-            return;
-        }
-        taskMemoryService.recordStructuredEvidence(
-                userId,
-                goal.requiredOutcomes().stream()
-                        .map(Enum::name)
-                        .toList(),
-                recommendationSlotMemories(goal.recommendationSlots(), evidence),
-                successfulToolNames(evidence),
-                goal.localWriteIntent() ? List.of(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST) : List.of()
-        );
-    }
-
-    private List<String> successfulToolNames(AgentLoopEvidence evidence) {
-        if (evidence == null || evidence.observations().isEmpty()) {
-            return List.of();
-        }
-        return evidence.observations().stream()
-                .filter(observation -> observation.status() == AgentObservationStatus.SUCCESS)
-                .map(AgentObservation::toolName)
-                .filter(name -> name != null && !name.isBlank())
-                .distinct()
-                .toList();
-    }
-
-    private List<AgentTaskRecommendationSlot> recommendationSlotMemories(List<RecommendationSlot> recommendationSlots, AgentLoopEvidence evidence) {
-        List<RecommendationSlot> slots = RecommendationSlots.normalize(recommendationSlots);
-        if (slots.isEmpty() || evidence == null || evidence.observations().isEmpty()) {
-            return List.of();
-        }
-        Map<String, SlotSongRefs> refsBySlot = new LinkedHashMap<>();
-        for (RecommendationSlot slot : slots) {
-            refsBySlot.put(slot.slotId(), new SlotSongRefs(new LinkedHashSet<>(), new LinkedHashSet<>()));
-        }
-        String singleSlotId = slots.size() == 1 ? slots.getFirst().slotId() : "";
-        for (AgentObservation observation : evidence.observations()) {
-            if (observation.status() != AgentObservationStatus.SUCCESS
-                    || !AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName())
-                    || observation.resultJson().isBlank()) {
-                continue;
-            }
-            try {
-                var root = objectMapper.readTree(observation.resultJson());
-                readRecommendationSlotSongs(root.path("songs"), refsBySlot, singleSlotId);
-                readRecommendationSlotSongs(root.path("recommendations"), refsBySlot, singleSlotId);
-            } catch (Exception ignored) {
-                // Structured memory is an optimization. The observation summary remains the durable evidence.
-            }
-        }
-        List<AgentTaskRecommendationSlot> values = new ArrayList<>();
-        for (RecommendationSlot slot : slots) {
-            SlotSongRefs refs = refsBySlot.getOrDefault(slot.slotId(), new SlotSongRefs(new LinkedHashSet<>(), new LinkedHashSet<>()));
-            values.add(new AgentTaskRecommendationSlot(
-                    slot.slotId(),
-                    slot.targetType(),
-                    slot.target(),
-                    slot.count(),
-                    List.copyOf(refs.songIds()),
-                    List.copyOf(refs.songTitles())
-            ));
-        }
-        return values;
-    }
-
-    private void readRecommendationSlotSongs(com.fasterxml.jackson.databind.JsonNode node, Map<String, SlotSongRefs> refsBySlot, String fallbackSlotId) {
-        if (!node.isArray()) {
-            return;
-        }
-        for (com.fasterxml.jackson.databind.JsonNode item : node) {
-            String slotId = item.path("slotId").asText("");
-            if (slotId.isBlank()) {
-                slotId = fallbackSlotId;
-            }
-            SlotSongRefs refs = refsBySlot.get(slotId);
-            if (refs == null) {
-                continue;
-            }
-            String songId = item.path("id").asText(item.path("songId").asText(""));
-            String title = item.path("title").asText("");
-            if (!songId.isBlank()) {
-                refs.songIds().add(songId.strip());
-            }
-            if (!title.isBlank()) {
-                refs.songTitles().add(title.strip());
-            }
-        }
-    }
-
-    private int requestedSongCount(String userMessage, AgentTaskContext taskContext, List<RecommendationSlot> recommendationSlots) {
+    static int requestedSongCount(String userMessage, AgentTaskContext taskContext, List<RecommendationSlot> recommendationSlots) {
         int slotTotal = RecommendationSlots.totalCount(recommendationSlots);
         if (slotTotal > 0) {
             return slotTotal;
@@ -1051,7 +958,7 @@ public class AgentRuntime {
         if (explicitCount > 0) {
             return explicitCount;
         }
-        return taskContext == null ? 0 : Math.max(0, taskContext.searchLimit());
+        return 0;
     }
 
     private void publishAnswerDelta(String runId, MusioConfig.Ai ai, AgentAnswerStreamGuard answerGuard, String chunk, boolean traceEnabled, boolean[] composeStarted) {
@@ -1219,9 +1126,9 @@ public class AgentRuntime {
         );
     }
 
-    private void logAgentGoal(String runId, MusioConfig.Ai ai, AgentGoal goal, AgentCapabilityManifest manifest) {
+    private void logAgentGoal(String runId, MusioConfig.Ai ai, AgentGoal goal, AgentCapabilityManifest manifest, AgentTurnPlan plan, AgentTaskContext taskContext) {
         log.info(
-                "AGENT_GOAL stage=goal_analyzer runId={} userId={} provider={} model={} taskType={} contextMode={} musicTask={} toolEvidenceExpected={} localWriteIntent={} accountWriteIntent={} requestedSongCount={} requiredOutcomes={} manifestTools={}",
+                "AGENT_GOAL stage=goal_analyzer runId={} userId={} provider={} model={} taskType={} contextMode={} musicTask={} toolEvidenceExpected={} localWriteIntent={} accountWriteIntent={} requestedSongCount={} requiredOutcomes={} requiredOutcomeSources={} manifestTools={}",
                 runId,
                 AgentRunContext.userId().orElse("-"),
                 ai == null ? "" : ai.provider(),
@@ -1234,6 +1141,7 @@ public class AgentRuntime {
                 goal != null && goal.accountWriteIntent(),
                 goal == null ? 0 : goal.requestedSongCount(),
                 goal == null || goal.requiredOutcomes().isEmpty() ? "none" : goal.requiredOutcomes(),
+                goal == null ? "none" : AgentGoalNormalizer.requiredOutcomeSourceSummary(plan, taskContext, goal.userMessage()),
                 manifest == null ? "none" : String.join(",", manifest.names())
         );
     }
@@ -1292,22 +1200,27 @@ public class AgentRuntime {
         return new TraceHeartbeat(future);
     }
 
-    private record PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix, boolean directAnswer, ChatConfirmation confirmation) {
+    private record PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix, boolean directAnswer, ChatConfirmation confirmation, AgentLoopEvidence evidence) {
         static PreludeContext empty() {
             return new PreludeContext("", false, List.of(), "");
         }
 
         private PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix) {
-            this(text, evidenceBound, songs, answerPrefix, false, null);
+            this(text, evidenceBound, songs, answerPrefix, false, null, AgentLoopEvidence.empty());
         }
 
         private PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix, ChatConfirmation confirmation) {
-            this(text, evidenceBound, songs, answerPrefix, false, confirmation);
+            this(text, evidenceBound, songs, answerPrefix, false, confirmation, AgentLoopEvidence.empty());
+        }
+
+        private PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix, ChatConfirmation confirmation, AgentLoopEvidence evidence) {
+            this(text, evidenceBound, songs, answerPrefix, false, confirmation, evidence);
         }
 
         private PreludeContext {
             songs = songs == null ? List.of() : List.copyOf(songs);
             answerPrefix = answerPrefix == null ? "" : answerPrefix;
+            evidence = evidence == null ? AgentLoopEvidence.empty() : evidence;
         }
 
         private boolean hasSongCards() {
@@ -1326,9 +1239,6 @@ public class AgentRuntime {
                 future.cancel(false);
             }
         }
-    }
-
-    private record SlotSongRefs(LinkedHashSet<String> songIds, LinkedHashSet<String> songTitles) {
     }
 
     public AgentEvent describeConfiguration(String runId, ChatRequest request) {

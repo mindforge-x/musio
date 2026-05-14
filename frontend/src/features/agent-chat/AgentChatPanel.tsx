@@ -48,7 +48,6 @@ export function AgentChatPanel({
 }: AgentChatPanelProps) {
   const confirmationLocksRef = useRef<Set<string>>(new Set());
   const handledConfirmationsRef = useRef<Set<string>>(new Set());
-  const handledConfirmationSignaturesRef = useRef<Set<string>>(new Set());
 
   async function startChat(event: FormEvent) {
     event.preventDefault();
@@ -128,11 +127,10 @@ export function AgentChatPanel({
         onConfirmationRequest: (confirmation, eventRunId) => {
           const confirmationRunId = eventRunId ?? run.runId;
           const confirmationKey = confirmationActionKey(confirmationRunId, confirmation.actionId);
-          const confirmationSignature = confirmationActionSignature(confirmation);
           onMessagesChange((current) =>
             current.map((item) =>
               item.role === "agent" && item.runId === confirmationRunId
-                ? withIncomingConfirmation(item, confirmation, confirmationKey, confirmationSignature)
+                ? withIncomingConfirmation(item, confirmation, confirmationKey)
                 : item
             )
           );
@@ -202,12 +200,8 @@ export function AgentChatPanel({
     if (confirmationStatus !== "pending") {
       return;
     }
-    const confirmationSignature = confirmationActionSignature(targetMessage?.confirmation);
     confirmationLocksRef.current.add(lockKey);
     handledConfirmationsRef.current.add(lockKey);
-    if (confirmationSignature) {
-      handledConfirmationSignaturesRef.current.add(confirmationSignature);
-    }
     onMessagesChange((current) =>
       current.map((item) =>
         item.id === messageId && item.confirmation
@@ -216,7 +210,7 @@ export function AgentChatPanel({
       )
     );
     if (!runId || !actionId) {
-      if (!busy && text.trim()) {
+      if (text.trim()) {
         const selectedSuffix = selectedSongIds.length > 0 ? `：${selectedSongIds.join(",")}` : "";
         void submitText(`${text.trim()}${selectedSuffix}`, text.trim());
       } else {
@@ -267,30 +261,6 @@ export function AgentChatPanel({
     return `${runId ?? "legacy"}:${actionId ?? ""}`;
   }
 
-  function confirmationActionSignature(confirmation?: ChatMessage["confirmation"] | null) {
-    if (!confirmation) {
-      return "";
-    }
-    const songIds = (confirmation.defaultSelectedSongIds?.length
-      ? confirmation.defaultSelectedSongIds
-      : confirmation.songs?.map((song) => song.id) ?? (confirmation.song?.id ? [confirmation.song.id] : [])
-    )
-      .filter((id) => id && id.trim())
-      .map((id) => id.trim())
-      .sort();
-    if (songIds.length > 0) {
-      return [
-        confirmation.type || "local_playlist_add",
-        songIds.join(",")
-      ].join("|");
-    }
-    return [
-      confirmation.type || "local_playlist_add",
-      confirmation.title || "",
-      confirmation.description || ""
-    ].join("|");
-  }
-
   function isSettledConfirmationStatus(status: NonNullable<ChatMessage["confirmation"]>["status"]) {
     return status === "submitting" || status === "confirmed" || status === "cancelled" || status === "expired";
   }
@@ -302,8 +272,7 @@ export function AgentChatPanel({
   function withIncomingConfirmation(
     message: ChatMessage,
     confirmation: NonNullable<ChatMessage["confirmation"]>,
-    confirmationKey: string,
-    confirmationSignature: string
+    confirmationKey: string
   ): ChatMessage {
     const existing = message.confirmation;
     const existingKey = confirmationActionKey(message.runId, existing?.actionId);
@@ -311,8 +280,7 @@ export function AgentChatPanel({
     const keepExistingStatus = existing
       && existingKey === confirmationKey
       && isSettledConfirmationStatus(existingStatus);
-    const handled = handledConfirmationsRef.current.has(confirmationKey)
-      || (Boolean(confirmationSignature) && handledConfirmationSignaturesRef.current.has(confirmationSignature));
+    const handled = handledConfirmationsRef.current.has(confirmationKey);
     return {
       ...message,
       confirmation: {

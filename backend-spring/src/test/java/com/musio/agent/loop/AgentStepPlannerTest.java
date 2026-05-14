@@ -8,8 +8,13 @@ import com.musio.agent.capability.AgentCapabilityManifest;
 import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.agent.capability.AgentCapabilityValidationResult;
 import com.musio.agent.capability.CapabilityEffect;
+import com.musio.memory.context.MemoryContextPackage;
+import com.musio.memory.context.MemoryEvidence;
+import com.musio.memory.context.MemoryType;
+import com.musio.model.AgentTaskMemory;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -52,6 +57,23 @@ class AgentStepPlannerTest {
                   "reason": "用户只要求一首"
                 }
                 """, new AgentCapabilityRegistry().readManifest(), 1).orElseThrow();
+
+        assertEquals("search_songs", action.toolName());
+        assertEquals(1, action.arguments().get("limit"));
+    }
+
+    @Test
+    void clampsSearchLookupForSingleTargetReadWithoutExplicitCount() {
+        AgentStepAction action = planner.parseAction("""
+                {
+                  "action": "tool_call",
+                  "toolName": "search_songs",
+                  "arguments": {"keyword": "七里香 周杰伦", "limit": 5},
+                  "publicActivity": "搜索目标歌曲",
+                  "confidence": 0.91,
+                  "reason": "先解析评论目标 songId"
+                }
+                """, new AgentCapabilityRegistry().readManifest(), AgentCapabilityArgumentContext.stepPlanner(0, true)).orElseThrow();
 
         assertEquals("search_songs", action.toolName());
         assertEquals(1, action.arguments().get("limit"));
@@ -149,6 +171,32 @@ class AgentStepPlannerTest {
 
         assertEquals(AgentStepActionType.FINAL_ANSWER, action.action());
         assertTrue(action.arguments().isEmpty());
+    }
+
+    @Test
+    void memoryContextPreviewExposesCurrentPlaybackToPlannerPrompt() {
+        AgentLoopState state = new AgentLoopState(
+                "run-1",
+                "local",
+                "正在播放的这首看评论区怎么说",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                null,
+                0,
+                null,
+                new MemoryContextPackage(
+                        "[动态记忆上下文]\n[当前播放状态]\n- 当前播放: 给你宇宙 id=qqmusic:current",
+                        List.of(new MemoryEvidence(MemoryType.CURRENT_STATE, "qqmusic:current", "当前播放: 给你宇宙 id=qqmusic:current", 0.9, 0.85, "test", Instant.EPOCH)),
+                        32
+                )
+        );
+
+        String preview = planner.memoryContextPreview(state);
+
+        assertTrue(preview.contains("当前播放状态"));
+        assertTrue(preview.contains("qqmusic:current"));
     }
 
     @Test

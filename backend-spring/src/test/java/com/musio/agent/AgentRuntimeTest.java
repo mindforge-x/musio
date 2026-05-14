@@ -140,6 +140,25 @@ class AgentRuntimeTest {
     }
 
     @Test
+    void requestedSongCountDoesNotInheritPlannerDefaultSearchLimit() {
+        AgentTaskContext context = AgentTaskContext.agent(
+                "帮我找周杰伦的七里香，然后看看这首歌评论区都在聊啥",
+                "搜索周杰伦的歌曲《七里香》，然后查看这首歌的热门评论",
+                "七里香 周杰伦",
+                5,
+                false,
+                List.of(),
+                0.9,
+                "test",
+                "search",
+                "",
+                ""
+        );
+
+        assertEquals(0, AgentRuntime.requestedSongCount(context.originalMessage(), context, List.of()));
+    }
+
+    @Test
     void loopLocalPlaylistWriteObservationSuppressesLegacyPendingConfirmation() {
         AgentLoopEvidence evidence = new AgentLoopEvidence(
                 List.of(new AgentObservation(

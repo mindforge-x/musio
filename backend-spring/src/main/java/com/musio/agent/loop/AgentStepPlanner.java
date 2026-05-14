@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.AgentLlmLogger;
+import com.musio.agent.AgentRequiredOutcome;
 import com.musio.agent.AgentRunContext;
 import com.musio.agent.ConversationHistoryMessage;
 import com.musio.agent.capability.AgentCapabilityArgumentContext;
@@ -70,6 +71,9 @@ public class AgentStepPlanner {
                         当前 Agent Goal：
                         %s
 
+                        动态记忆上下文：
+                        %s
+
                         最近对话：
                         %s
 
@@ -84,6 +88,7 @@ public class AgentStepPlanner {
                         """.formatted(
                         taskMemoryPreview(state == null ? null : state.taskMemory()),
                         goalPreview(state),
+                        memoryContextPreview(state),
                         historyPreview(state == null ? List.of() : state.recentHistory()),
                         observationPreview(state == null ? List.of() : state.observations()),
                         requestedSongCountPreview(state),
@@ -108,7 +113,7 @@ public class AgentStepPlanner {
                     .call()
                     .content();
             AgentLlmLogger.logResponse("agent_step_planner", ai, content);
-            AgentStepAction action = parseAction(content, manifest, state == null ? 0 : state.requestedSongCount())
+            AgentStepAction action = parseAction(content, manifest, argumentContext(state))
                     .orElseGet(() -> AgentStepAction.finalAnswer("invalid_step_action", 0.0));
             logAction("agent_step_planner", ai, action, "model");
             return action;
@@ -129,6 +134,10 @@ public class AgentStepPlanner {
     }
 
     Optional<AgentStepAction> parseAction(String content, AgentCapabilityManifest manifest, int requestedSongCount) {
+        return parseAction(content, manifest, AgentCapabilityArgumentContext.stepPlanner(requestedSongCount));
+    }
+
+    Optional<AgentStepAction> parseAction(String content, AgentCapabilityManifest manifest, AgentCapabilityArgumentContext argumentContext) {
         if (content == null || content.isBlank()) {
             return Optional.empty();
         }
@@ -156,9 +165,9 @@ public class AgentStepPlanner {
                     logRejectedAction(toolName, "unknown_tool");
                     return Optional.empty();
                 }
-                AgentCapabilityArgumentContext argumentContext = AgentCapabilityArgumentContext.stepPlanner(requestedSongCount);
-                arguments = capabilityRegistry.normalizeArguments(toolName, arguments, argumentContext);
-                AgentCapabilityValidationResult validation = capabilityRegistry.validateArguments(toolName, arguments, argumentContext);
+                AgentCapabilityArgumentContext safeArgumentContext = argumentContext == null ? AgentCapabilityArgumentContext.stepPlanner(0) : argumentContext;
+                arguments = capabilityRegistry.normalizeArguments(toolName, arguments, safeArgumentContext);
+                AgentCapabilityValidationResult validation = capabilityRegistry.validateArguments(toolName, arguments, safeArgumentContext);
                 if (!validation.valid()) {
                     logRejectedAction(toolName, validation.reason());
                     return Optional.empty();
@@ -209,11 +218,14 @@ public class AgentStepPlanner {
                 - recommend_songs observation 会提供 requestedTotal、resolvedTotal、slotResults、songs、unresolved；推荐是否完成必须以这些结构化覆盖度为准。
                 - 如果 recommend_songs 已成功返回足够 songs / slotResults 已覆盖所有 slots，且用户没有继续要求评论、歌词、详情或写入，下一步应 final_answer。
                 - 如果用户要歌词、评论或歌曲详情，但当前没有目标 songId，下一步应先搜索或利用已有 observation / 任务记忆里的歌曲 id。
+                - 如果用户明确说“当前播放/正在播放/播放器里/队列里/队列上一首”，并且动态记忆上下文提供了“当前播放状态”，应优先使用动态记忆里的播放器状态 songId；它的优先级高于 Agent Goal 或短期任务记忆中的旧目标歌曲。
+                - “正在播放的这首/当前播放这首/播放器里这首”指 currentPlayback 里的当前歌曲；“队列上一首”指 queueState 里的上一首。
                 - 如果用户要对多首已推荐/已搜索歌曲读取歌词或热门评论，优先用 get_lyrics.songIds 或 get_hot_comments.songIds 一次传入多个 songId，不要逐首拆成多次工具调用。
                 - 如果同一个 songId 的 get_hot_comments / get_lyrics / get_song_detail 已经成功出现在 observations 中，不要再次调用同一个工具；应继续处理还没完成的目标。
                 - 本地歌单确认只拦截 add_song_to_musio_playlist 这类写入动作；如果 Agent Goal 还要求歌词、评论或详情，应先完成这些只读工具，再 request_confirmation。
                 - search_songs.keyword 只写正向搜索目标，例如歌手、歌曲名或风格；不要把排除、比较或“不是 X 是 Y”这类关系拼进 keyword。
-                - search_songs.limit 必须显式填写；完全没有数量含义时默认 5。
+                - search_songs.limit 必须显式填写；普通宽泛搜索完全没有数量含义时默认 5。
+                - 如果 search_songs 只是为了给评论、歌词或详情解析一个目标 songId，且用户没有明确要求多首，limit 必须填 1。
                 - 如果“本轮用户要求的歌曲数量”是明确数字，search_songs.limit 不得超过这个数字；例如用户说“推荐一首”时 limit 必须是 1。
                 - 复合任务中的数量约束必须贯穿搜索、评论和收藏步骤；用户说一首时，只围绕一首歌继续读取评论和收藏。
                 - get_hot_comments.limit 默认 10，最大 30。
@@ -244,11 +256,36 @@ public class AgentStepPlanner {
         return count <= 0 ? "未明确，缺省按工具规则处理" : String.valueOf(count);
     }
 
+    private AgentCapabilityArgumentContext argumentContext(AgentLoopState state) {
+        int requestedSongCount = state == null ? 0 : state.requestedSongCount();
+        return AgentCapabilityArgumentContext.stepPlanner(requestedSongCount, singleTargetLookup(state));
+    }
+
+    private boolean singleTargetLookup(AgentLoopState state) {
+        if (state == null || state.goal() == null || state.goal().requiredOutcomes().isEmpty()) {
+            return false;
+        }
+        List<AgentRequiredOutcome> outcomes = state.goal().requiredOutcomes();
+        boolean needsSongRead = outcomes.stream().anyMatch(outcome ->
+                outcome == AgentRequiredOutcome.COMMENTS
+                        || outcome == AgentRequiredOutcome.LYRICS
+                        || outcome == AgentRequiredOutcome.DETAIL
+        );
+        return needsSongRead && !outcomes.contains(AgentRequiredOutcome.RECOMMENDATION);
+    }
+
     private String goalPreview(AgentLoopState state) {
         if (state == null || state.goal() == null) {
             return "无";
         }
         return state.goal().plannerSummary();
+    }
+
+    String memoryContextPreview(AgentLoopState state) {
+        if (state == null || state.memoryContext() == null || state.memoryContext().promptText().isBlank()) {
+            return "无";
+        }
+        return state.memoryContext().promptText();
     }
 
     private AgentStepActionType parseActionType(String value) {

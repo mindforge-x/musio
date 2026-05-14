@@ -133,7 +133,9 @@ function ConfirmationActions({
     ?? confirmationSongs.map((song) => song.id);
   const [selectedSongIds, setSelectedSongIds] = useState(initialSelectedIds);
 
-  const expired = confirmation.status === "expired" || ((messageState === "done" || messageState === "error") && (confirmation.status ?? "pending") === "pending");
+  const pending = (confirmation.status ?? "pending") === "pending";
+  const deferred = !confirmation.actionId;
+  const expired = confirmation.status === "expired" || (!deferred && (messageState === "done" || messageState === "error") && pending);
   const submitting = confirmation.status === "submitting";
   const confirmed = confirmation.status === "confirmed";
   const cancelled = confirmation.status === "cancelled";
