@@ -175,6 +175,64 @@ public class AgentTaskMemoryService {
         return next;
     }
 
+    public AgentTaskMemory applyTurnUpdate(String userId, AgentTaskMemoryUpdate update) {
+        if (update == null || update.isEmpty()) {
+            return read(userId);
+        }
+        AgentTaskMemory previous = read(userId);
+        List<Song> resultSongs = update.resultSongs().isEmpty()
+                ? previous.lastResultSongs()
+                : limitedSongs(update.resultSongs());
+        List<String> resultSongTitles = update.resultSongs().isEmpty()
+                ? previous.lastResultSongTitles()
+                : songTitles(resultSongs);
+        Song targetSong = previous.lastTargetSong();
+        if (update.replaceLoopEvidence()) {
+            if (update.targetSong() != null) {
+                targetSong = update.targetSong();
+            } else if (!resultSongs.isEmpty()) {
+                targetSong = resultSongs.getFirst();
+            }
+        } else if (!update.resultSongs().isEmpty() && !resultSongs.isEmpty()) {
+            targetSong = resultSongs.getFirst();
+        }
+        AgentTaskMemory next = new AgentTaskMemory(
+                userId,
+                previous.currentTask(),
+                previous.lastEffectiveRequest(),
+                previous.lastSearchKeyword(),
+                previous.lastSearchLimit(),
+                resultSongs,
+                resultSongTitles,
+                previous.avoidSongTitles(),
+                update.resultSongs().isEmpty() ? previous.lastToolFailures() : List.of(),
+                targetSong,
+                update.replaceLoopEvidence() && !safe(update.completedTaskType()).isBlank()
+                        ? safe(update.completedTaskType())
+                        : previous.lastCompletedTaskType(),
+                update.replaceLoopEvidence()
+                        ? limitedStrings(update.observationSummaries(), MAX_OBSERVATION_SUMMARIES)
+                        : previous.lastObservationSummaries(),
+                update.replaceStructuredEvidence()
+                        ? limitedStrings(update.requiredOutcomes(), MAX_REQUIRED_OUTCOMES)
+                        : previous.lastRequiredOutcomes(),
+                update.replaceStructuredEvidence()
+                        ? limitedRecommendationSlots(update.recommendationSlots())
+                        : previous.lastRecommendationSlots(),
+                update.replaceStructuredEvidence()
+                        ? limitedStrings(update.evidenceTools(), MAX_EVIDENCE_TOOLS)
+                        : previous.lastEvidenceTools(),
+                update.replaceStructuredEvidence()
+                        ? limitedStrings(update.writeIntentTools(), MAX_EVIDENCE_TOOLS)
+                        : previous.lastWriteIntentTools(),
+                previous.recentRecommendedSongs(),
+                previous.pendingLocalPlaylistAdd(),
+                Instant.now()
+        );
+        store.write(userId, next);
+        return next;
+    }
+
     public AgentTaskMemory recordRecentRecommendations(String userId, List<AgentRecentRecommendedSong> recommendations) {
         AgentTaskMemory previous = read(userId);
         List<AgentRecentRecommendedSong> merged = mergeRecentRecommendations(recommendations, previous.recentRecommendedSongs());
@@ -289,6 +347,37 @@ public class AgentTaskMemoryService {
 
     private boolean equalsText(String left, String right) {
         return safe(left).equals(safe(right));
+    }
+
+    private List<Song> limitedSongs(List<Song> songs) {
+        if (songs == null || songs.isEmpty()) {
+            return List.of();
+        }
+        return songs.stream()
+                .filter(song -> song != null && song.id() != null && !song.id().isBlank())
+                .limit(MAX_RESULT_SONGS)
+                .toList();
+    }
+
+    private List<String> songTitles(List<Song> songs) {
+        if (songs == null || songs.isEmpty()) {
+            return List.of();
+        }
+        return songs.stream()
+                .map(Song::title)
+                .filter(title -> title != null && !title.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private List<AgentTaskRecommendationSlot> limitedRecommendationSlots(List<AgentTaskRecommendationSlot> slots) {
+        if (slots == null || slots.isEmpty()) {
+            return List.of();
+        }
+        return slots.stream()
+                .filter(slot -> slot != null && !slot.slotId().isBlank())
+                .limit(MAX_RECOMMENDATION_SLOTS)
+                .toList();
     }
 
     private String safe(String value) {

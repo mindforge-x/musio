@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -64,7 +65,14 @@ class MemoryWriterTest {
                 && entry.content().contains("\"summary\"")));
         assertTrue(plan.musicCacheEntries().stream().anyMatch(entry -> "commentSummary".equals(entry.cacheType())
                 && entry.content().equals("评论都说这首歌很治愈，适合慢下来。")));
+        assertTrue(plan.musicCacheEntries().stream().anyMatch(entry -> "commentSummary".equals(entry.cacheType())
+                && "qqmusic:1".equals(entry.songId())
+                && "安静".equals(entry.title())
+                && "周杰伦".equals(entry.artist())));
         assertFalse(plan.conversationSummaries().isEmpty());
+        assertTrue(plan.taskMemoryUpdates().stream().anyMatch(update -> update.replaceStructuredEvidence()
+                && update.requiredOutcomes().contains("COMMENTS")
+                && update.evidenceTools().contains("get_hot_comments")));
 
         assertTrue(stores.behaviorEventStore().recent("local", now.minusSeconds(1), 20).stream()
                 .anyMatch(event -> "comments_read".equals(event.type())));
@@ -80,6 +88,44 @@ class MemoryWriterTest {
         assertTrue(items.stream().anyMatch(item -> item.key().contains("too_noisy")
                 && item.confidence() > 0
                 && item.confidence() <= 0.1));
+    }
+
+    @Test
+    void writeAfterTurnAppliesTaskMemoryUpdateThroughPlan() {
+        Stores stores = stores();
+        MemoryWriter writer = new MemoryWriter(
+                stores.behaviorEventStore(),
+                stores.preferenceStore(),
+                stores.musicCacheStore(),
+                stores.conversationSummaryStore(),
+                new ObjectMapper(),
+                stores.taskMemoryService()
+        );
+        Song song = new Song("qqmusic:1", ProviderType.QQMUSIC, "安静", List.of("周杰伦"), "范特西", 260, "");
+        AgentObservation comments = new AgentObservation(
+                "loop.step.1",
+                "get_hot_comments",
+                Map.of("songId", song.id()),
+                AgentObservationStatus.SUCCESS,
+                "{\"success\":true,\"summary\":\"评论都说这首歌很治愈。\"}",
+                "读取热门评论",
+                List.of()
+        );
+
+        writer.writeAfterTurn(new MemoryWriteRequest(
+                "local",
+                "看下这首歌评论",
+                goal(),
+                MemoryContextPackage.empty(),
+                new AgentLoopEvidence(List.of(comments), List.of(song), "comments", song, List.of("读取评论")),
+                stores.taskMemoryService().read("local"),
+                "评论都在聊治愈感。",
+                Instant.parse("2026-05-13T10:00:00Z")
+        ));
+
+        assertEquals("qqmusic:1", stores.taskMemoryService().read("local").lastTargetSong().id());
+        assertEquals("comments", stores.taskMemoryService().read("local").lastCompletedTaskType());
+        assertEquals(List.of("RECOMMENDATION", "COMMENTS"), stores.taskMemoryService().read("local").lastRequiredOutcomes());
     }
 
     private AgentGoal goal() {
@@ -105,7 +151,8 @@ class MemoryWriterTest {
                 new BehaviorEventStore(database, objectMapper),
                 new PreferenceStore(database),
                 new MusicCacheStore(database),
-                new ConversationSummaryStore(database, objectMapper)
+                new ConversationSummaryStore(database, objectMapper),
+                new AgentTaskMemoryService(new AgentTaskMemoryStore(tempDir, objectMapper))
         );
     }
 
@@ -113,7 +160,8 @@ class MemoryWriterTest {
             BehaviorEventStore behaviorEventStore,
             PreferenceStore preferenceStore,
             MusicCacheStore musicCacheStore,
-            ConversationSummaryStore conversationSummaryStore
+            ConversationSummaryStore conversationSummaryStore,
+            AgentTaskMemoryService taskMemoryService
     ) {
     }
 }

@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MemoryRetrieverMusicCacheTest {
@@ -60,6 +61,58 @@ class MemoryRetrieverMusicCacheTest {
         assertTrue(evidence.stream().anyMatch(item -> item.type() == MemoryType.MUSIC_CACHE
                 && song.id().equals(item.sourceId())
                 && item.text().contains("校园回忆")));
+    }
+
+    @Test
+    void musicCacheDoesNotFallbackToPreviousSongForNewSearchTask() {
+        SQLiteMemoryDatabase database = new SQLiteMemoryDatabase(tempDir.resolve("memory.sqlite"));
+        MusicCacheStore musicCacheStore = new MusicCacheStore(database);
+        Song previousSong = new Song("qqmusic:1", ProviderType.QQMUSIC, "七里香", List.of("周杰伦"), "七里香", 299, "");
+        musicCacheStore.upsert(new MusicCacheEntry(
+                "",
+                "local",
+                "commentSummary",
+                previousSong.id(),
+                previousSong.title(),
+                "周杰伦",
+                "评论摘录：大家都在聊青春、夏天和校园回忆。",
+                "comment summary cache",
+                Instant.parse("2026-05-14T02:00:00Z")
+        ));
+        MemoryRetriever retriever = new MemoryRetriever(null, null, musicCacheStore, null, null);
+
+        List<MemoryEvidence> evidence = retriever.retrieve(new MemoryRouteRequest(
+                "local",
+                "帮我找周杰伦的最长的电影，然后看看这首歌评论区都在聊啥",
+                "search",
+                "new_task",
+                "帮我找周杰伦的最长的电影，然后看看这首歌评论区都在聊啥",
+                new AgentGoal(
+                        "帮我找周杰伦的最长的电影，然后看看这首歌评论区都在聊啥",
+                        "帮我找周杰伦的最长的电影，然后看看这首歌评论区都在聊啥",
+                        "search",
+                        "new_task",
+                        true,
+                        true,
+                        false,
+                        false,
+                        0,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.SEARCH, AgentRequiredOutcome.COMMENTS)
+                ),
+                taskMemory(previousSong),
+                List.of()
+        ), new MemoryReadPlan(List.of(new MemoryReadItem(
+                MemoryType.MUSIC_CACHE,
+                List.of("commentSummary"),
+                "最长的电影",
+                "session",
+                90,
+                1,
+                "读取评论缓存"
+        )), 1200));
+
+        assertFalse(evidence.stream().anyMatch(item -> item.type() == MemoryType.MUSIC_CACHE));
     }
 
     private AgentGoal goal() {

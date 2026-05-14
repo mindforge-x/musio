@@ -52,4 +52,26 @@ class MusicCacheStoreTest {
         assertTrue(results.stream().anyMatch(entry -> "commentSummary".equals(entry.cacheType())
                 && entry.content().contains("校园回忆")));
     }
+
+    @Test
+    void searchMatchesStructuredArtistMetadata() {
+        MusicCacheStore store = new MusicCacheStore(new SQLiteMemoryDatabase(tempDir.resolve("memory.sqlite")));
+        store.upsert(new MusicCacheEntry(
+                "",
+                "local",
+                "commentSummary",
+                "qqmusic:1",
+                "七里香",
+                "周杰伦",
+                "评论摘录：大家都在聊青春和夏天。",
+                "comment summary cache",
+                Instant.parse("2026-05-14T02:00:00Z")
+        ));
+
+        List<MusicCacheEntry> results = store.search("local", List.of("commentSummary"), "周杰伦", 5);
+
+        assertTrue(results.stream().anyMatch(entry -> "七里香".equals(entry.title())
+                && "周杰伦".equals(entry.artist())
+                && entry.content().contains("青春")));
+    }
 }

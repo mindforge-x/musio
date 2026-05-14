@@ -305,6 +305,78 @@ class AgentLoopRunnerTest {
     }
 
     @Test
+    void doesNotUsePreviousSongCommentCacheForNewSearchTarget() {
+        TrackingPlanner planner = new TrackingPlanner(List.of(
+                new AgentStepAction(AgentStepActionType.TOOL_CALL, "search_songs", Map.of("keyword", "周杰伦 最长的电影", "limit", 1), "搜索目标歌曲", 0.9, "先找本轮目标"),
+                AgentStepAction.finalAnswer("等待补齐评论", 0.9)
+        ));
+        AgentLoopRunner runner = new AgentLoopRunner(
+                planner,
+                toolExecutor(),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper()
+        );
+        Song previousSong = new Song("qqmusic:old", ProviderType.QQMUSIC, "七里香", List.of("周杰伦"), "七里香", 299, "");
+        AgentTaskMemory previousMemory = new AgentTaskMemory(
+                "local",
+                "music-agent-task",
+                "搜索周杰伦的歌曲《七里香》，然后查看这首歌的热门评论",
+                "七里香 周杰伦",
+                1,
+                List.of(previousSong),
+                List.of(previousSong.title()),
+                List.of(),
+                List.of(),
+                previousSong,
+                "search",
+                List.of("get_hot_comments 成功，歌曲 1 首，评论 10 条"),
+                null,
+                Instant.EPOCH
+        );
+        MemoryContextPackage memoryContext = new MemoryContextPackage(
+                "[动态记忆上下文]\n[音乐内容缓存]\n- 评论缓存：七里香\n  评论摘录：大家都在聊青春和夏天。",
+                List.of(new MemoryEvidence(MemoryType.MUSIC_CACHE, previousSong.id(), "评论缓存：七里香\n评论摘录：大家都在聊青春和夏天。", 0.9, 0.75, "命中评论缓存", Instant.EPOCH)),
+                60
+        );
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "帮我找周杰伦的最长的电影，然后看看这首歌评论区都在聊啥",
+                List.of(),
+                previousMemory,
+                List.of(),
+                0,
+                null,
+                0,
+                new AgentGoal(
+                        "帮我找周杰伦的最长的电影，然后看看这首歌评论区都在聊啥",
+                        "帮我找周杰伦的最长的电影，然后看看这首歌评论区都在聊啥",
+                        "search",
+                        "new_task",
+                        true,
+                        true,
+                        false,
+                        false,
+                        0,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.SEARCH, AgentRequiredOutcome.COMMENTS)
+                ),
+                memoryContext
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(2, planner.calls());
+        assertEquals(2, outcome.evidence().observations().size());
+        assertEquals("search_songs", outcome.evidence().observations().getFirst().toolName());
+        AgentObservation comments = outcome.evidence().observations().get(1);
+        assertEquals("get_hot_comments", comments.toolName());
+        assertEquals("qqmusic:0", comments.arguments().get("songId"));
+        assertFalse(outcome.evidence().observations().stream()
+                .anyMatch(observation -> observation.stepId().startsWith("memory.cache.comments")));
+    }
+
+    @Test
     void normalizesSingleSongReadIntoBatchReadForRecommendedSongs() {
         BatchReadCapabilityHandler handler = new BatchReadCapabilityHandler();
         AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(handler));
@@ -1333,6 +1405,85 @@ class AgentLoopRunnerTest {
         assertEquals(AgentObservationStatus.SKIPPED, outcome.evidence().observations().get(1).status());
         assertEquals("get_lyrics", outcome.evidence().observations().get(2).toolName());
         assertTrue(outcome.evidence().observations().get(1).resultJson().contains("confirmation_cancelled"));
+    }
+
+    @Test
+    void inlineLocalWriteConfirmationUsesExplicitSongArgumentsWhenNoObservationExists() {
+        CapturingPlaylistCapabilityExecutor playlistExecutor = new CapturingPlaylistCapabilityExecutor("""
+                {"success":true,"summary":"已帮你收藏到 Musio 歌单：昆明湖 - 后弦。","playlistId":"default","song":{"id":"qqmusic:003hzmAB1eJ6GS","provider":"QQMUSIC","title":"昆明湖","artists":["后弦"],"album":"","durationSeconds":null,"artworkUrl":null}}
+                """);
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(playlistExecutor);
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(playlistHandler));
+        AgentEventBus eventBus = new AgentEventBus();
+        ConfirmationService confirmationService = new ConfirmationService();
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(
+                                AgentStepActionType.TOOL_CALL,
+                                "add_song_to_musio_playlist",
+                                Map.of(
+                                        "playlistId", "default",
+                                        "songId", "qqmusic:003hzmAB1eJ6GS",
+                                        "songTitle", "昆明湖",
+                                        "artist", "后弦"
+                                ),
+                                "收藏歌曲",
+                                0.9,
+                                "用户要加入歌单"
+                        ),
+                        AgentStepAction.finalAnswer("结束", 0.9)
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(playlistHandler)),
+                null,
+                eventBus,
+                confirmationService
+        );
+        List<com.musio.model.ChatConfirmation> confirmations = new java.util.ArrayList<>();
+        eventBus.subscribe("run-1", event -> {
+            if ("confirmation_request".equals(event.type())) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) event.data();
+                var confirmation = (com.musio.model.ChatConfirmation) data.get("confirmation");
+                confirmations.add(confirmation);
+                confirmationService.confirm("run-1", new PendingConfirmation(confirmation.actionId(), true, Map.of("selectedSongIds", confirmation.defaultSelectedSongIds())));
+            }
+        });
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "确认收藏",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(true),
+                1,
+                new AgentGoal(
+                        "确认收藏",
+                        "将《昆明湖》加入 Musio 歌单",
+                        "playlist",
+                        "follow_up",
+                        true,
+                        true,
+                        true,
+                        false,
+                        1,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(1, confirmations.size());
+        assertEquals(List.of("qqmusic:003hzmAB1eJ6GS"), confirmations.getFirst().defaultSelectedSongIds());
+        assertEquals(1, confirmations.getFirst().songs().size());
+        assertEquals("昆明湖", confirmations.getFirst().songs().getFirst().title());
+        assertEquals(List.of("后弦"), confirmations.getFirst().songs().getFirst().artists());
+        assertEquals("qqmusic:003hzmAB1eJ6GS", playlistExecutor.calls.getFirst().get("songId"));
     }
 
     @Test

@@ -119,6 +119,34 @@ class AgentTaskMemoryServiceTest {
     }
 
     @Test
+    void appliesTurnUpdateInOneTaskMemoryWrite() {
+        AgentTaskMemoryService service = service();
+        Song song = new Song("qqmusic:h1", ProviderType.QQMUSIC, "西厢", List.of("后弦"), "自定义", 240, null);
+
+        service.recordTask("local", "推荐一首后弦的歌并看评论", "", null, List.of());
+        service.applyTurnUpdate("local", new AgentTaskMemoryUpdate(
+                List.of(song),
+                song,
+                "comments",
+                List.of("recommend_songs 成功，歌曲 1 首：西厢 id=qqmusic:h1", "get_hot_comments 成功，评论 3 条"),
+                true,
+                List.of("RECOMMENDATION", "COMMENTS"),
+                List.of(new AgentTaskRecommendationSlot("houxian", "artist", "后弦", 1, List.of("qqmusic:h1"), List.of("西厢"))),
+                List.of("recommend_songs", "get_hot_comments"),
+                List.of(),
+                true
+        ));
+
+        AgentTaskMemory memory = service.read("local");
+        assertEquals("qqmusic:h1", memory.lastTargetSong().id());
+        assertEquals(List.of("西厢"), memory.lastResultSongTitles());
+        assertEquals("comments", memory.lastCompletedTaskType());
+        assertEquals(List.of("RECOMMENDATION", "COMMENTS"), memory.lastRequiredOutcomes());
+        assertEquals("houxian", memory.lastRecommendationSlots().getFirst().slotId());
+        assertEquals(List.of("recommend_songs", "get_hot_comments"), memory.lastEvidenceTools());
+    }
+
+    @Test
     void clearsStructuredEvidenceForUnrelatedNewTask() {
         AgentTaskMemoryService service = service();
         service.recordStructuredEvidence(

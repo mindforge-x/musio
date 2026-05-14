@@ -30,13 +30,14 @@ public class MusicCacheStore {
         }
         String sql = """
                 INSERT INTO music_cache_entries
-                (id, user_id, cache_type, song_id, title, content, evidence, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (id, user_id, cache_type, song_id, title, artist, content, evidence, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     user_id = excluded.user_id,
                     cache_type = excluded.cache_type,
                     song_id = excluded.song_id,
                     title = excluded.title,
+                    artist = excluded.artist,
                     content = excluded.content,
                     evidence = excluded.evidence,
                     updated_at = excluded.updated_at
@@ -48,9 +49,10 @@ public class MusicCacheStore {
             statement.setString(3, entry.cacheType());
             statement.setString(4, entry.songId());
             statement.setString(5, entry.title());
-            statement.setString(6, entry.content());
-            statement.setString(7, entry.evidence());
-            statement.setString(8, entry.updatedAt().toString());
+            statement.setString(6, entry.artist());
+            statement.setString(7, entry.content());
+            statement.setString(8, entry.evidence());
+            statement.setString(9, entry.updatedAt().toString());
             statement.executeUpdate();
             upsertFts(connection, entry);
         } catch (SQLException e) {
@@ -81,7 +83,7 @@ public class MusicCacheStore {
         }
         List<String> types = normalizeTypes(cacheTypes);
         String sql = """
-                SELECT id, user_id, cache_type, song_id, title, content, evidence, updated_at
+                SELECT id, user_id, cache_type, song_id, title, artist, content, evidence, updated_at
                 FROM music_cache_entries
                 WHERE user_id = ? AND song_id = ? %s
                 ORDER BY updated_at DESC
@@ -111,11 +113,13 @@ public class MusicCacheStore {
                         cache_type TEXT NOT NULL,
                         song_id TEXT NOT NULL DEFAULT '',
                         title TEXT NOT NULL DEFAULT '',
+                        artist TEXT NOT NULL DEFAULT '',
                         content TEXT NOT NULL DEFAULT '',
                         evidence TEXT NOT NULL DEFAULT '',
                         updated_at TEXT NOT NULL
                     )
                     """);
+            addColumnIfMissing(statement, "music_cache_entries", "artist", "TEXT NOT NULL DEFAULT ''");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_music_cache_user_type ON music_cache_entries(user_id, cache_type)");
             try {
                 statement.executeUpdate("""
@@ -153,7 +157,7 @@ public class MusicCacheStore {
 
     private List<MusicCacheEntry> searchFts(String userId, List<String> types, String query, int limit) throws SQLException {
         String sql = """
-                SELECT e.id, e.user_id, e.cache_type, e.song_id, e.title, e.content, e.evidence, e.updated_at
+                SELECT e.id, e.user_id, e.cache_type, e.song_id, e.title, e.artist, e.content, e.evidence, e.updated_at
                 FROM music_cache_fts
                 JOIN music_cache_entries e ON e.id = music_cache_fts.id
                 WHERE music_cache_fts.user_id = ? AND music_cache_fts MATCH ? %s
@@ -174,18 +178,19 @@ public class MusicCacheStore {
 
     private List<MusicCacheEntry> searchLike(String userId, List<String> types, String query, int limit) {
         String sql = """
-                SELECT id, user_id, cache_type, song_id, title, content, evidence, updated_at
+                SELECT id, user_id, cache_type, song_id, title, artist, content, evidence, updated_at
                 FROM music_cache_entries
                 WHERE user_id = ? %s %s
                 ORDER BY updated_at DESC
                 LIMIT ?
-                """.formatted(typeFilter("", types), query.isBlank() ? "" : "AND (title LIKE ? OR content LIKE ?)");
+                """.formatted(typeFilter("", types), query.isBlank() ? "" : "AND (title LIKE ? OR artist LIKE ? OR content LIKE ?)");
         try (Connection connection = database.openConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, safeUserId(userId));
             int index = bindTypes(statement, 2, types);
             if (!query.isBlank()) {
                 String pattern = "%" + query + "%";
+                statement.setString(index++, pattern);
                 statement.setString(index++, pattern);
                 statement.setString(index++, pattern);
             }
@@ -207,6 +212,7 @@ public class MusicCacheStore {
                     resultSet.getString("cache_type"),
                     resultSet.getString("song_id"),
                     resultSet.getString("title"),
+                    resultSet.getString("artist"),
                     resultSet.getString("content"),
                     resultSet.getString("evidence"),
                     Instant.parse(resultSet.getString("updated_at"))
@@ -221,6 +227,14 @@ public class MusicCacheStore {
         }
         String prefix = alias == null || alias.isBlank() ? "" : alias + ".";
         return "AND " + prefix + "cache_type IN (" + "?,".repeat(types.size()).replaceFirst(",$", "") + ")";
+    }
+
+    private void addColumnIfMissing(Statement statement, String table, String column, String definition) {
+        try {
+            statement.executeUpdate("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
+        } catch (SQLException ignored) {
+            // SQLite reports duplicate column names here; existing databases are already migrated.
+        }
     }
 
     private int bindTypes(PreparedStatement statement, int start, List<String> types) throws SQLException {

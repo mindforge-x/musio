@@ -46,12 +46,15 @@ final class AgentCapabilityArgumentRules {
         if ("search_songs".equals(capabilityName)) {
             cleaned.put("keyword", text(cleaned, "keyword"));
             Integer limit = cleanRequiredLimit(cleaned.get("limit"), 1, 20);
-            if (limit == null && safeContext.requestedSongCount() > 0) {
-                cleaned.put("limit", Math.min(safeContext.requestedSongCount(), 20));
+            int requestedLimit = safeContext.requestedSongCount() > 0
+                    ? Math.min(safeContext.requestedSongCount(), 20)
+                    : safeContext.singleTargetLookup() ? 1 : 0;
+            if (limit == null && requestedLimit > 0) {
+                cleaned.put("limit", requestedLimit);
             } else if (limit == null) {
                 cleaned.remove("limit");
             } else {
-                cleaned.put("limit", safeContext.requestedSongCount() > 0 ? Math.min(limit, safeContext.requestedSongCount()) : limit);
+                cleaned.put("limit", requestedLimit > 0 ? Math.min(limit, requestedLimit) : limit);
             }
             List<String> excludedTitles = stringList(cleaned.get("excludedTitles"));
             if (excludedTitles.isEmpty()) {

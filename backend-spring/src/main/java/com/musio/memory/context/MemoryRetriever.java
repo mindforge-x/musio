@@ -1,5 +1,6 @@
 package com.musio.memory.context;
 
+import com.musio.agent.AgentRequiredOutcome;
 import com.musio.memory.BehaviorSummary;
 import com.musio.memory.BehaviorSummaryService;
 import com.musio.memory.ConversationSummary;
@@ -176,7 +177,7 @@ public class MemoryRetriever {
     }
 
     private String musicCacheTargetSongId(MemoryRouteRequest request) {
-        if (request == null || request.taskMemory() == null) {
+        if (request == null || request.taskMemory() == null || !canUseTaskMemoryMusicCacheTarget(request)) {
             return "";
         }
         Song lastTarget = request.taskMemory().lastTargetSong();
@@ -187,6 +188,27 @@ public class MemoryRetriever {
             return "";
         }
         return songId(request.taskMemory().lastResultSongs().getFirst());
+    }
+
+    private boolean canUseTaskMemoryMusicCacheTarget(MemoryRouteRequest request) {
+        if (request == null) {
+            return false;
+        }
+        if (isNewSearchTask(request)) {
+            return false;
+        }
+        String contextMode = request.contextMode() == null ? "" : request.contextMode().strip();
+        if ("follow_up".equals(contextMode) || "refer_previous_song".equals(contextMode) || "correction".equals(contextMode)) {
+            return true;
+        }
+        return mentionsPreviousSong(request.userMessage());
+    }
+
+    private boolean isNewSearchTask(MemoryRouteRequest request) {
+        String contextMode = request.contextMode() == null ? "" : request.contextMode().strip();
+        String taskType = request.taskType() == null ? "" : request.taskType().strip();
+        boolean searchOutcome = request.goal() != null && request.goal().requiredOutcomes().contains(AgentRequiredOutcome.SEARCH);
+        return "new_task".equals(contextMode) && ("search".equals(taskType) || searchOutcome);
     }
 
     private String songId(Song song) {
@@ -448,6 +470,22 @@ public class MemoryRetriever {
 
     private String confidence(double confidence) {
         return String.format(java.util.Locale.ROOT, "%.2f", confidence);
+    }
+
+    private boolean mentionsPreviousSong(String message) {
+        return containsAny(safe(message), "这首", "这歌", "刚才那首", "上一首", "上首", "刚刚那首", "刚才推荐");
+    }
+
+    private boolean containsAny(String value, String... needles) {
+        if (value == null || value.isBlank() || needles == null) {
+            return false;
+        }
+        for (String needle : needles) {
+            if (needle != null && !needle.isBlank() && value.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String safe(String value) {

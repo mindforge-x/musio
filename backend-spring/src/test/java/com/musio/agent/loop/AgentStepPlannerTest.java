@@ -63,6 +63,23 @@ class AgentStepPlannerTest {
     }
 
     @Test
+    void clampsSearchLookupForSingleTargetReadWithoutExplicitCount() {
+        AgentStepAction action = planner.parseAction("""
+                {
+                  "action": "tool_call",
+                  "toolName": "search_songs",
+                  "arguments": {"keyword": "七里香 周杰伦", "limit": 5},
+                  "publicActivity": "搜索目标歌曲",
+                  "confidence": 0.91,
+                  "reason": "先解析评论目标 songId"
+                }
+                """, new AgentCapabilityRegistry().readManifest(), AgentCapabilityArgumentContext.stepPlanner(0, true)).orElseThrow();
+
+        assertEquals("search_songs", action.toolName());
+        assertEquals(1, action.arguments().get("limit"));
+    }
+
+    @Test
     void parsesRecommendToolCallWithoutClampingToRequestedSongCount() {
         AgentStepAction action = planner.parseAction("""
                 {

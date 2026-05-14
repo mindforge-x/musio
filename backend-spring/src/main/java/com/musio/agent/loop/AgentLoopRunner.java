@@ -19,8 +19,10 @@ import com.musio.events.AgentEventBus;
 import com.musio.memory.context.MemoryEvidence;
 import com.musio.memory.context.MemoryType;
 import com.musio.model.AgentEvent;
+import com.musio.model.AgentTaskMemory;
 import com.musio.model.ChatConfirmation;
 import com.musio.model.PendingConfirmation;
+import com.musio.model.ProviderType;
 import com.musio.model.Song;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
@@ -233,6 +235,9 @@ public class AgentLoopRunner {
 
     private List<AgentObservation> commentCacheObservations(AgentLoopState state) {
         List<String> targetIds = readTargetSongIds(state);
+        if (targetIds.isEmpty()) {
+            return List.of();
+        }
         Set<String> readIds = successfulReadSongIds(state, "get_hot_comments");
         List<AgentObservation> observations = new ArrayList<>();
         for (MemoryEvidence evidence : state.memoryContext().evidence()) {
@@ -621,15 +626,8 @@ public class AgentLoopRunner {
             return List.of();
         }
         LinkedHashSet<String> songIds = new LinkedHashSet<>();
-        if (state.observations() != null) {
-            state.observations().stream()
-                    .filter(observation -> observation.status() == AgentObservationStatus.SUCCESS)
-                    .flatMap(observation -> observation.songs().stream())
-                    .filter(song -> song != null && song.id() != null && !song.id().isBlank())
-                    .map(song -> song.id().strip())
-                    .forEach(songIds::add);
-        }
-        if (state.taskMemory() != null) {
+        currentObservationSongIds(state).forEach(songIds::add);
+        if (canUseTaskMemoryReadTargets(state) && state.taskMemory() != null) {
             if (state.taskMemory().lastTargetSong() != null && state.taskMemory().lastTargetSong().id() != null && !state.taskMemory().lastTargetSong().id().isBlank()) {
                 songIds.add(state.taskMemory().lastTargetSong().id().strip());
             }
@@ -638,6 +636,20 @@ public class AgentLoopRunner {
                     .map(song -> song.id().strip())
                     .forEach(songIds::add);
         }
+        return List.copyOf(songIds);
+    }
+
+    private List<String> currentObservationSongIds(AgentLoopState state) {
+        if (state == null || state.observations() == null) {
+            return List.of();
+        }
+        LinkedHashSet<String> songIds = new LinkedHashSet<>();
+        state.observations().stream()
+                .filter(observation -> observation.status() == AgentObservationStatus.SUCCESS)
+                .flatMap(observation -> observation.songs().stream())
+                .filter(song -> song != null && song.id() != null && !song.id().isBlank())
+                .map(song -> song.id().strip())
+                .forEach(songIds::add);
         return List.copyOf(songIds);
     }
 
@@ -739,12 +751,86 @@ public class AgentLoopRunner {
         }
         List<String> requestedIds = localPlaylistWriteTargetSongIds(state, action);
         if (!requestedIds.isEmpty()) {
+            addContextSongCandidates(songsById, state);
             return requestedIds.stream()
-                    .map(songsById::get)
+                    .map(id -> songsById.getOrDefault(id, songFromActionArguments(action, id)))
                     .filter(song -> song != null)
                     .toList();
         }
         return List.copyOf(songsById.values());
+    }
+
+    private void addContextSongCandidates(Map<String, Song> songsById, AgentLoopState state) {
+        if (state == null) {
+            return;
+        }
+        state.recentHistory().forEach(message -> {
+            if (message != null && "assistant".equals(message.role())) {
+                message.songs().forEach(song -> addSongCandidate(songsById, song));
+            }
+        });
+        AgentTaskMemory memory = state.taskMemory();
+        if (memory == null) {
+            return;
+        }
+        memory.lastResultSongs().forEach(song -> addSongCandidate(songsById, song));
+        addSongCandidate(songsById, memory.lastTargetSong());
+        if (memory.pendingLocalPlaylistAdd() != null) {
+            memory.pendingLocalPlaylistAdd().songs().forEach(song -> addSongCandidate(songsById, song));
+        }
+    }
+
+    private Song songFromActionArguments(AgentStepAction action, String songId) {
+        if (action == null || action.arguments() == null || songId == null || songId.isBlank()) {
+            return null;
+        }
+        String cleanId = songId.strip();
+        String title = textArgument(action, "songTitle");
+        return new Song(
+                cleanId,
+                providerFromSongId(cleanId),
+                title.isBlank() ? cleanId : title,
+                artistArguments(action),
+                "",
+                null,
+                null
+        );
+    }
+
+    private String textArgument(AgentStepAction action, String key) {
+        Object value = action == null || action.arguments() == null ? null : action.arguments().get(key);
+        return value instanceof String text && !text.isBlank() ? text.strip() : "";
+    }
+
+    private List<String> artistArguments(AgentStepAction action) {
+        Object artists = action == null || action.arguments() == null ? null : action.arguments().get("artists");
+        if (artists instanceof List<?> list) {
+            List<String> values = list.stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .filter(value -> !value.isBlank())
+                    .map(String::strip)
+                    .toList();
+            if (!values.isEmpty()) {
+                return values;
+            }
+        }
+        String artist = textArgument(action, "artist");
+        return artist.isBlank() ? List.of() : List.of(artist);
+    }
+
+    private ProviderType providerFromSongId(String songId) {
+        if (songId != null) {
+            int separator = songId.indexOf(':');
+            if (separator > 0) {
+                try {
+                    return ProviderType.fromSourceId(songId.substring(0, separator));
+                } catch (IllegalArgumentException ignored) {
+                    return ProviderType.QQMUSIC;
+                }
+            }
+        }
+        return ProviderType.QQMUSIC;
     }
 
     private List<String> requestedSongIds(AgentStepAction action) {
@@ -1218,7 +1304,7 @@ public class AgentLoopRunner {
     private List<String> unreadReadTargetSongIds(AgentLoopState state, String toolName) {
         List<String> targetIds = readTargetSongIds(state);
         if (targetIds.isEmpty()) {
-            targetIds = observedSongIds(state);
+            targetIds = currentObservationSongIds(state);
         }
         if (targetIds.isEmpty()) {
             return List.of();
@@ -1238,7 +1324,38 @@ public class AgentLoopRunner {
         if (!recommendationIds.isEmpty()) {
             return List.copyOf(recommendationIds);
         }
-        return observedSongIds(state);
+        List<String> currentTurnIds = currentObservationSongIds(state);
+        if (!currentTurnIds.isEmpty()) {
+            return currentTurnIds;
+        }
+        return canUseTaskMemoryReadTargets(state) ? taskMemorySongIds(state) : List.of();
+    }
+
+    private List<String> taskMemorySongIds(AgentLoopState state) {
+        if (state == null || state.taskMemory() == null) {
+            return List.of();
+        }
+        LinkedHashSet<String> songIds = new LinkedHashSet<>();
+        if (state.taskMemory().lastTargetSong() != null
+                && state.taskMemory().lastTargetSong().id() != null
+                && !state.taskMemory().lastTargetSong().id().isBlank()) {
+            songIds.add(state.taskMemory().lastTargetSong().id().strip());
+        }
+        state.taskMemory().lastResultSongs().stream()
+                .filter(song -> song != null && song.id() != null && !song.id().isBlank())
+                .map(song -> song.id().strip())
+                .forEach(songIds::add);
+        return List.copyOf(songIds);
+    }
+
+    private boolean canUseTaskMemoryReadTargets(AgentLoopState state) {
+        if (state == null || state.goal() == null) {
+            return false;
+        }
+        String contextMode = state.goal().contextMode() == null ? "" : state.goal().contextMode().strip();
+        return "follow_up".equals(contextMode)
+                || "refer_previous_song".equals(contextMode)
+                || "correction".equals(contextMode);
     }
 
     private List<String> explicitPlayerStateReadTargetSongIds(AgentLoopState state) {
