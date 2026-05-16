@@ -62,7 +62,7 @@ public class PreferenceAggregator {
 
     private double confidenceWeight(PreferenceCandidate candidate) {
         double weight = candidate.confidenceDelta();
-        if ("session_feedback".equals(candidate.source())) {
+        if ("session_feedback".equals(candidate.source()) || "llm_session_feedback".equals(candidate.source())) {
             weight *= 0.6;
         }
         return Math.max(0.0, Math.min(0.35, weight));

@@ -57,10 +57,8 @@ class MemoryWriterTest {
                 now
         ));
 
-        assertTrue(plan.behaviorEvents().stream().anyMatch(event -> "session_preference".equals(event.type())));
         assertTrue(plan.behaviorEvents().stream().anyMatch(event -> "comments_read".equals(event.type())));
-        assertTrue(plan.preferenceCandidates().stream().anyMatch(candidate -> "too_noisy".equals(candidate.name())
-                && candidate.confidenceDelta() <= 0.15));
+        assertTrue(plan.preferenceCandidates().isEmpty());
         assertTrue(plan.musicCacheEntries().stream().anyMatch(entry -> "comments".equals(entry.cacheType())
                 && entry.content().contains("\"summary\"")));
         assertTrue(plan.musicCacheEntries().stream().anyMatch(entry -> "commentSummary".equals(entry.cacheType())
@@ -85,9 +83,7 @@ class MemoryWriterTest {
                 .anyMatch(summary -> summary.summary().contains("别太吵")));
 
         List<PreferenceItem> items = new PreferenceAggregator(stores.preferenceStore()).aggregate("local", now.plusSeconds(1));
-        assertTrue(items.stream().anyMatch(item -> item.key().contains("too_noisy")
-                && item.confidence() > 0
-                && item.confidence() <= 0.1));
+        assertTrue(items.isEmpty());
     }
 
     @Test

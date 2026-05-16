@@ -6,6 +6,7 @@ import com.musio.agent.loop.AgentObservationStatus;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 
@@ -50,6 +51,7 @@ public class MemoryEnrichmentService {
     private final boolean enabled;
     private final long timeoutMs;
 
+    @Autowired
     public MemoryEnrichmentService(
             LlmMemoryEnricher enricher,
             PreferenceStore preferenceStore,

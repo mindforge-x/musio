@@ -20,7 +20,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 @Service
@@ -97,22 +96,7 @@ public class MemoryWriter {
             return MemoryWritePlan.empty();
         }
         List<BehaviorEvent> events = new ArrayList<>();
-        List<PreferenceCandidate> candidates = preferenceCandidates(request);
-        if (!candidates.isEmpty()) {
-            events.add(new BehaviorEvent(
-                    "",
-                    request.userId(),
-                    isTemporaryMessage(request.userMessage()) ? "session_preference" : "user_feedback",
-                    "user_message",
-                    "",
-                    "",
-                    List.of(),
-                    request.userMessage(),
-                    basePayload(request, Map.of("candidateCount", candidates.size())),
-                    0.8,
-                    request.occurredAt()
-            ));
-        }
+        List<PreferenceCandidate> candidates = List.of();
         events.addAll(behaviorEvents(request));
         List<MusicCacheEntry> cacheEntries = musicCacheEntries(request);
         List<ConversationSummary> summaries = conversationSummaries(request);
@@ -166,55 +150,6 @@ public class MemoryWriter {
                 observation.status() == AgentObservationStatus.SUCCESS ? 0.9 : 0.75,
                 request.occurredAt()
         );
-    }
-
-    private List<PreferenceCandidate> preferenceCandidates(MemoryWriteRequest request) {
-        String message = request.userMessage();
-        String normalized = normalize(message);
-        List<PreferenceCandidate> values = new ArrayList<>();
-        boolean temporary = isTemporaryMessage(message);
-        String source = temporary ? "session_feedback" : "explicit_feedback";
-        double delta = temporary ? 0.15 : 0.25;
-        if (containsNoiseRejection(normalized)) {
-            values.add(new PreferenceCandidate(
-                    "",
-                    request.userId(),
-                    "negative",
-                    "too_noisy",
-                    "不想听太吵的歌",
-                    delta,
-                    message,
-                    source,
-                    request.occurredAt()
-            ));
-        }
-        if (containsAny(normalized, "不喜欢", "讨厌", "别放", "不要听", "不想听") && values.stream().noneMatch(item -> "too_noisy".equals(item.name()))) {
-            values.add(new PreferenceCandidate(
-                    "",
-                    request.userId(),
-                    "negative",
-                    "explicit_negative_feedback",
-                    "明确负向音乐反馈",
-                    Math.min(0.2, delta),
-                    message,
-                    source,
-                    request.occurredAt()
-            ));
-        }
-        if (containsAny(normalized, "喜欢", "爱听", "多来点", "就这种", "这个不错")) {
-            values.add(new PreferenceCandidate(
-                    "",
-                    request.userId(),
-                    "positive",
-                    "explicit_positive_feedback",
-                    "明确正向音乐反馈",
-                    delta,
-                    message,
-                    source,
-                    request.occurredAt()
-            ));
-        }
-        return values.stream().limit(5).toList();
     }
 
     private List<MusicCacheEntry> musicCacheEntries(MemoryWriteRequest request) {
@@ -676,32 +611,6 @@ public class MemoryWriter {
             }
         }
         return "";
-    }
-
-    private boolean containsNoiseRejection(String normalized) {
-        return containsAny(normalized, "别太吵", "不要太吵", "不想听太吵", "别太炸", "不要太炸")
-                || (normalized.contains("太吵") && containsAny(normalized, "不", "别", "不要"));
-    }
-
-    private boolean isTemporaryMessage(String message) {
-        String normalized = normalize(message);
-        return containsAny(normalized, "今天", "今晚", "现在", "这会儿", "此刻", "临时", "先");
-    }
-
-    private boolean containsAny(String value, String... needles) {
-        if (value == null || value.isBlank()) {
-            return false;
-        }
-        for (String needle : needles) {
-            if (value.contains(needle)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private String normalize(String value) {
-        return safe(value).toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
     }
 
     private String limit(String value, int maxChars) {
