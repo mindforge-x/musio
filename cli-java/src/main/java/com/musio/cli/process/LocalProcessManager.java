@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 
 public class LocalProcessManager {
     private final Path root;
+    private final Path releaseDirectory;
     private final Path runDirectory;
     private final Path runtimeDirectory;
     private final MusioCliConfig config;
@@ -31,7 +32,8 @@ public class LocalProcessManager {
     public LocalProcessManager(MusioCliConfig config) {
         this.config = config;
         this.root = new ProjectRootResolver().resolve();
-        this.releaseMode = ProjectRootResolver.isReleaseHome(root);
+        this.releaseDirectory = ProjectRootResolver.releaseDirectory(root).orElse(null);
+        this.releaseMode = releaseDirectory != null;
         this.runDirectory = runDirectory(root, config, releaseMode);
         this.runtimeDirectory = musioHome(config).resolve("runtime");
     }
@@ -118,7 +120,7 @@ public class LocalProcessManager {
             CliTimeline.muted("Spring 首次启动可能会下载 Maven 依赖，最长等待 "
                     + service.timeout().toSeconds() + "s");
         } else if (releaseMode && service == LocalService.QQMUSIC_SIDECAR) {
-            CliTimeline.muted("首次启动可能会准备 Python sidecar 运行环境");
+            CliTimeline.muted("使用发布包内置 QQMusic sidecar");
         }
 
         if (httpProbe.waitUntilReady(healthUri, service.timeout())) {
@@ -172,13 +174,22 @@ public class LocalProcessManager {
     private ProcessBuilder releaseProcess(LocalService service) {
         return switch (service) {
             case QQMUSIC_SIDECAR -> releaseSidecarProcess();
-            case BACKEND -> new ProcessBuilder(javaExecutable(), "-jar", releaseBackendJar().toString());
+            case BACKEND -> new ProcessBuilder(releaseJavaExecutable(), "-jar", releaseBackendJar().toString());
             case FRONTEND -> throw new IllegalStateException("生产模式不再启动独立 React frontend");
         };
     }
 
     private ProcessBuilder releaseSidecarProcess() {
-        Path sidecarDirectory = releaseSidecarDirectory();
+        Path sidecarBinary = releaseSidecarBinary();
+        if (Files.isRegularFile(sidecarBinary)) {
+            return new ProcessBuilder(sidecarBinary.toString())
+                    .directory(sidecarBinary.getParent().toFile());
+        }
+
+        Path sidecarDirectory = releaseSidecarSourceDirectory();
+        if (!Files.isDirectory(sidecarDirectory)) {
+            throw new IllegalStateException("未找到 QQMusic sidecar 发布产物：" + releaseDirectory.resolve("sidecar"));
+        }
         Path python = prepareReleaseSidecarPython(sidecarDirectory);
         return new ProcessBuilder(python.toString(), "-m", "app.main")
                 .directory(sidecarDirectory.toFile());
@@ -353,11 +364,16 @@ public class LocalProcessManager {
     }
 
     private Path releaseBackendJar() {
-        return root.resolve("dist").resolve("app").resolve("backend-spring.jar");
+        return releaseDirectory.resolve("app").resolve("backend-spring.jar");
     }
 
-    private Path releaseSidecarDirectory() {
-        return root.resolve("dist").resolve("providers").resolve("qqmusic-python-sidecar");
+    private Path releaseSidecarBinary() {
+        String executable = isWindows() ? "qqmusic-sidecar.exe" : "qqmusic-sidecar";
+        return releaseDirectory.resolve("sidecar").resolve(executable);
+    }
+
+    private Path releaseSidecarSourceDirectory() {
+        return releaseDirectory.resolve("providers").resolve("qqmusic-python-sidecar");
     }
 
     private Path sidecarVenvDirectory() {
@@ -418,6 +434,15 @@ public class LocalProcessManager {
     private String javaExecutable() {
         String executable = isWindows() ? "java.exe" : "java";
         return Path.of(System.getProperty("java.home"), "bin", executable).toString();
+    }
+
+    private String releaseJavaExecutable() {
+        String executable = isWindows() ? "java.exe" : "java";
+        Path bundledJava = releaseDirectory.resolve("runtime").resolve("bin").resolve(executable);
+        if (Files.isRegularFile(bundledJava)) {
+            return bundledJava.toString();
+        }
+        return javaExecutable();
     }
 
     private static Path runDirectory(Path root, MusioCliConfig config, boolean releaseMode) {

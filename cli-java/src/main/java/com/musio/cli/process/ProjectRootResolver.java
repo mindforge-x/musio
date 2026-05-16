@@ -55,12 +55,19 @@ public class ProjectRootResolver {
     }
 
     public static boolean isReleaseHome(Path path) {
-        return Files.isRegularFile(path.resolve("dist").resolve("lib").resolve("musio-cli.jar"))
-                && Files.isRegularFile(path.resolve("dist").resolve("app").resolve("backend-spring.jar"))
-                && Files.isDirectory(path.resolve("dist")
-                        .resolve("providers")
-                        .resolve("qqmusic-python-sidecar")
-                        .resolve("app"));
+        return releaseDirectory(path).isPresent();
+    }
+
+    public static Optional<Path> releaseDirectory(Path path) {
+        Path vendor = path.resolve("vendor");
+        if (isReleaseDirectory(vendor)) {
+            return Optional.of(vendor);
+        }
+        Path dist = path.resolve("dist");
+        if (isReleaseDirectory(dist)) {
+            return Optional.of(dist);
+        }
+        return Optional.empty();
     }
 
     public static boolean isProjectRoot(Path path) {
@@ -68,5 +75,19 @@ public class ProjectRootResolver {
                 && Files.isDirectory(path.resolve("backend-spring"))
                 && Files.isDirectory(path.resolve("frontend"))
                 && Files.isDirectory(path.resolve("providers").resolve("qqmusic-python-sidecar"));
+    }
+
+    private static boolean isReleaseDirectory(Path path) {
+        return Files.isRegularFile(path.resolve("lib").resolve("musio-cli.jar"))
+                && Files.isRegularFile(path.resolve("app").resolve("backend-spring.jar"))
+                && hasReleaseSidecar(path);
+    }
+
+    private static boolean hasReleaseSidecar(Path path) {
+        return Files.isRegularFile(path.resolve("sidecar").resolve("qqmusic-sidecar"))
+                || Files.isRegularFile(path.resolve("sidecar").resolve("qqmusic-sidecar.exe"))
+                || Files.isDirectory(path.resolve("providers")
+                        .resolve("qqmusic-python-sidecar")
+                        .resolve("app"));
     }
 }
