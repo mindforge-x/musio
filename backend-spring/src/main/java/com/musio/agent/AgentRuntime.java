@@ -29,6 +29,7 @@ import com.musio.model.PendingLocalPlaylistAdd;
 import com.musio.model.Song;
 import com.musio.model.SourceContext;
 import com.musio.memory.AgentTaskMemoryService;
+import com.musio.memory.MemoryEnrichmentService;
 import com.musio.memory.MemoryWriteRequest;
 import com.musio.memory.MemoryWriter;
 import com.musio.memory.MusicProfileService;
@@ -71,6 +72,7 @@ public class AgentRuntime {
     private final AgentMemoryRouter memoryRouter;
     private final MemoryContextService memoryContextService;
     private final MemoryWriter memoryWriter;
+    private final MemoryEnrichmentService memoryEnrichmentService;
     private final AgentLoopRunner agentLoopRunner;
     private final AgentPolicyGate policyGate;
     private final ObjectMapper objectMapper;
@@ -93,6 +95,7 @@ public class AgentRuntime {
             AgentMemoryRouter memoryRouter,
             MemoryContextService memoryContextService,
             MemoryWriter memoryWriter,
+            MemoryEnrichmentService memoryEnrichmentService,
             AgentLoopRunner agentLoopRunner,
             AgentPolicyGate policyGate,
             ObjectMapper objectMapper
@@ -109,6 +112,7 @@ public class AgentRuntime {
         this.memoryRouter = memoryRouter;
         this.memoryContextService = memoryContextService;
         this.memoryWriter = memoryWriter;
+        this.memoryEnrichmentService = memoryEnrichmentService;
         this.agentLoopRunner = agentLoopRunner;
         this.policyGate = policyGate;
         this.objectMapper = objectMapper;
@@ -815,7 +819,7 @@ public class AgentRuntime {
         }
         try {
             AgentTaskMemory taskMemory = taskMemoryService == null ? AgentTaskMemory.empty(userId) : taskMemoryService.read(userId);
-            memoryWriter.writeAfterTurn(new MemoryWriteRequest(
+            MemoryWriteRequest request = new MemoryWriteRequest(
                     userId,
                     userMessage,
                     goal,
@@ -824,7 +828,11 @@ public class AgentRuntime {
                     taskMemory,
                     finalAnswer,
                     null
-            ));
+            );
+            memoryWriter.writeAfterTurn(request);
+            if (memoryEnrichmentService != null) {
+                memoryEnrichmentService.submit(request);
+            }
         } catch (Exception e) {
             log.warn("Memory writer failed for user {}", userId, e);
         }
