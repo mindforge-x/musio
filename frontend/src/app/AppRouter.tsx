@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { Activity, Cable, FileText, ListMusic, MessageCircle, MessageSquare, Play, Search, Terminal, Trash2 } from "lucide-react";
+import { Activity, Cable, FileText, ListMusic, MessageCircle, MessageSquare, Play, QrCode, RotateCcw, Search, Terminal, Trash2, X } from "lucide-react";
 import { api } from "../shared/api";
-import { EventLog, ProviderStatus, Song, SongComment, SystemStatus } from "../shared/types";
+import { EventLog, LoginStartResult, LoginStatus, ProviderStatus, Song, SongComment, SystemStatus } from "../shared/types";
 import { AgentChatPanel } from "../features/agent-chat/AgentChatPanel";
 import { AgentEvents } from "../features/agent-chat/AgentEvents";
 import { SongCards } from "../features/agent-chat/SongCards";
@@ -25,6 +25,9 @@ export function AppRouter() {
   const [busy, setBusy] = useState(false);
   const [activeDrawer, setActiveDrawer] = useState<WorkbenchDrawer>("queue");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [providerStatusesLoaded, setProviderStatusesLoaded] = useState(false);
+  const [loginPromptOpen, setLoginPromptOpen] = useState(false);
+  const [loginPromptDismissed, setLoginPromptDismissed] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const selectedSources = useMemo(() => selectedSourcesFromUrl(), []);
   const activeSource = useMemo(() => activeSourceFromUrl(selectedSources), [selectedSources]);
@@ -52,9 +55,15 @@ export function AppRouter() {
   }, []);
 
   const refreshProviderStatuses = useCallback(() => {
-    api.providers()
-      .then(setProviderStatuses)
-      .catch(() => setProviderStatuses([]));
+    return api.providers()
+      .then((statuses) => {
+        setProviderStatuses(statuses);
+        setProviderStatusesLoaded(true);
+      })
+      .catch(() => {
+        setProviderStatuses([]);
+        setProviderStatusesLoaded(true);
+      });
   }, []);
 
   useEffect(() => {
@@ -118,6 +127,20 @@ export function AppRouter() {
     setEvents((current) => [event, ...current]);
   }, []);
 
+  useEffect(() => {
+    if (!providerStatusesLoaded) {
+      return;
+    }
+    if (qqMusicStatus?.authenticated) {
+      setLoginPromptOpen(false);
+      return;
+    }
+    if (!qqMusicStatus || loginPromptDismissed) {
+      return;
+    }
+    setLoginPromptOpen(true);
+  }, [loginPromptDismissed, providerStatusesLoaded, qqMusicStatus]);
+
   function playSong(song: Song) {
     void player.playSong(song)
       .then(() => addEvent({ id: crypto.randomUUID(), name: "player", detail: `正在播放：${song.title || song.id}` }))
@@ -170,6 +193,13 @@ export function AppRouter() {
     setActiveDrawer(drawer);
     setDrawerOpen(true);
   }
+
+  const handleLoginPromptAuthenticated = useCallback(async () => {
+    setLoginPromptOpen(false);
+    setLoginPromptDismissed(false);
+    await refreshProviderStatuses();
+    addEvent({ id: crypto.randomUUID(), name: "login", detail: "QQ 音乐登录成功" });
+  }, [addEvent, refreshProviderStatuses]);
 
   return (
     <main className={`app-shell ${route === "workbench" ? "app-shell-workbench" : ""}`}>
@@ -323,11 +353,173 @@ export function AppRouter() {
           </section>
         )}
       </section>
+      <LoginPromptModal
+        open={loginPromptOpen}
+        onClose={() => {
+          setLoginPromptDismissed(true);
+          setLoginPromptOpen(false);
+        }}
+        onAuthenticated={handleLoginPromptAuthenticated}
+        onEvent={addEvent}
+      />
     </main>
   );
 }
 
 type WorkbenchDrawer = "search" | "queue" | "lyrics" | "comments" | "trace";
+
+type LoginPromptModalProps = {
+  open: boolean;
+  onClose: () => void;
+  onAuthenticated: () => Promise<void> | void;
+  onEvent: (event: EventLog) => void;
+};
+
+const QQ_PROVIDER = "qqmusic";
+const LOGIN_TERMINAL_STATES = new Set(["DONE", "EXPIRED", "FAILED"]);
+
+function LoginPromptModal({ open, onClose, onAuthenticated, onEvent }: LoginPromptModalProps) {
+  const [login, setLogin] = useState<LoginStartResult | null>(null);
+  const [loginStatus, setLoginStatus] = useState<LoginStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [autoStartAttempted, setAutoStartAttempted] = useState(false);
+  const authenticatedHandledRef = useRef(false);
+  const previousOpenRef = useRef(false);
+  const hasQr = Boolean(login?.qrCodeDataUrl);
+  const stateLabel = loginPromptStateLabel(loginStatus?.state ?? login?.state);
+  const copy = loginPromptCopy(loginStatus?.state ?? login?.state);
+
+  const startLogin = useCallback(async () => {
+    setBusy(true);
+    setAutoStartAttempted(true);
+    authenticatedHandledRef.current = false;
+    try {
+      const result = await api.startProviderLogin(QQ_PROVIDER);
+      setLogin(result);
+      setLoginStatus({
+        sessionId: result.sessionId,
+        provider: result.provider,
+        state: result.state,
+        credentialStored: false,
+        message: result.message
+      });
+      onEvent({ id: crypto.randomUUID(), name: "login", detail: `已开始登录：${loginPromptStateLabel(result.state)}` });
+    } catch (error) {
+      setLogin(null);
+      setLoginStatus(null);
+      onEvent({
+        id: crypto.randomUUID(),
+        name: "login",
+        detail: error instanceof Error ? error.message : "启动 QQ 音乐扫码登录失败"
+      });
+    } finally {
+      setBusy(false);
+    }
+  }, [onEvent]);
+
+  useEffect(() => {
+    if (open && !previousOpenRef.current && loginStatus?.state === "DONE") {
+      setLogin(null);
+      setLoginStatus(null);
+      setAutoStartAttempted(false);
+      authenticatedHandledRef.current = false;
+    }
+    previousOpenRef.current = open;
+  }, [loginStatus?.state, open]);
+
+  useEffect(() => {
+    if (!open || login || busy || autoStartAttempted) {
+      return;
+    }
+    void startLogin();
+  }, [autoStartAttempted, busy, login, open, startLogin]);
+
+  useEffect(() => {
+    if (!open || !login?.sessionId) {
+      return;
+    }
+    if (loginStatus && LOGIN_TERMINAL_STATES.has(loginStatus.state)) {
+      return;
+    }
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const result = await api.providerLoginStatus(QQ_PROVIDER, login.sessionId);
+        if (cancelled) {
+          return;
+        }
+        setLoginStatus((previous) => {
+          if (previous?.state !== result.state) {
+            onEvent({ id: crypto.randomUUID(), name: "login", detail: `登录状态：${loginPromptStateLabel(result.state)}` });
+          }
+          return result;
+        });
+        if (result.state === "DONE" && !authenticatedHandledRef.current) {
+          authenticatedHandledRef.current = true;
+          await onAuthenticated();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          onEvent({
+            id: crypto.randomUUID(),
+            name: "login",
+            detail: error instanceof Error ? error.message : "登录状态轮询失败"
+          });
+        }
+      }
+    };
+
+    const interval = window.setInterval(() => {
+      if (!loginStatus || !LOGIN_TERMINAL_STATES.has(loginStatus.state)) {
+        void poll();
+      }
+    }, 2000);
+
+    void poll();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [login?.sessionId, loginStatus?.state, onAuthenticated, onEvent, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="login-prompt-overlay" role="presentation">
+      <section className="login-prompt-modal" role="dialog" aria-modal="true" aria-labelledby="login-prompt-title">
+        <button className="login-prompt-close" type="button" aria-label="稍后再说" onClick={onClose}>
+          <X size={18} />
+        </button>
+        <div className="login-prompt-heading">
+          <p className="eyebrow">QQ 音乐</p>
+          <h2 id="login-prompt-title">请先登录</h2>
+          <p>登录后即可使用完整功能</p>
+        </div>
+        <div className="qr-box login-prompt-qr">
+          {hasQr ? <img src={login?.qrCodeDataUrl ?? ""} alt="QQ 音乐登录二维码" /> : <QrCode size={96} />}
+        </div>
+        <p className="auth-copy login-prompt-copy">{copy}</p>
+        <div className="login-prompt-status">
+          <span>{stateLabel}</span>
+          {busy ? <span>准备二维码</span> : null}
+        </div>
+        <div className="auth-actions login-prompt-actions">
+          <button className="primary-action" type="button" onClick={() => void startLogin()} disabled={busy}>
+            {hasQr ? <RotateCcw size={18} /> : <QrCode size={18} />}
+            {hasQr ? "刷新二维码" : "开始扫码登录"}
+          </button>
+          <button className="ghost-action" type="button" onClick={onClose}>
+            稍后再说
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 function WorkbenchBackdrop() {
   return (
@@ -1066,6 +1258,47 @@ function providerConnectionLabel(status: ProviderStatus) {
       return "QQ 音乐未连接";
     default:
       return "QQ 音乐未连接";
+  }
+}
+
+function loginPromptStateLabel(state?: string) {
+  switch (state) {
+    case "CREATED":
+      return "已创建";
+    case "NOT_SCANNED":
+      return "等待扫码";
+    case "SCANNED":
+      return "已扫码";
+    case "DONE":
+      return "已连接";
+    case "EXPIRED":
+      return "二维码已过期";
+    case "FAILED":
+      return "登录失败";
+    case "LOGGED_OUT":
+      return "已退出";
+    default:
+      return "准备登录";
+  }
+}
+
+function loginPromptCopy(state?: string) {
+  switch (state) {
+    case "CREATED":
+    case "NOT_SCANNED":
+      return "请使用 QQ 音乐扫码登录。";
+    case "SCANNED":
+      return "已扫码，请在 QQ 音乐中确认登录。";
+    case "DONE":
+      return "登录成功，正在刷新页面状态。";
+    case "EXPIRED":
+      return "二维码已过期，请刷新后重新扫码。";
+    case "FAILED":
+      return "登录失败，请刷新二维码后重试。";
+    case "LOGGED_OUT":
+      return "当前已退出 QQ 音乐登录。";
+    default:
+      return "正在准备 QQ 音乐登录二维码。";
   }
 }
 

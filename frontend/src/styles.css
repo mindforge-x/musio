@@ -495,6 +495,98 @@ h3 {
   gap: 10px;
 }
 
+.login-prompt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(14px);
+}
+
+.login-prompt-modal {
+  position: relative;
+  width: min(100%, 420px);
+  padding: 28px;
+  border: 1px solid var(--border-visible);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.46);
+}
+
+.login-prompt-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.login-prompt-close:hover {
+  border-color: var(--border-visible);
+  color: var(--text-display);
+}
+
+.login-prompt-heading {
+  display: grid;
+  gap: 8px;
+  padding-right: 42px;
+}
+
+.login-prompt-heading h2 {
+  margin: 0;
+  color: var(--text-display);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.login-prompt-heading p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.login-prompt-qr {
+  width: min(100%, 220px);
+  margin-top: 24px;
+}
+
+.login-prompt-copy {
+  margin: 0 0 14px;
+  text-align: center;
+  text-transform: none;
+}
+
+.login-prompt-status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.login-prompt-status span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: var(--text-secondary);
+  font-family: var(--font-data);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.login-prompt-actions {
+  justify-content: center;
+}
+
 .policy-list {
   display: grid;
   margin-bottom: 22px;
