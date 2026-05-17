@@ -1419,7 +1419,7 @@ class AgentLoopRunnerTest {
         AgentLoopRunner runner = new AgentLoopRunner(
                 new SequencedPlanner(List.of(
                         new AgentStepAction(
-                                AgentStepActionType.TOOL_CALL,
+                                AgentStepActionType.REQUEST_CONFIRMATION,
                                 "add_song_to_musio_playlist",
                                 Map.of(
                                         "playlistId", "default",
@@ -1427,9 +1427,9 @@ class AgentLoopRunnerTest {
                                         "songTitle", "昆明湖",
                                         "artist", "后弦"
                                 ),
-                                "收藏歌曲",
+                                "请求收藏确认",
                                 0.9,
-                                "用户要加入歌单"
+                                "planner_requested_confirmation"
                         ),
                         AgentStepAction.finalAnswer("结束", 0.9)
                 )),
@@ -1484,6 +1484,107 @@ class AgentLoopRunnerTest {
         assertEquals("昆明湖", confirmations.getFirst().songs().getFirst().title());
         assertEquals(List.of("后弦"), confirmations.getFirst().songs().getFirst().artists());
         assertEquals("qqmusic:003hzmAB1eJ6GS", playlistExecutor.calls.getFirst().get("songId"));
+    }
+
+    @Test
+    void currentPlaybackLocalWriteDoesNotFallBackToFirstPreviousRecommendation() {
+        Song previousFirst = new Song("qqmusic:000amRvH3wxv56", ProviderType.QQMUSIC, "安静", List.of("周杰伦"), "范特西", 334, null);
+        Song current = new Song("qqmusic:004FITZG2U6rAF", ProviderType.QQMUSIC, "普通朋友", List.of("陶喆"), "I'm OK", 255, null);
+        AgentTaskMemory taskMemory = new AgentTaskMemory(
+                "local",
+                "music-agent-task",
+                "把当前播放的歌曲加入歌单",
+                "",
+                null,
+                List.of(previousFirst, current),
+                List.of("安静", "普通朋友"),
+                List.of(),
+                List.of(),
+                null,
+                "recommend",
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                null,
+                Instant.EPOCH
+        );
+        MemoryContextPackage memoryContext = new MemoryContextPackage(
+                "[当前播放状态]\n- 当前播放: 普通朋友 - 陶喆 id=qqmusic:004FITZG2U6rAF，状态=播放中",
+                List.of(new MemoryEvidence(
+                        MemoryType.CURRENT_STATE,
+                        current.id(),
+                        "当前播放: 普通朋友 - 陶喆 id=qqmusic:004FITZG2U6rAF，状态=播放中",
+                        0.9,
+                        0.85,
+                        "用户明确引用当前播放",
+                        Instant.EPOCH
+                )),
+                32
+        );
+        CapturingPlaylistCapabilityExecutor playlistExecutor = new CapturingPlaylistCapabilityExecutor("""
+                {"success":true,"summary":"已帮你收藏到 Musio 歌单：普通朋友 - 陶喆。","playlistId":"default","song":{"id":"qqmusic:004FITZG2U6rAF","provider":"QQMUSIC","title":"普通朋友","artists":["陶喆"],"album":"I'm OK","durationSeconds":255,"artworkUrl":null}}
+                """);
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(playlistExecutor);
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(playlistHandler));
+        AgentEventBus eventBus = new AgentEventBus();
+        ConfirmationService confirmationService = new ConfirmationService();
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.REQUEST_CONFIRMATION, "", Map.of(), "请求收藏确认", 0.9, "planner_requested_confirmation")
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(playlistHandler)),
+                null,
+                eventBus,
+                confirmationService
+        );
+        List<com.musio.model.ChatConfirmation> confirmations = new java.util.ArrayList<>();
+        eventBus.subscribe("run-1", event -> {
+            if ("confirmation_request".equals(event.type())) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) event.data();
+                var confirmation = (com.musio.model.ChatConfirmation) data.get("confirmation");
+                confirmations.add(confirmation);
+                confirmationService.confirm("run-1", new PendingConfirmation(confirmation.actionId(), true, Map.of("selectedSongIds", confirmation.defaultSelectedSongIds())));
+            }
+        });
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "把当前播放的歌曲加入歌单",
+                List.of(),
+                taskMemory,
+                List.of(),
+                0,
+                registry.manifest(true),
+                1,
+                new AgentGoal(
+                        "把当前播放的歌曲加入歌单",
+                        "把当前播放的歌曲加入歌单",
+                        "playlist",
+                        "new_task",
+                        true,
+                        false,
+                        true,
+                        false,
+                        0,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)
+                ),
+                memoryContext
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(1, confirmations.size());
+        assertEquals(List.of("qqmusic:004FITZG2U6rAF"), confirmations.getFirst().defaultSelectedSongIds());
+        assertEquals(1, playlistExecutor.calls.size());
+        assertEquals("qqmusic:004FITZG2U6rAF", playlistExecutor.calls.getFirst().get("songId"));
+        assertFalse("qqmusic:000amRvH3wxv56".equals(playlistExecutor.calls.getFirst().get("songId")));
     }
 
     @Test

@@ -223,6 +223,7 @@ public class AgentStepPlanner {
                 - 如果用户要对多首已推荐/已搜索歌曲读取歌词或热门评论，优先用 get_lyrics.songIds 或 get_hot_comments.songIds 一次传入多个 songId，不要逐首拆成多次工具调用。
                 - 如果同一个 songId 的 get_hot_comments / get_lyrics / get_song_detail 已经成功出现在 observations 中，不要再次调用同一个工具；应继续处理还没完成的目标。
                 - 本地歌单确认只拦截 add_song_to_musio_playlist 这类写入动作；如果 Agent Goal 还要求歌词、评论或详情，应先完成这些只读工具，再 request_confirmation。
+                - request_confirmation.arguments 不是给用户展示的文案；它表示“确认后要执行的目标写入参数”。如果请求确认本地歌单写入，toolName 应填 add_song_to_musio_playlist，arguments 必须尽量填入确认后要执行的参数，例如 {"playlistId":"default","songId":"..."} 或 {"playlistId":"default","songIds":["..."]}，目标已知时不要留空。
                 - search_songs.keyword 只写正向搜索目标，例如歌手、歌曲名或风格；不要把排除、比较或“不是 X 是 Y”这类关系拼进 keyword。
                 - search_songs.limit 必须显式填写；普通宽泛搜索完全没有数量含义时默认 5。
                 - 如果 search_songs 只是为了给评论、歌词或详情解析一个目标 songId，且用户没有明确要求多首，limit 必须填 1。
@@ -231,6 +232,7 @@ public class AgentStepPlanner {
                 - get_hot_comments.limit 默认 10，最大 30。
                 - 如果用户说“最热门的评论/一条评论/一条热评”，get_hot_comments.limit 应填写 1。
                 - add_song_to_musio_playlist 只能在用户已经确认收藏的确认轮次调用；初次表达收藏/保存/加入 Musio 歌单意图时，不要直接写入，应让后端保存待确认目标并请求用户确认。
+                - 初次写入意图输出 request_confirmation 时，如果已知要收藏哪首歌，也要把同一组 add_song_to_musio_playlist 参数放进 arguments；例如用户说“把当前播放的歌曲加入歌单”且 currentPlayback 有 id，就输出 toolName=add_song_to_musio_playlist，arguments={"playlistId":"default","songId":当前播放 songId,"songTitle":歌曲名,"artist":歌手}。
                 - 如果用户要把多首已推荐/已搜索歌曲加入 Musio 歌单，优先用 add_song_to_musio_playlist.songIds 一次传入多个 songId；没有 songId 但有明确序号时才用 songIndexes。
                 - add_song_to_musio_playlist 如果已经能确定 songId/songIds，不要再同时填写可能冲突的 songIndex/songIndexes；序号只用于“第一首/第二首/这几首”这种没有明确 songId 的引用。
                 - 如果用户要求写入 QQ 音乐账号、公开评论、账号收藏等 account_write 能力，但本轮可用能力没有对应工具，应输出 request_confirmation 或 unsupported，不要改用本地 Musio 写入冒充账号写入。
