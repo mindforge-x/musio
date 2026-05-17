@@ -14,6 +14,7 @@ const QUIET_SPECTRUM_LEVELS = Array.from({ length: SPECTRUM_BAR_COUNT }, () => 6
 const PLAYER_QUEUE_STORAGE_KEY = "musio.player.queue.v1";
 const PLAYER_QUEUE_STORAGE_VERSION = 1;
 const PLAYER_STATE_SYNC_DEBOUNCE_MS = 650;
+const MEMBERSHIP_ONLY_PLAYBACK_MESSAGE = "会员专享歌曲，暂无法播放";
 
 type StoredPlayerQueueState = {
   version: typeof PLAYER_QUEUE_STORAGE_VERSION;
@@ -371,6 +372,16 @@ export function usePlayerStore() {
       setState((value) => ({ ...value, paused: false }));
       startSpectrumMonitor(audio);
     } catch (error) {
+      if (isMembershipOnlyPlaybackError(error)) {
+        stopSpectrumMonitor();
+        setState((value) => ({
+          ...value,
+          paused: true,
+          lyricLine: MEMBERSHIP_ONLY_PLAYBACK_MESSAGE,
+          spectrumLevels: IDLE_SPECTRUM_LEVELS
+        }));
+        return;
+      }
       if (recoveryAttemptsRef.current >= PLAYBACK_RECOVERY_MAX_ATTEMPTS) {
         stopSpectrumMonitor();
         setState((value) => ({
@@ -388,7 +399,9 @@ export function usePlayerStore() {
     }
   }
 
-  function reloadCurrentStream(audio: HTMLAudioElement, songId: string, resumeSeconds: number) {
+  async function reloadCurrentStream(audio: HTMLAudioElement, songId: string, resumeSeconds: number) {
+    await ensurePlayableStream(songId);
+
     return new Promise<void>((resolve, reject) => {
       const targetSeconds = Math.max(0, resumeSeconds - 0.4);
       let settled = false;
@@ -486,6 +499,32 @@ export function usePlayerStore() {
     });
   }
 
+  async function loadLyrics(songId: string, requestId: number) {
+    try {
+      const lyrics = await playerClient.lyrics(songId);
+      if (playRequestRef.current !== requestId) {
+        return;
+      }
+      const syncedLines = parseSyncedLyrics(lyrics.syncedText);
+      const fallbackLine = firstLyricLine(lyrics.plainText || lyrics.syncedText);
+      syncedLyricsRef.current = syncedLines;
+      const positionSeconds = audioRef.current?.currentTime ?? 0;
+      const activeLyricIndex = lyricIndexAt(positionSeconds, syncedLines);
+      const lyricLine = activeLyricIndex >= 0 ? syncedLines[activeLyricIndex]?.text ?? null : null;
+      setState((current) => ({
+        ...current,
+        lyricLine: lyricLine || fallbackLine || "[LYRICS UNAVAILABLE]",
+        lyricsText: lyrics.plainText || lyrics.syncedText || "",
+        lyricLines: syncedLines,
+        activeLyricIndex
+      }));
+    } catch {
+      if (playRequestRef.current === requestId) {
+        setState((current) => ({ ...current, lyricLine: "[LYRICS UNAVAILABLE]", lyricsText: "", lyricLines: [], activeLyricIndex: -1 }));
+      }
+    }
+  }
+
   async function startPlayback(song: Song, queue: Song[], index: number) {
     const requestId = playRequestRef.current + 1;
     playRequestRef.current = requestId;
@@ -510,31 +549,6 @@ export function usePlayerStore() {
       spectrumLevels: IDLE_SPECTRUM_LEVELS
     }));
 
-    void playerClient.lyrics(song.id)
-      .then((lyrics) => {
-        if (playRequestRef.current !== requestId) {
-          return;
-        }
-        const syncedLines = parseSyncedLyrics(lyrics.syncedText);
-        const fallbackLine = firstLyricLine(lyrics.plainText || lyrics.syncedText);
-        syncedLyricsRef.current = syncedLines;
-        const positionSeconds = audioRef.current?.currentTime ?? 0;
-        const activeLyricIndex = lyricIndexAt(positionSeconds, syncedLines);
-        const lyricLine = activeLyricIndex >= 0 ? syncedLines[activeLyricIndex]?.text ?? null : null;
-        setState((current) => ({
-          ...current,
-          lyricLine: lyricLine || fallbackLine || "[LYRICS UNAVAILABLE]",
-          lyricsText: lyrics.plainText || lyrics.syncedText || "",
-          lyricLines: syncedLines,
-          activeLyricIndex
-        }));
-      })
-      .catch(() => {
-        if (playRequestRef.current === requestId) {
-          setState((current) => ({ ...current, lyricLine: "[LYRICS UNAVAILABLE]", lyricsText: "", lyricLines: [], activeLyricIndex: -1 }));
-        }
-      });
-
     try {
       const audio = audioRef.current;
       if (!audio) {
@@ -543,6 +557,12 @@ export function usePlayerStore() {
 
       suppressPauseSyncRef.current = true;
       audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      await ensurePlayableStream(song.id);
+      if (playRequestRef.current !== requestId) {
+        return;
+      }
       audio.src = playerClient.streamUrl(song.id);
       audio.currentTime = 0;
       audio.load();
@@ -556,6 +576,7 @@ export function usePlayerStore() {
         paused: false,
         lyricLine: current.lyricLine
       }));
+      void loadLyrics(song.id, requestId);
       startSpectrumMonitor(audio);
     } catch (error) {
       suppressPauseSyncRef.current = false;
@@ -564,7 +585,7 @@ export function usePlayerStore() {
         setState((current) => ({
           ...current,
           paused: true,
-          lyricLine: `[ERROR: ${errorMessage(error)}]`,
+          lyricLine: playbackErrorLyricLine(error),
           spectrumLevels: IDLE_SPECTRUM_LEVELS
         }));
       }
@@ -936,4 +957,19 @@ function lyricIndexAt(positionSeconds: number, lines: SyncedLyricLine[]) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error && error.message ? error.message : "未知错误";
+}
+
+async function ensurePlayableStream(songId: string) {
+  const songUrl = await playerClient.songUrl(songId);
+  if (!songUrl.url || songUrl.url.trim() === "") {
+    throw new Error(MEMBERSHIP_ONLY_PLAYBACK_MESSAGE);
+  }
+}
+
+function isMembershipOnlyPlaybackError(error: unknown) {
+  return error instanceof Error && error.message === MEMBERSHIP_ONLY_PLAYBACK_MESSAGE;
+}
+
+function playbackErrorLyricLine(error: unknown) {
+  return isMembershipOnlyPlaybackError(error) ? MEMBERSHIP_ONLY_PLAYBACK_MESSAGE : `[ERROR: ${errorMessage(error)}]`;
 }
