@@ -1730,6 +1730,9 @@ textarea:focus,
 }
 
 .musio-playlists-panel {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 208px);
   min-height: 460px;
 }
 
@@ -1823,14 +1826,19 @@ textarea:focus,
 }
 
 .musio-playlists-layout {
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
   margin-top: 24px;
 }
 
 .musio-playlist-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: grid;
   align-content: start;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -1907,12 +1915,17 @@ textarea:focus,
 
 .musio-playlist-detail {
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 18px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(0, 0, 0, 0.52);
 }
 
 .musio-playlist-detail-heading {
+  flex: 0 0 auto;
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -2015,6 +2028,14 @@ textarea:focus,
 .musio-playlist-row button:disabled {
   cursor: not-allowed;
   opacity: 0.42;
+}
+
+.musio-playlist-detail > .song-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(232, 232, 232, 0.24) transparent;
 }
 
 .song-row.musio-playlist-row {
@@ -2171,6 +2192,30 @@ textarea:focus,
   .agent-side-stack,
   .musio-playlists-layout {
     grid-template-columns: 1fr;
+  }
+
+  .musio-playlists-panel {
+    height: auto;
+    min-height: 460px;
+  }
+
+  .musio-playlists-layout {
+    overflow: visible;
+  }
+
+  .musio-playlist-list {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .musio-playlist-detail {
+    display: block;
+    overflow: visible;
+  }
+
+  .musio-playlist-detail > .song-list {
+    max-height: none;
+    overflow: visible;
   }
 
   .nothing-playlists-header,
