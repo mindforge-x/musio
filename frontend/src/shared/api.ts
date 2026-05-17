@@ -12,6 +12,7 @@ import {
   Song,
   SongComment,
   SongUrl,
+  SourceContext,
   SystemStatus
 } from "./types";
 
@@ -59,6 +60,7 @@ async function errorMessage(response: Response): Promise<string> {
 
 export const api = {
   status: () => request<SystemStatus>("/api/system/status"),
+  sourceContext: () => request<SourceContext>("/api/system/source-context"),
   providers: () => request<ProviderStatus[]>("/api/providers"),
   providerStatus: (provider: string) => request<ProviderStatus>(`/api/providers/${provider}/status`),
   providerMusicGene: (provider: string) => request<MusicGeneSnapshot>(`/api/providers/${provider}/music-gene`),
