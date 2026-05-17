@@ -162,7 +162,7 @@ public class AgentLoopRunner {
             }
             if (action.action() == AgentStepActionType.REQUEST_CONFIRMATION || action.action() == AgentStepActionType.UNSUPPORTED) {
                 if (action.action() == AgentStepActionType.REQUEST_CONFIRMATION) {
-                    AgentStepAction localWriteAction = localPlaylistWriteRecoveryAction(state);
+                    AgentStepAction localWriteAction = localPlaylistWriteRecoveryAction(state, action);
                     if (localWriteAction != null) {
                         publishLoopAction(state, step, localWriteAction);
                         state = executeToolAction(state, step, localWriteAction, executedCalls);
@@ -514,6 +514,10 @@ public class AgentLoopRunner {
     }
 
     private AgentStepAction localPlaylistWriteRecoveryAction(AgentLoopState state) {
+        return localPlaylistWriteRecoveryAction(state, null);
+    }
+
+    private AgentStepAction localPlaylistWriteRecoveryAction(AgentLoopState state, AgentStepAction requestedConfirmation) {
         if (state == null || state.goal() == null || !state.goal().requiredOutcomes().contains(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)) {
             return null;
         }
@@ -527,16 +531,21 @@ public class AgentLoopRunner {
         if (manifest == null || !manifest.allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)) {
             return null;
         }
-        List<String> songIds = localPlaylistWriteTargetSongIds(state, null);
+        List<String> songIds = localPlaylistWriteTargetSongIds(state, requestedConfirmation);
         if (songIds.isEmpty()) {
             return null;
         }
         Map<String, Object> arguments = new LinkedHashMap<>();
-        arguments.put("playlistId", "default");
+        if (requestedConfirmation != null && requestedConfirmation.arguments() != null) {
+            arguments.putAll(requestedConfirmation.arguments());
+        }
+        arguments.putIfAbsent("playlistId", "default");
         if (songIds.size() == 1) {
             arguments.put("songId", songIds.getFirst());
+            arguments.remove("songIds");
         } else {
             arguments.put("songIds", songIds);
+            arguments.remove("songId");
         }
         return new AgentStepAction(
                 AgentStepActionType.TOOL_CALL,
@@ -900,6 +909,10 @@ public class AgentLoopRunner {
         List<String> explicitIds = requestedSongIds(action);
         if (explicitIds.isEmpty()) {
             explicitIds = requestedSongIdsByIndex(state, action);
+        }
+        List<String> playerStateIds = explicitPlayerStateLocalWriteTargetSongIds(state);
+        if (!playerStateIds.isEmpty()) {
+            return playerStateIds;
         }
         List<String> scopedIds = scopedLocalPlaylistWriteSongIds(state);
         if (!explicitIds.isEmpty()) {
@@ -1382,12 +1395,31 @@ public class AgentLoopRunner {
         if (state == null || state.memoryContext() == null || state.memoryContext().evidence().isEmpty()) {
             return List.of();
         }
-        String request = normalizeText((state.userMessage() == null ? "" : state.userMessage())
-                + " "
-                + (state.goal() == null ? "" : state.goal().effectiveRequest()));
+        String request = explicitPlayerStateRequestText(state);
         if (!mentionsExplicitPlayerState(request)) {
             return List.of();
         }
+        return explicitPlayerStateTargetSongIds(state, request);
+    }
+
+    private List<String> explicitPlayerStateLocalWriteTargetSongIds(AgentLoopState state) {
+        if (state == null || state.memoryContext() == null || state.memoryContext().evidence().isEmpty()) {
+            return List.of();
+        }
+        String request = explicitPlayerStateRequestText(state);
+        if (!mentionsExplicitPlayerState(request) || !playerStateLocalPlaylistTargetRequested(request)) {
+            return List.of();
+        }
+        return explicitPlayerStateTargetSongIds(state, request);
+    }
+
+    private String explicitPlayerStateRequestText(AgentLoopState state) {
+        return normalizeText((state == null || state.userMessage() == null ? "" : state.userMessage())
+                + " "
+                + (state == null || state.goal() == null ? "" : state.goal().effectiveRequest()));
+    }
+
+    private List<String> explicitPlayerStateTargetSongIds(AgentLoopState state, String request) {
         for (MemoryEvidence evidence : state.memoryContext().evidence()) {
             if (evidence == null || evidence.type() != MemoryType.CURRENT_STATE) {
                 continue;
@@ -1403,6 +1435,66 @@ public class AgentLoopRunner {
             }
         }
         return List.of();
+    }
+
+    private boolean playerStateLocalPlaylistTargetRequested(String normalized) {
+        boolean writeIntent = containsAny(
+                normalized,
+                "加入歌单",
+                "添加到歌单",
+                "加到歌单",
+                "放进歌单",
+                "存到歌单",
+                "保存到歌单",
+                "收藏到歌单",
+                "收藏"
+        );
+        if (!writeIntent) {
+            return false;
+        }
+        if (mentionsQueuePrevious(normalized)) {
+            return true;
+        }
+        return containsAny(
+                normalized,
+                "把当前播放",
+                "将当前播放",
+                "当前播放加入",
+                "当前播放的歌",
+                "当前播放的歌曲",
+                "当前播放这首",
+                "当前播放这歌",
+                "把正在播放",
+                "将正在播放",
+                "正在播放加入",
+                "正在播放的歌",
+                "正在播放的歌曲",
+                "正在播放这首",
+                "正在播放这歌",
+                "把正在放",
+                "将正在放",
+                "正在放加入",
+                "正在放的歌",
+                "正在放的歌曲",
+                "正在放这首",
+                "把正在播",
+                "将正在播",
+                "正在播加入",
+                "正在播的歌",
+                "正在播的歌曲",
+                "正在播这首",
+                "把现在播放",
+                "将现在播放",
+                "现在播放加入",
+                "现在播放的歌",
+                "现在播放的歌曲",
+                "播放器里这首",
+                "播放器里的歌",
+                "播放器里的歌曲",
+                "播放器中这首",
+                "播放器中的歌",
+                "播放器中的歌曲"
+        );
     }
 
     private boolean mentionsExplicitPlayerState(String normalized) {
