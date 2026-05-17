@@ -196,6 +196,10 @@ public class AgentLoopRunner {
                 return outcome(AgentLoopOutcomeType.COMPLETED, state, "tool_completion");
             }
         }
+        AgentLoopOutcome localWriteOutcome = finishWithPendingLocalPlaylistWrite(state, step, executedCalls);
+        if (localWriteOutcome != null) {
+            return localWriteOutcome;
+        }
         return outcome(AgentLoopOutcomeType.MAX_STEPS, state, "max_steps");
     }
 
@@ -680,6 +684,22 @@ public class AgentLoopRunner {
         executedCalls.add(callKey(action));
         publishLoopObservation(state, step, observation);
         return state.withObservation(observation);
+    }
+
+    private AgentLoopOutcome finishWithPendingLocalPlaylistWrite(AgentLoopState state, int step, Set<String> executedCalls) {
+        AgentStepAction localWriteAction = localPlaylistWriteRecoveryAction(state);
+        if (localWriteAction == null) {
+            return null;
+        }
+        publishLoopAction(state, step, localWriteAction);
+        AgentLoopState next = executeToolAction(state, step, localWriteAction, executedCalls);
+        if (localPlaylistWriteDeclinedObserved(next)) {
+            return outcome(AgentLoopOutcomeType.COMPLETED, next, "local_playlist_confirmation_declined");
+        }
+        if (requiredOutcomesSatisfied(next)) {
+            return outcome(AgentLoopOutcomeType.COMPLETED, next, "tool_completion");
+        }
+        return outcome(AgentLoopOutcomeType.MAX_STEPS, next, "max_steps_after_local_playlist_recovery");
     }
 
     private boolean preConfirmedLocalPlaylistWrite(AgentStepAction action) {

@@ -1712,6 +1712,82 @@ class AgentLoopRunnerTest {
         assertEquals(AgentObservationStatus.SUCCESS, outcome.evidence().observations().get(4).status());
     }
 
+    @Test
+    void recoversPendingLocalPlaylistWriteAfterStepBudgetBeforeAnswering() {
+        AgentCapabilityHandler recommendationHandler = new StubRecommendationCapabilityHandler();
+        CapturingPlaylistCapabilityExecutor playlistExecutor = new CapturingPlaylistCapabilityExecutor("""
+                {"success":true,"summary":"已帮你收藏到 Musio 歌单：安静 - 周杰伦。","playlistId":"default","song":{"id":"qqmusic:quiet","provider":"QQMUSIC","title":"安静","artists":["周杰伦"],"album":"范特西","durationSeconds":334,"artworkUrl":null}}
+                """);
+        MusicReadCapabilityHandler readHandler = musicReadCapabilityHandler();
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(playlistExecutor);
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler, readHandler, playlistHandler));
+        AgentStepAction comments = new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_hot_comments", Map.of("songId", "qqmusic:quiet", "limit", 1), "读评论", 0.9, "用户要热评");
+        AgentStepAction lyrics = new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_lyrics", Map.of("songId", "qqmusic:quiet"), "读歌词", 0.9, "用户要歌词");
+        AgentEventBus eventBus = new AgentEventBus();
+        ConfirmationService confirmationService = new ConfirmationService();
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "推荐一首歌", "count", 1), "生成推荐", 0.9, "开放推荐"),
+                        comments,
+                        lyrics,
+                        comments,
+                        lyrics
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler, readHandler, playlistHandler)),
+                null,
+                eventBus,
+                confirmationService
+        );
+        List<com.musio.model.ChatConfirmation> confirmations = new java.util.ArrayList<>();
+        eventBus.subscribe("run-1", event -> {
+            if ("confirmation_request".equals(event.type())) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) event.data();
+                var confirmation = (com.musio.model.ChatConfirmation) data.get("confirmation");
+                confirmations.add(confirmation);
+                confirmationService.confirm("run-1", new PendingConfirmation(confirmation.actionId(), true, Map.of("selectedSongIds", confirmation.defaultSelectedSongIds())));
+            }
+        });
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "推荐一首歌，获取最热门评论和歌词，并加入歌单",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(true),
+                1,
+                new AgentGoal(
+                        "推荐一首歌，获取最热门评论和歌词，并加入歌单",
+                        "推荐一首歌，获取最热门评论和歌词，并加入歌单",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        true,
+                        false,
+                        1,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.COMMENTS, AgentRequiredOutcome.LYRICS, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals("tool_completion", outcome.reason());
+        assertEquals(6, outcome.evidence().observations().size());
+        assertEquals("add_song_to_musio_playlist", outcome.evidence().observations().get(5).toolName());
+        assertEquals(AgentObservationStatus.SUCCESS, outcome.evidence().observations().get(5).status());
+        assertEquals(1, confirmations.size());
+        assertEquals(List.of("qqmusic:quiet"), confirmations.getFirst().defaultSelectedSongIds());
+        assertEquals(1, playlistExecutor.calls.size());
+        assertEquals("qqmusic:quiet", playlistExecutor.calls.getFirst().get("songId"));
+    }
+
     private static class StubPlaylistCapabilityExecutor extends MusioPlaylistCapabilityExecutor {
         private final String resultJson;
 

@@ -59,6 +59,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Service
 public class AgentRuntime {
     private static final Logger log = LoggerFactory.getLogger(AgentRuntime.class);
+    private static final int DEFERRED_CONFIRMATION_TIMEOUT_SECONDS = 300;
+    private static final String DEFERRED_LOCAL_PLAYLIST_CONFIRMATION_ACTION_ID =
+            AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST + ":deferred";
 
     private final AgentPrompts prompts;
     private final MusioConfigService configService;
@@ -75,6 +78,7 @@ public class AgentRuntime {
     private final MemoryEnrichmentService memoryEnrichmentService;
     private final AgentLoopRunner agentLoopRunner;
     private final AgentPolicyGate policyGate;
+    private final ConfirmationService confirmationService;
     private final ObjectMapper objectMapper;
     private final ScheduledExecutorService progressExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
         Thread thread = new Thread(runnable, "musio-agent-progress-heartbeat");
@@ -98,6 +102,7 @@ public class AgentRuntime {
             MemoryEnrichmentService memoryEnrichmentService,
             AgentLoopRunner agentLoopRunner,
             AgentPolicyGate policyGate,
+            ConfirmationService confirmationService,
             ObjectMapper objectMapper
     ) {
         this.prompts = prompts;
@@ -115,6 +120,7 @@ public class AgentRuntime {
         this.memoryEnrichmentService = memoryEnrichmentService;
         this.agentLoopRunner = agentLoopRunner;
         this.policyGate = policyGate;
+        this.confirmationService = confirmationService;
         this.objectMapper = objectMapper;
     }
 
@@ -739,6 +745,33 @@ public class AgentRuntime {
         PendingLocalPlaylistAdd pendingLocalPlaylistAdd = deferLocalPlaylistWrite && !loopHandledLocalPlaylistWrite
                 ? savePendingLocalPlaylistAdd(userId, userMessage, evidence, taskMemory, previousTaskMemory, goal)
                 : null;
+        String deferredConfirmationInstruction = "";
+        if (pendingLocalPlaylistAdd != null) {
+            DeferredLocalPlaylistConfirmation deferredConfirmation = awaitDeferredLocalPlaylistConfirmation(runId, userId, pendingLocalPlaylistAdd);
+            if (deferredConfirmation.approved()) {
+                outcome = executeConfirmedDeferredLocalPlaylistAdd(
+                        ai,
+                        runId,
+                        userId,
+                        history,
+                        taskMemory,
+                        evidence.observations(),
+                        capabilityManifest,
+                        requestedSongCount,
+                        goal,
+                        memoryContext,
+                        pendingLocalPlaylistAdd,
+                        deferredConfirmation.selectedSongs()
+                );
+                evidence = outcome.evidence();
+                taskMemoryService.clearPendingLocalPlaylistAdd(userId);
+                pendingLocalPlaylistAdd = null;
+            } else {
+                taskMemoryService.clearPendingLocalPlaylistAdd(userId);
+                deferredConfirmationInstruction = deferredLocalPlaylistRejectInstruction(deferredConfirmation.reason());
+                pendingLocalPlaylistAdd = null;
+            }
+        }
         log.info(
                 "TURN_EXECUTOR stage=agent_loop runId={} userId={} taskType={} outcome={} observationCount={} songCardCount={} songCardTitles={}",
                 runId,
@@ -750,6 +783,17 @@ public class AgentRuntime {
                 songTitles(evidence.songs())
         );
         if (!evidence.hasObservations()) {
+            if (!deferredConfirmationInstruction.isBlank()) {
+                return new PreludeContext(
+                        deferredConfirmationInstruction,
+                        true,
+                        List.of(),
+                        "好的，我先不收藏到本地 Musio 歌单。",
+                        true,
+                        null,
+                        evidence
+                );
+            }
             if (pendingLocalPlaylistAdd != null) {
                 return new PreludeContext("""
 
@@ -797,7 +841,7 @@ public class AgentRuntime {
                         outcome.reason(),
                         loopExecutionContext(evidence.observations()),
                         songTitles(evidence.songs()),
-                        pendingLocalPlaylistInstruction(pendingLocalPlaylistAdd)
+                        localPlaylistFinalInstruction(pendingLocalPlaylistAdd, deferredConfirmationInstruction)
                 ),
                 true,
                 evidence.songs(),
@@ -957,6 +1001,108 @@ public class AgentRuntime {
                 """.formatted(songTitles(pending.songs())).strip();
     }
 
+    private String localPlaylistFinalInstruction(PendingLocalPlaylistAdd pending, String deferredConfirmationInstruction) {
+        String pendingInstruction = pendingLocalPlaylistInstruction(pending);
+        String confirmationInstruction = deferredConfirmationInstruction == null ? "" : deferredConfirmationInstruction.strip();
+        if (pendingInstruction.isBlank()) {
+            return confirmationInstruction;
+        }
+        if (confirmationInstruction.isBlank()) {
+            return pendingInstruction;
+        }
+        return pendingInstruction + "\n" + confirmationInstruction;
+    }
+
+    private DeferredLocalPlaylistConfirmation awaitDeferredLocalPlaylistConfirmation(String runId, String userId, PendingLocalPlaylistAdd pending) {
+        if (confirmationService == null || eventBus == null || runId == null || runId.isBlank()) {
+            return DeferredLocalPlaylistConfirmation.rejected("confirmation_unavailable");
+        }
+        ChatConfirmation confirmation = confirmationFor(pending);
+        log.info(
+                "AGENT_CONFIRMATION_REQUEST runId={} userId={} actionId={} toolName={} songIds={}",
+                runId,
+                userId,
+                confirmation.actionId(),
+                AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+                confirmation.defaultSelectedSongIds()
+        );
+        confirmationService.prepare(runId, confirmation.actionId());
+        eventBus.publish(runId, AgentEvent.of("confirmation_request", Map.of(
+                "runId", runId,
+                "confirmation", confirmation
+        )));
+        PendingConfirmation result = confirmationService.await(runId, confirmation.actionId(), DEFERRED_CONFIRMATION_TIMEOUT_SECONDS);
+        if (result == null || !result.approved()) {
+            return DeferredLocalPlaylistConfirmation.rejected(deferredConfirmationRejectReason(result));
+        }
+        List<Song> selectedSongs = selectedPendingSongs(pending, selectedSongIds(result));
+        if (selectedSongs.isEmpty()) {
+            return DeferredLocalPlaylistConfirmation.rejected("confirmation_empty_selection");
+        }
+        return DeferredLocalPlaylistConfirmation.approved(selectedSongs);
+    }
+
+    private AgentLoopOutcome executeConfirmedDeferredLocalPlaylistAdd(
+            MusioConfig.Ai ai,
+            String runId,
+            String userId,
+            List<ConversationHistoryMessage> history,
+            AgentTaskMemory taskMemory,
+            List<AgentObservation> observations,
+            AgentCapabilityManifest capabilityManifest,
+            int requestedSongCount,
+            AgentGoal goal,
+            MemoryContextPackage memoryContext,
+            PendingLocalPlaylistAdd pending,
+            List<Song> selectedSongs
+    ) {
+        Map<String, Object> addArguments = pendingAddArguments(pending, selectedSongs);
+        int displayCount = requestedSongCount > 0 ? requestedSongCount : selectedSongs.size();
+        return agentLoopRunner.runOutcome(
+                ai,
+                new AgentLoopState(
+                        runId,
+                        userId,
+                        pending.sourceRequest(),
+                        history,
+                        taskMemory,
+                        observations,
+                        observations == null ? 0 : observations.size(),
+                        capabilityManifest,
+                        displayCount,
+                        goal,
+                        memoryContext
+                ),
+                List.of(new AgentStepAction(
+                        AgentStepActionType.TOOL_CALL,
+                        AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+                        addArguments,
+                        "收藏到 Musio 歌单",
+                        1.0,
+                        "pending_local_playlist_confirmation"
+                ))
+        );
+    }
+
+    private String deferredLocalPlaylistRejectInstruction(String reason) {
+        String safeReason = reason == null || reason.isBlank() ? "confirmation_cancelled" : reason.strip();
+        return """
+                本轮用户没有同意本地 Musio 歌单写入，结果：%s。
+                本轮尚未执行 add_song_to_musio_playlist，不能说已经加入歌单。
+                最终回答必须明确说明：没有收藏到本地 Musio 歌单。
+                """.formatted(safeReason).strip();
+    }
+
+    private String deferredConfirmationRejectReason(PendingConfirmation confirmation) {
+        if (confirmation != null
+                && confirmation.editedInput() != null
+                && confirmation.editedInput().get("reason") instanceof String reason
+                && !reason.isBlank()) {
+            return "confirmation_" + reason.strip();
+        }
+        return "confirmation_cancelled";
+    }
+
     static int requestedSongCount(String userMessage, AgentTaskContext taskContext, List<RecommendationSlot> recommendationSlots) {
         int slotTotal = RecommendationSlots.totalCount(recommendationSlots);
         if (slotTotal > 0) {
@@ -1019,7 +1165,7 @@ public class AgentRuntime {
                 ? "已为你准备 %s 首待加入本地 Musio 默认歌单的歌曲。".formatted(pending.songs().size())
                 : "将《%s》加入本地 Musio 默认歌单。".formatted(songTitle(pending.song()));
         return new ChatConfirmation(
-                "",
+                DEFERRED_LOCAL_PLAYLIST_CONFIRMATION_ACTION_ID,
                 "local_playlist_add",
                 title,
                 description,
@@ -1206,6 +1352,21 @@ public class AgentRuntime {
             ));
         }, 6000, 6000, TimeUnit.MILLISECONDS);
         return new TraceHeartbeat(future);
+    }
+
+    private record DeferredLocalPlaylistConfirmation(boolean approved, List<Song> selectedSongs, String reason) {
+        static DeferredLocalPlaylistConfirmation approved(List<Song> selectedSongs) {
+            return new DeferredLocalPlaylistConfirmation(true, selectedSongs, "");
+        }
+
+        static DeferredLocalPlaylistConfirmation rejected(String reason) {
+            return new DeferredLocalPlaylistConfirmation(false, List.of(), reason == null || reason.isBlank() ? "confirmation_cancelled" : reason);
+        }
+
+        private DeferredLocalPlaylistConfirmation {
+            selectedSongs = selectedSongs == null ? List.of() : List.copyOf(selectedSongs);
+            reason = reason == null ? "" : reason.strip();
+        }
     }
 
     private record PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix, boolean directAnswer, ChatConfirmation confirmation, AgentLoopEvidence evidence) {

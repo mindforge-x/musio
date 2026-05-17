@@ -15,7 +15,7 @@ import { SourceSetupPage } from "../features/source-setup/SourceSetupPage";
 import { AppRoute } from "./routes";
 
 export function AppRouter() {
-  const [route, setRoute] = useState<AppRoute>(() => initialRouteFromUrl());
+  const [route, setRoute] = useState<AppRoute>("setup");
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([]);
   const [events, setEvents] = useState<EventLog[]>([]);
@@ -29,8 +29,8 @@ export function AppRouter() {
   const [loginPromptOpen, setLoginPromptOpen] = useState(false);
   const [loginPromptDismissed, setLoginPromptDismissed] = useState(false);
   const [now, setNow] = useState(() => new Date());
-  const selectedSources = useMemo(() => selectedSourcesFromUrl(), []);
-  const activeSource = useMemo(() => activeSourceFromUrl(selectedSources), [selectedSources]);
+  const [selectedSources, setSelectedSources] = useState<string[]>(["qqmusic"]);
+  const [activeSource, setActiveSource] = useState("qqmusic");
   const player = usePlayerStore();
   const chatRhythmActive = Boolean(player.state.currentSong && !player.state.paused);
   const chatRhythmLevel = useMemo(() => {
@@ -70,6 +70,16 @@ export function AppRouter() {
     api.status()
       .then(setStatus)
       .catch(() => setStatus(null));
+    api.sourceContext()
+      .then((context) => {
+        const selected = normalizeSelectedSources(context.selectedSources);
+        setSelectedSources(selected);
+        setActiveSource(normalizeActiveSource(context.activeSource, selected));
+      })
+      .catch(() => {
+        setSelectedSources(["qqmusic"]);
+        setActiveSource("qqmusic");
+      });
     refreshProviderStatuses();
   }, [refreshProviderStatuses]);
 
@@ -1353,27 +1363,16 @@ function sourceDisplayName(source: string) {
   }
 }
 
-function initialRouteFromUrl(): AppRoute {
-  return new URLSearchParams(window.location.search).has("sources") ? "setup" : "workbench";
-}
-
-function selectedSourcesFromUrl(): string[] {
-  const params = new URLSearchParams(window.location.search);
-  const raw = params.get("sources");
-  if (!raw) {
-    return ["qqmusic"];
-  }
-  return raw.split(",")
-    .map((item) => item.trim().toLowerCase())
+function normalizeSelectedSources(sources: string[] | undefined): string[] {
+  const normalized = (sources ?? [])
+    .map(sourceKey)
     .filter(Boolean);
+  return normalized.length > 0 ? Array.from(new Set(normalized)) : ["qqmusic"];
 }
 
-function activeSourceFromUrl(selectedSources: string[]): string {
-  const params = new URLSearchParams(window.location.search);
-  const requested = sourceKey(params.get("activeSource") ?? "");
-  const normalizedSelectedSources = selectedSources.map(sourceKey);
-  if (requested && normalizedSelectedSources.includes(requested)) {
-    return requested;
-  }
-  return normalizedSelectedSources[0] ?? "qqmusic";
+function normalizeActiveSource(activeSource: string | undefined, selectedSources: string[]): string {
+  const normalizedActiveSource = sourceKey(activeSource ?? "");
+  return normalizedActiveSource && selectedSources.includes(normalizedActiveSource)
+    ? normalizedActiveSource
+    : selectedSources[0] ?? "qqmusic";
 }

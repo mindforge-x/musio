@@ -1,6 +1,8 @@
 package com.musio.cli.process;
 
+import java.awt.AWTError;
 import java.awt.Desktop;
+import java.awt.GraphicsEnvironment;
 import java.io.IOException;
 import java.net.URI;
 import java.util.Locale;
@@ -14,17 +16,17 @@ public class BrowserLauncher {
     }
 
     private boolean openWithDesktop(URI uri) {
-        if (!Desktop.isDesktopSupported()) {
-            return false;
-        }
-        Desktop desktop = Desktop.getDesktop();
-        if (!desktop.isSupported(Desktop.Action.BROWSE)) {
-            return false;
-        }
         try {
+            if (GraphicsEnvironment.isHeadless() || !Desktop.isDesktopSupported()) {
+                return false;
+            }
+            Desktop desktop = Desktop.getDesktop();
+            if (!desktop.isSupported(Desktop.Action.BROWSE)) {
+                return false;
+            }
             desktop.browse(uri);
             return true;
-        } catch (IOException | RuntimeException e) {
+        } catch (AWTError | IOException | RuntimeException e) {
             return false;
         }
     }

@@ -36,6 +36,11 @@ public class MusioCliConfigStore {
 
     public MusioCliConfig load() {
         Map<String, String> values = readValues();
+        Path storageHome = expandHome(value(
+                values,
+                "storage.home",
+                defaultStorageHome(configPath).toString()
+        ));
         String serverHost = value(values, "server.host", DEFAULT_HOST);
         int serverPort = portValue(values, "server.port", DEFAULT_SERVER_PORT);
         String webHost = value(values, "web.host", DEFAULT_HOST);
@@ -56,13 +61,34 @@ public class MusioCliConfigStore {
             }
         }
 
-        return new MusioCliConfig(configPath, serverHost, serverPort, webHost, webPort, sidecarHost, sidecarPort);
+        return new MusioCliConfig(configPath, storageHome, serverHost, serverPort, webHost, webPort, sidecarHost, sidecarPort);
+    }
+
+    public MusioCliConfig initialize() {
+        try {
+            if (configPath.getParent() != null) {
+                Files.createDirectories(configPath.getParent());
+            }
+            if (!Files.isRegularFile(configPath)) {
+                Files.writeString(
+                        configPath,
+                        defaultContent(configPath),
+                        StandardOpenOption.CREATE_NEW
+                );
+            }
+            MusioCliConfig config = load();
+            Files.createDirectories(config.storageHome());
+            return config;
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to initialize Musio config file: " + configPath, e);
+        }
     }
 
     public Map<String, String> displayValues() {
         MusioCliConfig config = load();
         Map<String, String> values = new LinkedHashMap<>();
         values.put("config.path", config.configPath().toString());
+        values.put("storage.home", config.storageHome().toString());
         values.put("server.host", config.serverHost());
         values.put("server.port", Integer.toString(config.serverPort()));
         values.put("web.host", config.webHost());
@@ -263,7 +289,8 @@ public class MusioCliConfigStore {
                 "web.port",
                 "providers.qqmusic.sidecar_host",
                 "providers.qqmusic.sidecar_port",
-                "providers.qqmusic.sidecar_base_url"
+                "providers.qqmusic.sidecar_base_url",
+                "storage.home"
         );
     }
 
@@ -337,5 +364,39 @@ public class MusioCliConfigStore {
         } catch (URISyntaxException e) {
             return Optional.empty();
         }
+    }
+
+    private static Path defaultStorageHome(Path configPath) {
+        Path parent = configPath.toAbsolutePath().normalize().getParent();
+        if (parent != null) {
+            return parent;
+        }
+        return Path.of(System.getProperty("user.home"), ".musio").toAbsolutePath().normalize();
+    }
+
+    private static String defaultContent(Path configPath) {
+        String storageHome = defaultStorageHome(configPath).toString();
+        return "# Musio user configuration.\n"
+                + "# This file is created by the musio launcher and can be edited manually.\n\n"
+                + "[ai]\n"
+                + "provider = \"openai-compatible\"\n"
+                + "base_url = \"http://127.0.0.1:11434/v1\"\n"
+                + "api_key = \"${MUSIO_AI_API_KEY:}\"\n"
+                + "model = \"qwen2.5:7b\"\n"
+                + "temperature = 0.7\n"
+                + "max_tokens = 2048\n\n"
+                + "[server]\n"
+                + "host = \"127.0.0.1\"\n"
+                + "port = 18765\n\n"
+                + "[web]\n"
+                + "host = \"127.0.0.1\"\n"
+                + "port = 18766\n\n"
+                + "[providers.qqmusic]\n"
+                + "sidecar_host = \"127.0.0.1\"\n"
+                + "sidecar_port = 18767\n"
+                + "sidecar_base_url = \"http://127.0.0.1:18767\"\n"
+                + "allow_static_manifest_fallback = false\n\n"
+                + "[storage]\n"
+                + "home = " + tomlValue(storageHome) + "\n";
     }
 }

@@ -8,6 +8,12 @@ export type SystemStatus = {
   checkedAt: string;
 };
 
+export type SourceContext = {
+  selectedSources: string[];
+  activeSource: string;
+  userId: string;
+};
+
 export type LoginStartResult = {
   sessionId: string;
   provider: string;

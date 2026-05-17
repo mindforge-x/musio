@@ -1,28 +1,161 @@
 package com.musio.config;
 
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.springframework.core.env.Environment;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.nio.file.ClosedWatchServiceException;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardWatchEventKinds;
+import java.nio.file.WatchEvent;
+import java.nio.file.WatchKey;
+import java.nio.file.WatchService;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
 public class MusioConfigService {
+    private static final Logger log = LoggerFactory.getLogger(MusioConfigService.class);
     private static final Pattern ENV_REFERENCE = Pattern.compile("^\\$\\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?}$");
+    private static final long CONFIG_RELOAD_DEBOUNCE_MS = 500;
 
-    private final MusioConfig config;
+    private final Environment environment;
+    private final AtomicReference<MusioConfig> config;
+    private final AtomicReference<ScheduledFuture<?>> pendingReload = new AtomicReference<>();
+    private final ScheduledExecutorService reloadExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "musio-config-reload");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private WatchService watchService;
+    private Thread watcherThread;
 
     public MusioConfigService(Environment environment) {
-        this.config = load(environment);
+        this.environment = environment;
+        this.config = new AtomicReference<>(load(environment));
     }
 
     public MusioConfig config() {
-        return config;
+        return config.get();
+    }
+
+    @PostConstruct
+    public void startConfigWatcher() {
+        Path configPath = config().configPath();
+        Path parent = configPath.getParent();
+        if (parent == null) {
+            return;
+        }
+        try {
+            Files.createDirectories(parent);
+            WatchService watcher = FileSystems.getDefault().newWatchService();
+            parent.register(
+                    watcher,
+                    StandardWatchEventKinds.ENTRY_CREATE,
+                    StandardWatchEventKinds.ENTRY_MODIFY,
+                    StandardWatchEventKinds.ENTRY_DELETE
+            );
+            this.watchService = watcher;
+            this.watcherThread = new Thread(() -> watchConfigDirectory(watcher, configPath.getFileName()), "musio-config-watch");
+            this.watcherThread.setDaemon(true);
+            this.watcherThread.start();
+            log.info("MUSIO_CONFIG_WATCH path={}", configPath);
+        } catch (IOException e) {
+            log.warn("Failed to watch Musio config file {}: {}", configPath, e.toString());
+        }
+    }
+
+    @PreDestroy
+    public void stopConfigWatcher() {
+        WatchService watcher = this.watchService;
+        if (watcher != null) {
+            try {
+                watcher.close();
+            } catch (IOException e) {
+                log.debug("Failed to close Musio config watcher", e);
+            }
+        }
+        Thread thread = this.watcherThread;
+        if (thread != null) {
+            thread.interrupt();
+        }
+        reloadExecutor.shutdownNow();
+    }
+
+    void reloadDynamicConfig() {
+        try {
+            MusioConfig previous = config.get();
+            MusioConfig parsed = load(environment);
+            MusioConfig next = new MusioConfig(previous.configPath(), parsed.ai(), previous.providers(), previous.storage());
+            config.set(next);
+            if (!previous.ai().equals(next.ai())) {
+                log.info(
+                        "MUSIO_CONFIG_RELOADED scope=ai provider={} model={} baseUrl={}",
+                        next.ai().provider(),
+                        next.ai().model(),
+                        next.ai().baseUrl()
+                );
+            }
+        } catch (RuntimeException e) {
+            log.warn("Failed to reload Musio AI config. Keeping previous config. reason={}", e.toString());
+        }
+    }
+
+    private void watchConfigDirectory(WatchService watcher, Path watchedFileName) {
+        while (!Thread.currentThread().isInterrupted()) {
+            WatchKey key;
+            try {
+                key = watcher.take();
+            } catch (ClosedWatchServiceException e) {
+                return;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+
+            boolean configChanged = false;
+            for (WatchEvent<?> event : key.pollEvents()) {
+                if (event.kind() == StandardWatchEventKinds.OVERFLOW) {
+                    continue;
+                }
+                Object context = event.context();
+                if (context instanceof Path changedPath
+                        && watchedFileName.equals(changedPath.getFileName())) {
+                    configChanged = true;
+                }
+            }
+            if (configChanged) {
+                scheduleReload();
+            }
+            if (!key.reset()) {
+                return;
+            }
+        }
+    }
+
+    private void scheduleReload() {
+        ScheduledFuture<?> next = reloadExecutor.schedule(
+                this::reloadDynamicConfig,
+                CONFIG_RELOAD_DEBOUNCE_MS,
+                TimeUnit.MILLISECONDS
+        );
+        ScheduledFuture<?> previous = pendingReload.getAndSet(next);
+        if (previous != null) {
+            previous.cancel(false);
+        }
     }
 
     private MusioConfig load(Environment environment) {

@@ -5,6 +5,7 @@ import java.nio.file.Path;
 
 public record MusioCliConfig(
         Path configPath,
+        Path storageHome,
         String serverHost,
         int serverPort,
         String webHost,
@@ -22,6 +23,10 @@ public record MusioCliConfig(
 
     public URI systemStatusUri() {
         return URI.create(backendBaseUrl() + "/api/system/status");
+    }
+
+    public URI sourceContextUri() {
+        return URI.create(backendBaseUrl() + "/api/system/source-context");
     }
 
     public URI qqMusicLoginUri() {
