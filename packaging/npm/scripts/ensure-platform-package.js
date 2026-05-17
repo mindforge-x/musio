@@ -20,7 +20,8 @@ const target = `${process.platform}-${process.arch}`;
 const platformPackage = PLATFORM_PACKAGE_BY_TARGET[target];
 
 if (!platformPackage) {
-  fail(`Unsupported Musio platform: ${process.platform} (${process.arch})`);
+  warn(`Unsupported Musio platform: ${process.platform} (${process.arch})`);
+  process.exit(0);
 }
 
 if (resolvePlatformPackageRoot(platformPackage) || hasReleaseDirectory(packageRoot, "vendor") || hasReleaseDirectory(packageRoot, "dist")) {
@@ -32,10 +33,11 @@ if (process.env.MUSIO_RELEASE_ROOT && hasReleaseRoot(process.env.MUSIO_RELEASE_R
 }
 
 if (process.env.MUSIO_SKIP_PLATFORM_INSTALL === "1") {
-  fail(
+  warn(
     `Missing Musio platform runtime package: ${platformPackage}.`,
     "MUSIO_SKIP_PLATFORM_INSTALL=1 was set, so automatic runtime installation was skipped."
   );
+  process.exit(0);
 }
 
 const version = platformPackageVersion(platformPackage);
@@ -58,16 +60,17 @@ const result = spawnSync(npmCommand(), [
 });
 
 if (result.status !== 0) {
-  fail(
+  warn(
     `Failed to install Musio platform runtime package: ${spec}`,
     "Install Musio again with optional dependencies enabled, or check npm registry/network access."
   );
+  process.exit(0);
 }
 
 if (!resolvePlatformPackageRoot(platformPackage)) {
-  fail(
+  warn(
     `Musio platform runtime package is still missing after install: ${platformPackage}.`,
-    "This usually means npm skipped optional dependencies or postinstall scripts were disabled."
+    "The musio command will retry before launch. If it still fails, install the matching platform package explicitly."
   );
 }
 
@@ -98,11 +101,10 @@ function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
-function fail(...lines) {
+function warn(...lines) {
   for (const line of lines) {
     if (line) {
-      console.error(line);
+      console.warn(line);
     }
   }
-  process.exit(1);
 }
