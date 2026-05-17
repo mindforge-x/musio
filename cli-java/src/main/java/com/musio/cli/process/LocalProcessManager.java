@@ -331,11 +331,29 @@ public class LocalProcessManager {
     }
 
     private ProcessBuilder releaseProcess(LocalService service) {
-        return switch (service) {
+        ProcessBuilder builder = switch (service) {
             case QQMUSIC_SIDECAR -> releaseSidecarProcess();
             case BACKEND -> new ProcessBuilder(releaseJavaExecutable(), "-jar", releaseBackendJar().toString());
             case FRONTEND -> throw new IllegalStateException("生产模式不再启动独立 React frontend");
         };
+        return detachedLinuxProcess(builder);
+    }
+
+    private ProcessBuilder detachedLinuxProcess(ProcessBuilder builder) {
+        if (!isLinux()) {
+            return builder;
+        }
+
+        List<String> command = new ArrayList<>();
+        command.add("setsid");
+        command.addAll(builder.command());
+
+        ProcessBuilder detached = new ProcessBuilder(command);
+        if (builder.directory() != null) {
+            detached.directory(builder.directory());
+        }
+        detached.redirectInput(ProcessBuilder.Redirect.from(Path.of("/dev/null").toFile()));
+        return detached;
     }
 
     private ProcessBuilder releaseSidecarProcess() {
@@ -764,7 +782,7 @@ public class LocalProcessManager {
         }
 
         List<ProcessHandle> descendants = descendants(handle);
-        signalUnixProcessGroup(handle.pid(), "TERM");
+        signalUnixProcessGroupIfSafe(handle.pid(), "TERM");
         terminateProcesses(descendants, false);
         handle.destroy();
         if (waitForExit(handle, descendants)) {
@@ -772,7 +790,7 @@ public class LocalProcessManager {
         }
 
         descendants = descendants(handle);
-        signalUnixProcessGroup(handle.pid(), "KILL");
+        signalUnixProcessGroupIfSafe(handle.pid(), "KILL");
         terminateProcesses(descendants, true);
         handle.destroyForcibly();
         return waitForExit(handle, descendants);
@@ -821,11 +839,58 @@ public class LocalProcessManager {
         }
     }
 
-    private void signalUnixProcessGroup(long pid, String signal) {
+    private void signalUnixProcessGroupIfSafe(long pid, String signal) {
         if (pid <= 0 || isWindows()) {
             return;
         }
+        Optional<Long> processGroupId = processGroupId(pid);
+        if (processGroupId.isEmpty() || processGroupId.get() != pid) {
+            return;
+        }
+        Optional<Long> currentProcessGroupId = processGroupId(ProcessHandle.current().pid());
+        if (currentProcessGroupId.isPresent() && currentProcessGroupId.get().equals(processGroupId.get())) {
+            return;
+        }
         runCommandExitCode(List.of("kill", "-" + signal, "-" + pid), Duration.ofSeconds(2));
+    }
+
+    private Optional<Long> processGroupId(long pid) {
+        if (pid <= 0) {
+            return Optional.empty();
+        }
+        if (isLinux()) {
+            Optional<Long> linuxProcessGroupId = linuxProcessGroupId(pid);
+            if (linuxProcessGroupId.isPresent()) {
+                return linuxProcessGroupId;
+            }
+        }
+        return runCommandLines(List.of("ps", "-o", "pgid=", "-p", Long.toString(pid)), Duration.ofSeconds(2))
+                .stream()
+                .map(String::trim)
+                .filter(LocalProcessManager::isPositiveInteger)
+                .map(Long::parseLong)
+                .findFirst();
+    }
+
+    private Optional<Long> linuxProcessGroupId(long pid) {
+        Path statPath = Path.of("/proc", Long.toString(pid), "stat");
+        if (!Files.isRegularFile(statPath)) {
+            return Optional.empty();
+        }
+        try {
+            String stat = Files.readString(statPath);
+            int commandEnd = stat.lastIndexOf(')');
+            if (commandEnd < 0 || commandEnd + 1 >= stat.length()) {
+                return Optional.empty();
+            }
+            String[] fields = stat.substring(commandEnd + 1).trim().split("\\s+");
+            if (fields.length < 3 || !isPositiveInteger(fields[2])) {
+                return Optional.empty();
+            }
+            return Optional.of(Long.parseLong(fields[2]));
+        } catch (IOException | NumberFormatException e) {
+            return Optional.empty();
+        }
     }
 
     private boolean stopWindowsPid(long pid) {
