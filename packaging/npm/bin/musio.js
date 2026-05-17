@@ -88,7 +88,8 @@ function resolveReleaseRoot(targetName) {
     }
     fail(
       `Missing optional dependency ${platformPackage}.`,
-      "Reinstall Musio: npm install -g @mindforge-x/musio"
+      "Reinstall Musio: npm install -g @mindforge-x/musio",
+      "For local project installs, run: npm install @mindforge-x/musio"
     );
   }
 }

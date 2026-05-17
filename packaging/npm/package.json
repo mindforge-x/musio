@@ -12,10 +12,12 @@
     "musio": "bin/musio.js"
   },
   "files": [
-    "bin"
+    "bin",
+    "scripts/ensure-platform-package.js"
   ],
   "scripts": {
     "build:platform": "node ../scripts/build-platform-package.js",
+    "postinstall": "node scripts/ensure-platform-package.js",
     "prepack": "node scripts/verify-main-package.js",
     "prepublishOnly": "node scripts/verify-main-package.js"
   },

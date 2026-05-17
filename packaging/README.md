@@ -12,6 +12,13 @@ npm install -g @mindforge-x/musio
 musio
 ```
 
+For a local project install, use npm's local binary runner:
+
+```bash
+npm install @mindforge-x/musio
+npx musio
+```
+
 ## Build a platform package
 
 Platform payloads are built natively because both `jlink` and PyInstaller are platform-specific.
@@ -53,7 +60,7 @@ cd packaging/npm
 npm publish
 ```
 
-The launcher declares platform packages as optional dependencies. npm installs the package matching the user's OS and CPU.
+The launcher declares platform packages as optional dependencies. npm installs the package matching the user's OS and CPU by default. Users should not need `--include=optional`; if their npm config omits optional dependencies, the launcher postinstall step installs the matching platform runtime package automatically.
 
 ## GitHub Actions release
 
