@@ -10,6 +10,7 @@ public record MusioCliConfig(
         int serverPort,
         String webHost,
         int webPort,
+        String corsAllowedOrigins,
         String qqMusicSidecarHost,
         int qqMusicSidecarPort
 ) {
@@ -49,7 +50,4 @@ public record MusioCliConfig(
         return URI.create(qqMusicSidecarBaseUrl() + "/health");
     }
 
-    public String corsAllowedOrigins() {
-        return webBaseUrl() + ",http://localhost:" + webPort;
-    }
 }

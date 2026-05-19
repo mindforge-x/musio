@@ -210,6 +210,9 @@ port = 18765
 host = "127.0.0.1"
 port = 18766
 
+[cors]
+allowed_origins = "http://127.0.0.1:18766,http://localhost:18766"
+
 [providers.qqmusic]
 sidecar_host = "127.0.0.1"
 sidecar_port = 18767
@@ -232,6 +235,7 @@ home = "~/.musio"
 | `ai.max_tokens` | 单次模型响应的最大 token 数。 |
 | `server.host` / `server.port` | Spring backend 监听地址和端口。 |
 | `web.host` / `web.port` | 开发模式下 Vite Web 服务监听地址和端口。 |
+| `cors.allowed_origins` | 允许访问后端 API 的浏览器来源，多个来源用英文逗号分隔。 |
 | `providers.qqmusic.sidecar_host` / `sidecar_port` | QQMusic sidecar 监听地址和端口。设置后后端会优先按 host/port 推导 sidecar URL。 |
 | `providers.qqmusic.sidecar_base_url` | QQMusic sidecar 完整地址。未单独设置 host/port 时使用。 |
 | `providers.qqmusic.allow_static_manifest_fallback` | 开发兼容开关。建议保持 `false`，让 Agent 使用 sidecar 实时暴露的工具清单。 |
@@ -369,7 +373,7 @@ export MUSIO_QQMUSIC_PROXY=http://127.0.0.1:7890
 | `MUSIO_WEB_HOST` / `MUSIO_WEB_PORT` | Vite Web 开发服务地址和端口。 |
 | `MUSIO_BACKEND_BASE_URL` | 前端开发服务器代理到的后端地址，通常由脚本自动设置。 |
 | `VITE_MUSIO_BACKEND_URL` | Vite 代理使用的后端地址。 |
-| `MUSIO_CORS_ALLOWED_ORIGINS` | 后端允许的前端来源，多个来源用英文逗号分隔。 |
+| `MUSIO_CORS_ALLOWED_ORIGINS` | 后端允许的前端来源，多个来源用英文逗号分隔。通过 CLI 启动时该变量会优先于 `cors.allowed_origins`。 |
 | `MUSIO_QQMUSIC_HOST` / `MUSIO_QQMUSIC_PORT` | QQMusic sidecar 启动地址和端口。 |
 | `MUSIO_QQMUSIC_SIDECAR_BASE_URL` | 后端访问 QQMusic sidecar 的默认地址。 |
 | `MUSIO_QQMUSIC_CREDENTIALS` | QQ 音乐凭证文件路径。 |

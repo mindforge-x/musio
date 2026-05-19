@@ -1018,6 +1018,10 @@ public class LocalProcessManager {
     }
 
     private String corsAllowedOrigins() {
+        String environmentOverride = System.getenv("MUSIO_CORS_ALLOWED_ORIGINS");
+        if (environmentOverride != null && !environmentOverride.isBlank()) {
+            return environmentOverride.trim();
+        }
         if (!releaseMode) {
             return config.corsAllowedOrigins();
         }

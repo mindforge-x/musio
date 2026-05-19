@@ -21,7 +21,9 @@ public class MusioCliConfigStore {
     private static final Map<String, String> ALIASES = Map.of(
             "qqmusic.sidecar.host", "providers.qqmusic.sidecar_host",
             "qqmusic.sidecar.port", "providers.qqmusic.sidecar_port",
-            "qqmusic.sidecar.base_url", "providers.qqmusic.sidecar_base_url"
+            "qqmusic.sidecar.base_url", "providers.qqmusic.sidecar_base_url",
+            "cors.allowed-origins", "cors.allowed_origins",
+            "musio.cors.allowed-origins", "cors.allowed_origins"
     );
 
     private final Path configPath;
@@ -45,6 +47,7 @@ public class MusioCliConfigStore {
         int serverPort = portValue(values, "server.port", DEFAULT_SERVER_PORT);
         String webHost = value(values, "web.host", DEFAULT_HOST);
         int webPort = portValue(values, "web.port", DEFAULT_WEB_PORT);
+        String corsAllowedOrigins = value(values, "cors.allowed_origins", defaultCorsAllowedOrigins(webHost, webPort));
         String sidecarHost = value(values, "providers.qqmusic.sidecar_host", DEFAULT_HOST);
         int sidecarPort = portValue(values, "providers.qqmusic.sidecar_port", DEFAULT_QQMUSIC_SIDECAR_PORT);
 
@@ -61,7 +64,17 @@ public class MusioCliConfigStore {
             }
         }
 
-        return new MusioCliConfig(configPath, storageHome, serverHost, serverPort, webHost, webPort, sidecarHost, sidecarPort);
+        return new MusioCliConfig(
+                configPath,
+                storageHome,
+                serverHost,
+                serverPort,
+                webHost,
+                webPort,
+                corsAllowedOrigins,
+                sidecarHost,
+                sidecarPort
+        );
     }
 
     public MusioCliConfig initialize() {
@@ -93,6 +106,7 @@ public class MusioCliConfigStore {
         values.put("server.port", Integer.toString(config.serverPort()));
         values.put("web.host", config.webHost());
         values.put("web.port", Integer.toString(config.webPort()));
+        values.put("cors.allowed_origins", config.corsAllowedOrigins());
         values.put("providers.qqmusic.sidecar_host", config.qqMusicSidecarHost());
         values.put("providers.qqmusic.sidecar_port", Integer.toString(config.qqMusicSidecarPort()));
         values.put("providers.qqmusic.sidecar_base_url", config.qqMusicSidecarBaseUrl());
@@ -215,7 +229,8 @@ public class MusioCliConfigStore {
                 }
                 String key = line.substring(0, equals).trim();
                 String value = unquote(line.substring(equals + 1).trim());
-                values.put(section.isBlank() ? key : section + "." + key, value);
+                String fullKey = section.isBlank() ? key : section + "." + key;
+                values.put(canonicalKey(fullKey), value);
             }
         } catch (IOException e) {
             throw new IllegalStateException("Failed to read Musio config file: " + configPath, e);
@@ -279,6 +294,9 @@ public class MusioCliConfigStore {
                 throw new IllegalArgumentException("Port must be between 1 and 65535: " + value);
             }
         }
+        if (key.equals("cors.allowed_origins")) {
+            validateCorsAllowedOrigins(value);
+        }
     }
 
     private static List<String> displayKeys() {
@@ -287,6 +305,7 @@ public class MusioCliConfigStore {
                 "server.port",
                 "web.host",
                 "web.port",
+                "cors.allowed_origins",
                 "providers.qqmusic.sidecar_host",
                 "providers.qqmusic.sidecar_port",
                 "providers.qqmusic.sidecar_base_url",
@@ -303,6 +322,34 @@ public class MusioCliConfigStore {
 
     private static boolean isPortKey(String key) {
         return key.endsWith(".port") || key.endsWith("_port");
+    }
+
+    private static void validateCorsAllowedOrigins(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("CORS allowed origins must not be blank.");
+        }
+        for (String origin : value.split(",")) {
+            String trimmed = origin.trim();
+            if (trimmed.equals("*")) {
+                continue;
+            }
+            if (trimmed.isBlank()) {
+                throw new IllegalArgumentException("CORS allowed origins contains a blank entry.");
+            }
+            URI uri = parseUri(trimmed).orElseThrow(() ->
+                    new IllegalArgumentException("Invalid CORS origin: " + trimmed));
+            if (uri.getScheme() == null
+                    || uri.getHost() == null
+                    || uri.getPath() != null && !uri.getPath().isBlank()
+                    || uri.getQuery() != null
+                    || uri.getFragment() != null) {
+                throw new IllegalArgumentException("CORS origin must be scheme://host[:port]: " + trimmed);
+            }
+            String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
+            if (!scheme.equals("http") && !scheme.equals("https")) {
+                throw new IllegalArgumentException("CORS origin must use http or https: " + trimmed);
+            }
+        }
     }
 
     private static String tomlValue(String value) {
@@ -366,6 +413,10 @@ public class MusioCliConfigStore {
         }
     }
 
+    private static String defaultCorsAllowedOrigins(String webHost, int webPort) {
+        return "http://" + webHost + ":" + webPort + ",http://localhost:" + webPort;
+    }
+
     private static Path defaultStorageHome(Path configPath) {
         Path parent = configPath.toAbsolutePath().normalize().getParent();
         if (parent != null) {
@@ -391,6 +442,8 @@ public class MusioCliConfigStore {
                 + "[web]\n"
                 + "host = \"127.0.0.1\"\n"
                 + "port = 18766\n\n"
+                + "[cors]\n"
+                + "allowed_origins = \"http://127.0.0.1:18766,http://localhost:18766\"\n\n"
                 + "[providers.qqmusic]\n"
                 + "sidecar_host = \"127.0.0.1\"\n"
                 + "sidecar_port = 18767\n"
