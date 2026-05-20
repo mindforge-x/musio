@@ -31,5 +31,9 @@ public interface AgentCapabilityHandler {
         return AgentCapabilityValidationResult.accepted();
     }
 
+    default AgentCapabilityPreparationResult prepareForConfirmation(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
+        return AgentCapabilityPreparationResult.accepted(arguments == null ? Map.of() : arguments);
+    }
+
     Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments);
 }

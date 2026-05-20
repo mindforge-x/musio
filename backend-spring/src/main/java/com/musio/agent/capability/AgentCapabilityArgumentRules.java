@@ -89,7 +89,18 @@ final class AgentCapabilityArgumentRules {
         }
         if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(capabilityName)) {
             String playlistId = text(cleaned, MusioPlaylistCapabilityFields.PLAYLIST_ID);
-            cleaned.put(MusioPlaylistCapabilityFields.PLAYLIST_ID, playlistId.isBlank() ? MusioPlaylistCapabilityFields.DEFAULT_PLAYLIST_ID : playlistId);
+            String playlistName = text(cleaned, MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME);
+            if (playlistName.isBlank()) {
+                cleaned.remove(MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME);
+                cleaned.put(MusioPlaylistCapabilityFields.PLAYLIST_ID, playlistId.isBlank() ? MusioPlaylistCapabilityFields.DEFAULT_PLAYLIST_ID : playlistId);
+            } else {
+                cleaned.put(MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME, playlistName);
+                if (playlistId.isBlank()) {
+                    cleaned.remove(MusioPlaylistCapabilityFields.PLAYLIST_ID);
+                } else {
+                    cleaned.put(MusioPlaylistCapabilityFields.PLAYLIST_ID, playlistId);
+                }
+            }
             cleaned.put(MusioPlaylistCapabilityFields.SONG_ID, text(cleaned, MusioPlaylistCapabilityFields.SONG_ID));
             cleaned.put(MusioPlaylistCapabilityFields.SONG_TITLE, text(cleaned, MusioPlaylistCapabilityFields.SONG_TITLE));
             cleaned.put(MusioPlaylistCapabilityFields.ARTIST, text(cleaned, MusioPlaylistCapabilityFields.ARTIST));

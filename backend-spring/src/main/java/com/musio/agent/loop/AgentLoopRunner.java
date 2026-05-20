@@ -10,6 +10,7 @@ import com.musio.agent.LocalWriteConfirmationConstants;
 import com.musio.agent.capability.AgentCapabilityExecutor;
 import com.musio.agent.capability.AgentCapabilityManifest;
 import com.musio.agent.capability.AgentCapabilityRegistry;
+import com.musio.agent.capability.AgentCapabilityPreparationResult;
 import com.musio.agent.capability.AgentCapabilityValidationResult;
 import com.musio.agent.capability.MusioPlaylistCapabilityFields;
 import com.musio.agent.capability.MusioPlaylistCapabilityExecutor;
@@ -771,6 +772,18 @@ public class AgentLoopRunner {
                 && !hasTextArgument(action, MusioPlaylistCapabilityFields.PLAYLIST_NAME)) {
             return ConfirmationDecision.rejected("missing_playlist_name");
         }
+        AgentCapabilityPreparationResult preparation = capabilityExecutor.prepareForConfirmation(state, action.toolName(), action.arguments());
+        if (!preparation.valid()) {
+            return ConfirmationDecision.rejected(preparation.reason());
+        }
+        action = new AgentStepAction(
+                action.action(),
+                action.toolName(),
+                preparation.arguments(),
+                action.publicActivity(),
+                action.confidence(),
+                action.reason()
+        );
         String actionId = "%s:%s".formatted(action.toolName(), stepId(step));
         ChatConfirmation confirmation = localPlaylistConfirmation(actionId, state, action);
         log.info(
@@ -823,10 +836,14 @@ public class AgentLoopRunner {
             );
         }
         List<Song> songs = confirmationSongs(state, action);
+        String playlistName = textArgument(action, MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME);
+        String targetPlaylistName = playlistName.isBlank() ? MusioPlaylistCapabilityFields.DEFAULT_PLAYLIST_NAME : playlistName;
         String title = songs.size() > 1 ? "选择要收藏的歌曲" : "收藏到 Musio 歌单";
         String description = songs.size() > 1
-                ? "已为你准备 %s 首待加入本地 Musio 默认歌单的歌曲。".formatted(songs.size())
-                : songs.isEmpty() ? "确认后会加入本地 Musio 默认歌单。" : "将《%s》加入本地 Musio 默认歌单。".formatted(songs.getFirst().title());
+                ? "已为你准备 %s 首待加入本地 Musio 歌单「%s」的歌曲。".formatted(songs.size(), targetPlaylistName)
+                : songs.isEmpty()
+                ? "确认后会加入本地 Musio 歌单「%s」。".formatted(targetPlaylistName)
+                : "将《%s》加入本地 Musio 歌单「%s」。".formatted(songs.getFirst().title(), targetPlaylistName);
         return new ChatConfirmation(
                 actionId,
                 ChatConfirmationTypes.LOCAL_PLAYLIST_ADD,
@@ -838,7 +855,7 @@ public class AgentLoopRunner {
                 songs,
                 songs.size() > 1 ? "multiple" : "single",
                 songs.stream().map(Song::id).toList(),
-                "",
+                targetPlaylistName,
                 ""
         );
     }

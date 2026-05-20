@@ -10,6 +10,7 @@ import com.musio.agent.capability.AgentCapability;
 import com.musio.agent.capability.AgentCapabilityArgumentContext;
 import com.musio.agent.capability.AgentCapabilityExecutor;
 import com.musio.agent.capability.AgentCapabilityHandler;
+import com.musio.agent.capability.AgentCapabilityPreparationResult;
 import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.agent.capability.AgentCapabilityValidationResult;
 import com.musio.agent.capability.CapabilityEffect;
@@ -1559,6 +1560,90 @@ class AgentLoopRunnerTest {
     }
 
     @Test
+    void inlineLocalWriteConfirmationKeepsSpecifiedPlaylistTarget() {
+        TargetedPlaylistCapabilityExecutor playlistExecutor = new TargetedPlaylistCapabilityExecutor(
+                "playlist-commute",
+                "通勤",
+                """
+                        {"success":true,"summary":"已帮你收藏到 Musio 歌单：普通朋友 - 陶喆。","playlistId":"playlist-commute","playlistName":"通勤","song":{"id":"qqmusic:004FITZG2U6rAF","provider":"QQMUSIC","title":"普通朋友","artists":["陶喆"],"album":"I'm OK","durationSeconds":255,"artworkUrl":null}}
+                        """
+        );
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(playlistExecutor);
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(playlistHandler));
+        AgentEventBus eventBus = new AgentEventBus();
+        ConfirmationService confirmationService = new ConfirmationService();
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(
+                                AgentStepActionType.REQUEST_CONFIRMATION,
+                                "add_song_to_musio_playlist",
+                                Map.of(
+                                        "playlistName", "通勤",
+                                        "songId", "qqmusic:004FITZG2U6rAF",
+                                        "songTitle", "普通朋友",
+                                        "artist", "陶喆"
+                                ),
+                                "请求收藏确认",
+                                0.9,
+                                "planner_requested_confirmation"
+                        ),
+                        AgentStepAction.finalAnswer("结束", 0.9)
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(playlistHandler)),
+                null,
+                eventBus,
+                confirmationService
+        );
+        List<com.musio.model.ChatConfirmation> confirmations = new java.util.ArrayList<>();
+        eventBus.subscribe("run-1", event -> {
+            if ("confirmation_request".equals(event.type())) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) event.data();
+                var confirmation = (com.musio.model.ChatConfirmation) data.get("confirmation");
+                confirmations.add(confirmation);
+                confirmationService.confirm("run-1", new PendingConfirmation(confirmation.actionId(), true, Map.of("selectedSongIds", confirmation.defaultSelectedSongIds())));
+            }
+        });
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "把普通朋友加入通勤歌单",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(true),
+                1,
+                new AgentGoal(
+                        "把普通朋友加入通勤歌单",
+                        "把《普通朋友》加入通勤歌单",
+                        "playlist",
+                        "new_task",
+                        true,
+                        true,
+                        true,
+                        false,
+                        1,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(1, confirmations.size());
+        assertEquals("通勤", confirmations.getFirst().playlistName());
+        assertTrue(confirmations.getFirst().description().contains("通勤"));
+        assertEquals(1, playlistExecutor.calls.size());
+        assertEquals("playlist-commute", playlistExecutor.calls.getFirst().get("playlistId"));
+        assertEquals("通勤", playlistExecutor.calls.getFirst().get("playlistName"));
+        assertEquals("qqmusic:004FITZG2U6rAF", playlistExecutor.calls.getFirst().get("songId"));
+    }
+
+    @Test
     void currentPlaybackLocalWriteDoesNotFallBackToFirstPreviousRecommendation() {
         Song previousFirst = new Song("qqmusic:000amRvH3wxv56", ProviderType.QQMUSIC, "安静", List.of("周杰伦"), "范特西", 334, null);
         Song current = new Song("qqmusic:004FITZG2U6rAF", ProviderType.QQMUSIC, "普通朋友", List.of("陶喆"), "I'm OK", 255, null);
@@ -1982,7 +2067,7 @@ class AgentLoopRunnerTest {
 
     private static class CapturingPlaylistCapabilityExecutor extends MusioPlaylistCapabilityExecutor {
         private final String resultJson;
-        private final List<Map<String, Object>> calls = new java.util.ArrayList<>();
+        final List<Map<String, Object>> calls = new java.util.ArrayList<>();
 
         private CapturingPlaylistCapabilityExecutor(String resultJson) {
             super(null, null, null, null, new ObjectMapper());
@@ -1993,6 +2078,25 @@ class AgentLoopRunnerTest {
         public String executeAddSongToMusioPlaylist(AgentLoopState state, Map<String, Object> arguments) {
             calls.add(Map.copyOf(arguments));
             return resultJson;
+        }
+    }
+
+    private static class TargetedPlaylistCapabilityExecutor extends CapturingPlaylistCapabilityExecutor {
+        private final String playlistId;
+        private final String playlistName;
+
+        private TargetedPlaylistCapabilityExecutor(String playlistId, String playlistName, String resultJson) {
+            super(resultJson);
+            this.playlistId = playlistId;
+            this.playlistName = playlistName;
+        }
+
+        @Override
+        public AgentCapabilityPreparationResult prepareAddSongToMusioPlaylistArguments(Map<String, Object> arguments) {
+            Map<String, Object> prepared = new java.util.LinkedHashMap<>(arguments == null ? Map.of() : arguments);
+            prepared.put("playlistId", playlistId);
+            prepared.put("playlistName", playlistName);
+            return AgentCapabilityPreparationResult.accepted(prepared);
         }
     }
 

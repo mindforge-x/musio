@@ -176,6 +176,98 @@ class MusioPlaylistCapabilityExecutorTest {
     }
 
     @Test
+    void playlistNameTargetsExistingLocalPlaylist() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        MusioPlaylistService playlistService = new MusioPlaylistService(
+                tempDir.resolve("playlists").resolve("musio-playlists.json"),
+                objectMapper
+        );
+        MusioPlaylist targetPlaylist = playlistService.create("通勤", "路上听");
+        AgentEventBus eventBus = new AgentEventBus();
+        MusioPlaylistCapabilityExecutor executor = new MusioPlaylistCapabilityExecutor(
+                playlistService,
+                null,
+                eventBus,
+                new AgentTracePublisher(eventBus),
+                objectMapper
+        );
+        Song song = new Song("qqmusic:commute", ProviderType.QQMUSIC, "普通朋友", List.of("陶喆"), "I'm OK", 255, null);
+        AgentLoopState state = new AgentLoopState(
+                "run-1",
+                "local",
+                "把这首歌加入通勤歌单",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(new AgentObservation(
+                        "loop.step.1",
+                        "recommend_songs",
+                        Map.of(),
+                        AgentObservationStatus.SUCCESS,
+                        "",
+                        "recommend_songs 成功",
+                        List.of(song)
+                )),
+                1
+        );
+
+        String resultJson = executor.executeAddSongToMusioPlaylist(state, Map.of(
+                "playlistName", "通勤",
+                "songId", "qqmusic:commute"
+        ));
+
+        var root = objectMapper.readTree(resultJson);
+        assertEquals(true, root.path("success").asBoolean());
+        assertEquals(targetPlaylist.id(), root.path("playlistId").asText());
+        assertEquals("通勤", root.path("playlistName").asText());
+        assertEquals(0, playlistService.get("default").items().size());
+        assertEquals("qqmusic:commute", playlistService.get(targetPlaylist.id()).items().getFirst().providerTrackId());
+    }
+
+    @Test
+    void missingPlaylistNameDoesNotWriteToDefaultPlaylist() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        MusioPlaylistService playlistService = new MusioPlaylistService(
+                tempDir.resolve("playlists").resolve("musio-playlists.json"),
+                objectMapper
+        );
+        AgentEventBus eventBus = new AgentEventBus();
+        MusioPlaylistCapabilityExecutor executor = new MusioPlaylistCapabilityExecutor(
+                playlistService,
+                null,
+                eventBus,
+                new AgentTracePublisher(eventBus),
+                objectMapper
+        );
+        Song song = new Song("qqmusic:missing", ProviderType.QQMUSIC, "晴天", List.of("周杰伦"), "叶惠美", 269, null);
+        AgentLoopState state = new AgentLoopState(
+                "run-1",
+                "local",
+                "把这首歌加入不存在歌单",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(new AgentObservation(
+                        "loop.step.1",
+                        "recommend_songs",
+                        Map.of(),
+                        AgentObservationStatus.SUCCESS,
+                        "",
+                        "recommend_songs 成功",
+                        List.of(song)
+                )),
+                1
+        );
+
+        String resultJson = executor.executeAddSongToMusioPlaylist(state, Map.of(
+                "playlistName", "不存在",
+                "songId", "qqmusic:missing"
+        ));
+
+        var root = objectMapper.readTree(resultJson);
+        assertEquals(false, root.path("success").asBoolean());
+        assertEquals(0, playlistService.get("default").items().size());
+    }
+
+    @Test
     void createPlaylistPersistsNameAndDescription() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
         MusioPlaylistService playlistService = new MusioPlaylistService(

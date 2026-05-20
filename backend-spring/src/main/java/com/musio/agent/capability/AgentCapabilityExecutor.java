@@ -57,6 +57,21 @@ public class AgentCapabilityExecutor {
         return fallbackValidate(state, capabilityName, arguments == null ? Map.of() : arguments);
     }
 
+    public AgentCapabilityPreparationResult prepareForConfirmation(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
+        AgentCapabilityHandler handler = handlerFor(capabilityName);
+        if (handler != null) {
+            return handler.prepareForConfirmation(state, capabilityName, arguments);
+        }
+        if (!canExecute(capabilityName)) {
+            return AgentCapabilityPreparationResult.rejected("tool_not_executable");
+        }
+        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(capabilityName)
+                && musioPlaylistCapabilityExecutor != null) {
+            return musioPlaylistCapabilityExecutor.prepareAddSongToMusioPlaylistArguments(arguments == null ? Map.of() : arguments);
+        }
+        return AgentCapabilityPreparationResult.accepted(arguments == null ? Map.of() : arguments);
+    }
+
     public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
         AgentCapabilityHandler handler = handlerFor(capabilityName);
         if (handler != null) {

@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -75,7 +76,11 @@ public class MusioPlaylistCapabilityExecutor {
     }
 
     public String executeAddSongToMusioPlaylist(AgentLoopState state, Map<String, Object> arguments) {
-        Map<String, Object> safeArguments = arguments == null ? Map.of() : arguments;
+        AgentCapabilityPreparationResult prepared = prepareAddSongToMusioPlaylistArguments(arguments == null ? Map.of() : arguments);
+        if (!prepared.valid()) {
+            return writeJson(failure(playlistTargetFailureMessage(prepared.reason())));
+        }
+        Map<String, Object> safeArguments = prepared.arguments();
         String runId = state == null ? "" : state.runId();
         String playlistId = text(safeArguments, MusioPlaylistCapabilityFields.PLAYLIST_ID).isBlank()
                 ? MusioPlaylistCapabilityFields.DEFAULT_PLAYLIST_ID
@@ -131,6 +136,46 @@ public class MusioPlaylistCapabilityExecutor {
             tracePublisher.publishToolError(runId, AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST, String.valueOf(result.getOrDefault("message", "收藏失败。")));
         }
         return writeJson(result);
+    }
+
+    public AgentCapabilityPreparationResult prepareAddSongToMusioPlaylistArguments(Map<String, Object> arguments) {
+        Map<String, Object> safeArguments = arguments == null ? Map.of() : arguments;
+        Map<String, Object> prepared = new LinkedHashMap<>(safeArguments);
+        String playlistId = text(prepared, MusioPlaylistCapabilityFields.PLAYLIST_ID);
+        String playlistName = text(prepared, MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME);
+        if (musioPlaylistService == null) {
+            if (playlistId.isBlank() && playlistName.isBlank()) {
+                prepared.put(MusioPlaylistCapabilityFields.PLAYLIST_ID, MusioPlaylistCapabilityFields.DEFAULT_PLAYLIST_ID);
+            }
+            return AgentCapabilityPreparationResult.accepted(prepared);
+        }
+        if (!playlistId.isBlank()) {
+            try {
+                MusioPlaylist playlist = musioPlaylistService.get(playlistId);
+                prepared.put(MusioPlaylistCapabilityFields.PLAYLIST_ID, playlist.id());
+                prepared.put(MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME, playlist.name());
+                return AgentCapabilityPreparationResult.accepted(prepared);
+            } catch (IllegalArgumentException e) {
+                return AgentCapabilityPreparationResult.rejected("playlist_not_found");
+            }
+        }
+        if (playlistName.isBlank()) {
+            MusioPlaylist playlist = musioPlaylistService.get(MusioPlaylistCapabilityFields.DEFAULT_PLAYLIST_ID);
+            prepared.put(MusioPlaylistCapabilityFields.PLAYLIST_ID, playlist.id());
+            prepared.put(MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME, playlist.name());
+            return AgentCapabilityPreparationResult.accepted(prepared);
+        }
+        List<MusioPlaylist> matches = matchingPlaylists(playlistName);
+        if (matches.isEmpty()) {
+            return AgentCapabilityPreparationResult.rejected("playlist_name_not_found");
+        }
+        if (matches.size() > 1) {
+            return AgentCapabilityPreparationResult.rejected("playlist_name_ambiguous");
+        }
+        MusioPlaylist playlist = matches.getFirst();
+        prepared.put(MusioPlaylistCapabilityFields.PLAYLIST_ID, playlist.id());
+        prepared.put(MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME, playlist.name());
+        return AgentCapabilityPreparationResult.accepted(prepared);
     }
 
     private List<PlaylistSongResolution> resolveSongs(AgentLoopState state, Map<String, Object> arguments) {
@@ -298,6 +343,7 @@ public class MusioPlaylistCapabilityExecutor {
     private Map<String, Object> musioPlaylistAddInput(String playlistId, Map<String, Object> arguments) {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put(MusioPlaylistCapabilityFields.PLAYLIST_ID, playlistId);
+        copyTextArgument(arguments, input, MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME);
         copyTextArgument(arguments, input, MusioPlaylistCapabilityFields.SONG_ID);
         List<String> songIds = stringList(arguments.get(MusioPlaylistCapabilityFields.SONG_IDS));
         if (!songIds.isEmpty()) {
@@ -443,13 +489,22 @@ public class MusioPlaylistCapabilityExecutor {
         return result;
     }
 
+    private String playlistTargetFailureMessage(String reason) {
+        return switch (reason == null ? "" : reason) {
+            case "playlist_name_not_found" -> "没找到这个本地 Musio 歌单。请告诉我要加入哪个已有歌单，或先创建这个歌单。";
+            case "playlist_name_ambiguous" -> "找到多个相近的本地 Musio 歌单。请告诉我更准确的歌单名。";
+            case "playlist_not_found" -> "没找到目标本地 Musio 歌单。请重新选择一个已有歌单。";
+            default -> "收藏失败。";
+        };
+    }
+
     private String answerText(Song song, boolean existed) {
         String title = song.title() == null || song.title().isBlank() ? song.id() : song.title();
         String artists = song.artists() == null || song.artists().isEmpty() ? "" : " - " + String.join(" / ", song.artists());
         if (existed) {
-            return "这首歌已经在 Musio 歌单里了：" + title + artists + "。";
+            return "这首歌已经在目标 Musio 歌单里了：" + title + artists + "。";
         }
-        return "已帮你收藏到 Musio 歌单：" + title + artists + "。";
+        return "已帮你收藏到目标 Musio 歌单：" + title + artists + "。";
     }
 
     private String answerText(List<Song> songs, int addedCount, int alreadyExistsCount, int unresolvedCount) {
@@ -549,6 +604,29 @@ public class MusioPlaylistCapabilityExecutor {
         return value.toLowerCase()
                 .replaceAll("[《》<>\\[\\]【】()（）\\s·・,，。.!！?？:：;；'\"“”‘’-]+", "")
                 .strip();
+    }
+
+    private List<MusioPlaylist> matchingPlaylists(String playlistName) {
+        String normalizedQuery = normalizePlaylistName(playlistName);
+        if (normalizedQuery.isBlank()) {
+            return List.of();
+        }
+        return musioPlaylistService.list().stream()
+                .filter(playlist -> normalizedQuery.equals(normalizePlaylistName(playlist.name())))
+                .toList();
+    }
+
+    private String normalizePlaylistName(String value) {
+        if (value == null) {
+            return "";
+        }
+        String normalized = value.toLowerCase(Locale.ROOT)
+                .replaceAll("[《》<>\\[\\]【】()（）\\s·・,，。.!！?？:：;；'\"“”‘’-]+", "")
+                .strip();
+        while (normalized.endsWith("歌单") && normalized.length() > 2) {
+            normalized = normalized.substring(0, normalized.length() - 2);
+        }
+        return normalized;
     }
 
     private void copyTextArgument(Map<String, Object> source, Map<String, Object> target, String key) {

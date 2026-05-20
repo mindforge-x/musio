@@ -25,7 +25,7 @@ public class AgentCapabilityRegistry {
             new AgentCapability("get_hot_comments", CapabilityEffect.READ, "读取一首或多首歌曲的热门评论。", "{\"songId\": string, \"songIds\": string[], \"limit\": number}", Set.of()),
             new AgentCapability("get_user_playlists", CapabilityEffect.READ, "读取用户歌单。", "{\"limit\": number}", Set.of()),
             new AgentCapability("get_playlist_songs", CapabilityEffect.READ, "读取歌单歌曲。", "{\"playlistId\": string, \"limit\": number}", Set.of("playlistId")),
-            new AgentCapability(ADD_SONG_TO_MUSIO_PLAYLIST, CapabilityEffect.LOCAL_WRITE, "把一首或多首歌曲收藏到本地 Musio 默认歌单；这是 Musio 本地歌单写入，不是 QQ 音乐账号收藏。", "{\"playlistId\": string, \"songId\": string, \"songIds\": string[], \"songTitle\": string, \"artist\": string, \"songIndex\": number, \"songIndexes\": number[]}", Set.of()),
+            new AgentCapability(ADD_SONG_TO_MUSIO_PLAYLIST, CapabilityEffect.LOCAL_WRITE, "把一首或多首歌曲收藏到本地 Musio 歌单；playlistName 可指定已有本地歌单，未指定时使用默认歌单；这是 Musio 本地歌单写入，不是 QQ 音乐账号收藏。", "{\"playlistId\": string, \"playlistName\": string, \"songId\": string, \"songIds\": string[], \"songTitle\": string, \"artist\": string, \"songIndex\": number, \"songIndexes\": number[]}", Set.of()),
             new AgentCapability(CREATE_MUSIO_PLAYLIST, CapabilityEffect.LOCAL_WRITE, "创建本地 Musio 歌单，可携带用户明确提供的歌单描述；这是本地写入，必须先获得用户确认。", "{\"name\": string, \"description\": string}", Set.of(MusioPlaylistCapabilityFields.PLAYLIST_NAME))
     );
 

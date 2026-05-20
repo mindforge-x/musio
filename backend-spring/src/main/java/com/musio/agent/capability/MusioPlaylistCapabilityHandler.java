@@ -15,8 +15,8 @@ public class MusioPlaylistCapabilityHandler implements AgentCapabilityHandler {
     private static final AgentCapability ADD_SONG = new AgentCapability(
             AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
             CapabilityEffect.LOCAL_WRITE,
-            "把一首或多首歌曲收藏到本地 Musio 默认歌单；这是 Musio 本地歌单写入，不是 QQ 音乐账号收藏。",
-            "{\"playlistId\": string, \"songId\": string, \"songIds\": string[], \"songTitle\": string, \"artist\": string, \"songIndex\": number, \"songIndexes\": number[]}",
+            "把一首或多首歌曲收藏到本地 Musio 歌单；playlistName 可指定已有本地歌单，未指定时使用默认歌单；这是 Musio 本地歌单写入，不是 QQ 音乐账号收藏。",
+            "{\"playlistId\": string, \"playlistName\": string, \"songId\": string, \"songIds\": string[], \"songTitle\": string, \"artist\": string, \"songIndex\": number, \"songIndexes\": number[]}",
             Set.of()
     );
     private static final AgentCapability CREATE_PLAYLIST = new AgentCapability(
@@ -75,7 +75,25 @@ public class MusioPlaylistCapabilityHandler implements AgentCapabilityHandler {
         if (CREATE_PLAYLIST.name().equals(capabilityName)) {
             return AgentCapabilityArgumentRules.validateMusioPlaylistCreateRequiredArguments(arguments == null ? Map.of() : arguments);
         }
-        return AgentCapabilityArgumentRules.validateMusioPlaylistRequiredArguments(arguments == null ? Map.of() : arguments);
+        AgentCapabilityValidationResult songTargetValidation = AgentCapabilityArgumentRules.validateMusioPlaylistRequiredArguments(arguments == null ? Map.of() : arguments);
+        if (!songTargetValidation.valid()) {
+            return songTargetValidation;
+        }
+        AgentCapabilityPreparationResult prepared = executor.prepareAddSongToMusioPlaylistArguments(arguments == null ? Map.of() : arguments);
+        return prepared.valid()
+                ? AgentCapabilityValidationResult.accepted()
+                : AgentCapabilityValidationResult.rejected(prepared.reason());
+    }
+
+    @Override
+    public AgentCapabilityPreparationResult prepareForConfirmation(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
+        if (!supports(capabilityName)) {
+            return AgentCapabilityPreparationResult.rejected("unknown_tool");
+        }
+        if (ADD_SONG.name().equals(capabilityName)) {
+            return executor.prepareAddSongToMusioPlaylistArguments(arguments == null ? Map.of() : arguments);
+        }
+        return AgentCapabilityPreparationResult.accepted(arguments == null ? Map.of() : arguments);
     }
 
     @Override
