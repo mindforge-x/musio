@@ -1,6 +1,7 @@
 import {
   ChatHistoryMessage,
   ChatRunResponse,
+  CreateMusioPlaylistPayload,
   Lyrics,
   LoginStartResult,
   LoginStatus,
@@ -106,6 +107,11 @@ export const api = {
       body: JSON.stringify(state)
     }),
   musioPlaylists: () => request<MusioPlaylist[]>("/api/musio/playlists"),
+  createMusioPlaylist: (payload: CreateMusioPlaylistPayload) =>
+    request<MusioPlaylist>("/api/musio/playlists", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   addSongToMusioPlaylist: (playlistId: string, song: Song) =>
     request<MusioPlaylist>(`/api/musio/playlists/${encodeURIComponent(playlistId)}/items`, {
       method: "POST",

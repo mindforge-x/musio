@@ -197,3 +197,8 @@ export type MusioPlaylist = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type CreateMusioPlaylistPayload = {
+  name: string;
+  description?: string | null;
+};

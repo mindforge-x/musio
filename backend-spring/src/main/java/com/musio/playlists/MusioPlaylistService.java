@@ -107,6 +107,26 @@ public class MusioPlaylistService {
         return playlist;
     }
 
+    public synchronized MusioPlaylist create(String name, String description) {
+        String normalizedName = name == null ? "" : name.trim();
+        if (normalizedName.isBlank()) {
+            throw new IllegalArgumentException("Playlist name is required.");
+        }
+
+        Instant now = Instant.now();
+        MusioPlaylist playlist = new MusioPlaylist(
+                UUID.randomUUID().toString(),
+                normalizedName,
+                description == null ? "" : description.trim(),
+                List.of(),
+                now,
+                now
+        );
+        playlists.put(playlist.id(), playlist);
+        persist();
+        return playlist;
+    }
+
     public synchronized MusioPlaylist addSong(String playlistId, Song song) {
         MusioPlaylist playlist = get(playlistId);
         if (song == null || song.id() == null || song.id().isBlank()) {

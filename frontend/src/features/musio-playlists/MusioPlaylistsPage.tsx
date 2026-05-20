@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { Plus, X } from "lucide-react";
 import { EventLog, MusioPlaylist, MusioPlaylistItem, Song } from "../../shared/types";
 import { musioPlaylistClient } from "./musioPlaylistClient";
 import { MusioPlaylistDetail } from "./MusioPlaylistDetail";
@@ -22,6 +23,10 @@ export function MusioPlaylistsPage({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [operationItemId, setOperationItemId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createDescription, setCreateDescription] = useState("");
+  const [creatingPlaylist, setCreatingPlaylist] = useState(false);
 
   useEffect(() => {
     musioPlaylistClient.list()
@@ -43,6 +48,7 @@ export function MusioPlaylistsPage({
     () => playlists.reduce((total, playlist) => total + playlist.items.length, 0),
     [playlists]
   );
+  const canCreatePlaylist = createName.trim().length > 0 && !creatingPlaylist;
 
   function playSelectedPlaylist(startIndex: number) {
     if (!selected || selectedSongs.length === 0) {
@@ -76,6 +82,31 @@ export function MusioPlaylistsPage({
     }
   }
 
+  async function createPlaylist(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canCreatePlaylist) {
+      return;
+    }
+    setCreatingPlaylist(true);
+    try {
+      const created = await musioPlaylistClient.create({
+        name: createName,
+        description: createDescription
+      });
+      setPlaylists((current) => [...current, created]);
+      setSelectedId(created.id);
+      setCreateName("");
+      setCreateDescription("");
+      setCreateOpen(false);
+      onEvent({ id: crypto.randomUUID(), name: "playlist", detail: `已创建歌单：${created.name}` });
+    } catch (error) {
+      const detail = error instanceof Error && error.message ? error.message : "未知错误";
+      onEvent({ id: crypto.randomUUID(), name: "playlist", detail: `创建歌单失败：${detail}` });
+    } finally {
+      setCreatingPlaylist(false);
+    }
+  }
+
   return (
     <section className="panel musio-playlists-panel nothing-playlists-panel">
       <div className="nothing-playlists-header">
@@ -91,6 +122,60 @@ export function MusioPlaylistsPage({
       </div>
       <div className="musio-playlists-layout">
         <div className="musio-playlist-list" aria-label="Musio 歌单列表">
+          <button
+            type="button"
+            className="musio-playlist-create-toggle"
+            onClick={() => setCreateOpen((current) => !current)}
+            aria-expanded={createOpen}
+          >
+            <span className="musio-playlist-index">
+              <Plus size={18} />
+            </span>
+            <span className="musio-playlist-name">新建本地歌单</span>
+            <small>CREATE PLAYLIST</small>
+          </button>
+          {createOpen ? (
+            <form className="musio-playlist-create-form" onSubmit={createPlaylist}>
+              <label>
+                <span>歌单名称</span>
+                <input
+                  value={createName}
+                  onChange={(event) => setCreateName(event.target.value)}
+                  placeholder="例如：深夜代码"
+                  maxLength={80}
+                  autoFocus
+                />
+              </label>
+              <label>
+                <span>描述</span>
+                <textarea
+                  value={createDescription}
+                  onChange={(event) => setCreateDescription(event.target.value)}
+                  placeholder="可选"
+                  maxLength={240}
+                  rows={3}
+                />
+              </label>
+              <div className="musio-playlist-create-actions">
+                <button type="submit" className="primary" disabled={!canCreatePlaylist}>
+                  <Plus size={14} />
+                  <span>{creatingPlaylist ? "创建中" : "创建"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreateOpen(false);
+                    setCreateName("");
+                    setCreateDescription("");
+                  }}
+                  disabled={creatingPlaylist}
+                >
+                  <X size={14} />
+                  <span>取消</span>
+                </button>
+              </div>
+            </form>
+          ) : null}
           {playlists.length === 0 ? (
             <p className="empty-copy">{loading ? "读取 Musio 歌单中。" : "还没有 Musio 歌单。"}</p>
           ) : (

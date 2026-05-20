@@ -2135,6 +2135,92 @@ textarea:focus,
   letter-spacing: 0.08em;
 }
 
+.musio-playlist-create-toggle .musio-playlist-index {
+  display: grid;
+  place-items: center;
+}
+
+.musio-playlist-create-form {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.musio-playlist-create-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.musio-playlist-create-form label span {
+  color: var(--text-secondary);
+  font-family: var(--font-data);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.musio-playlist-create-form input,
+.musio-playlist-create-form textarea {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.5);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.musio-playlist-create-form input {
+  min-height: 40px;
+  padding: 0 11px;
+}
+
+.musio-playlist-create-form textarea {
+  min-height: 78px;
+  resize: vertical;
+  padding: 10px 11px;
+  line-height: 1.45;
+}
+
+.musio-playlist-create-form input:focus,
+.musio-playlist-create-form textarea:focus {
+  border-color: var(--text-display);
+}
+
+.musio-playlist-create-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.musio-playlist-list .musio-playlist-create-actions button {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-data);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.musio-playlist-list .musio-playlist-create-actions button::after {
+  display: none;
+}
+
+.musio-playlist-list .musio-playlist-create-actions button.primary {
+  border-color: var(--text-display);
+  background: var(--text-display);
+  color: var(--black);
+}
+
 .musio-playlist-detail {
   min-width: 0;
   min-height: 0;
@@ -8515,6 +8601,12 @@ canvas.magnetic-dot-field::before {
   .musio-playlist-list button {
     min-height: 70px;
     border-left: 0;
+    border-bottom: 0;
+    border-top: 2px solid transparent;
+  }
+
+  .musio-playlist-create-form {
+    min-width: min(320px, 82vw);
     border-bottom: 0;
     border-top: 2px solid transparent;
   }

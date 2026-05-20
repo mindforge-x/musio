@@ -27,6 +27,14 @@ public class MusioPlaylistController {
         return musioPlaylistService.list();
     }
 
+    @PostMapping
+    public MusioPlaylist createPlaylist(@RequestBody CreateMusioPlaylistRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Playlist name is required.");
+        }
+        return musioPlaylistService.create(request.name(), request.description());
+    }
+
     @GetMapping("/{playlistId}")
     public MusioPlaylist playlist(@PathVariable String playlistId) {
         return musioPlaylistService.get(playlistId);
@@ -40,5 +48,8 @@ public class MusioPlaylistController {
     @DeleteMapping("/{playlistId}/items/{itemId}")
     public MusioPlaylist removeItem(@PathVariable String playlistId, @PathVariable String itemId) {
         return musioPlaylistService.removeItem(playlistId, itemId);
+    }
+
+    public record CreateMusioPlaylistRequest(String name, String description) {
     }
 }

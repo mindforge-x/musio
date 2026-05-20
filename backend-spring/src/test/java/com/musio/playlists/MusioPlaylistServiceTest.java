@@ -11,6 +11,8 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MusioPlaylistServiceTest {
@@ -26,6 +28,33 @@ class MusioPlaylistServiceTest {
         assertTrue(Files.isRegularFile(path));
         assertEquals(1, service.list().size());
         assertEquals("default", service.list().getFirst().id());
+    }
+
+    @Test
+    void createsPlaylistAndPersistsItAfterRestart() {
+        Path path = playlistPath();
+        MusioPlaylistService service = service(path);
+
+        MusioPlaylist created = service.create(" 深夜代码 ", " 专注歌单 ");
+        MusioPlaylistService restarted = service(path);
+
+        assertNotNull(created.id());
+        assertEquals("深夜代码", created.name());
+        assertEquals("专注歌单", created.description());
+        assertTrue(created.items().isEmpty());
+        assertNotNull(created.createdAt());
+        assertNotNull(created.updatedAt());
+        assertEquals(2, restarted.list().size());
+        assertEquals("default", restarted.list().getFirst().id());
+        assertEquals("深夜代码", restarted.get(created.id()).name());
+        assertEquals("专注歌单", restarted.get(created.id()).description());
+    }
+
+    @Test
+    void rejectsBlankPlaylistName() {
+        MusioPlaylistService service = service(playlistPath());
+
+        assertThrows(IllegalArgumentException.class, () -> service.create("   ", ""));
     }
 
     @Test

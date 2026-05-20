@@ -1,5 +1,6 @@
 package com.musio.api;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -15,5 +16,13 @@ public class ApiExceptionHandler {
                 ? exception.getStatusCode().toString()
                 : exception.getReason();
         return ResponseEntity.status(exception.getStatusCode()).body(Map.of("detail", detail));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException exception) {
+        String detail = exception.getMessage() == null || exception.getMessage().isBlank()
+                ? "Invalid request."
+                : exception.getMessage();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("detail", detail));
     }
 }
