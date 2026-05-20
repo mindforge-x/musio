@@ -63,6 +63,27 @@ class AgentObservationBuilderTest {
     }
 
     @Test
+    void includesMorePlaylistRefsInPlannerSummary() {
+        AgentObservation observation = builder.build("step-1", "get_user_playlists", Map.of("limit", 20), """
+                {
+                  "success": true,
+                  "count": 6,
+                  "playlists": [
+                    {"id": "qqmusic:1", "name": "歌单1"},
+                    {"id": "qqmusic:2", "name": "歌单2"},
+                    {"id": "qqmusic:3", "name": "歌单3"},
+                    {"id": "qqmusic:4", "name": "歌单4"},
+                    {"id": "qqmusic:5", "name": "歌单5"},
+                    {"id": "qqmusic:target", "name": "目标歌单"}
+                  ]
+                }
+                """);
+
+        assertEquals(AgentObservationStatus.SUCCESS, observation.status());
+        assertTrue(observation.plannerSummary().contains("目标歌单 id=qqmusic:target"));
+    }
+
+    @Test
     void buildsRecommendationObservationWithSlotCoverage() {
         AgentObservation observation = builder.build("step-1", "recommend_songs", Map.of("request", "推荐两首许嵩和一首后弦"), """
                 {

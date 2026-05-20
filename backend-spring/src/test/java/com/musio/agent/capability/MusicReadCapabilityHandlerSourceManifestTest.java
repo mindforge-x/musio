@@ -145,6 +145,44 @@ class MusicReadCapabilityHandlerSourceManifestTest {
     }
 
     @Test
+    void validatesSourcePlaylistReadsAgainstObservedPlaylistIds() {
+        MusicReadCapabilityHandler handler = handler(new PlaylistReadProvider());
+        AgentRunContext.setSourceContext(new SourceContext(List.of("qqmusic"), "qqmusic", "local"));
+
+        AgentLoopState emptyState = new AgentLoopState(
+                "run-playlist",
+                "local",
+                "列出目标歌单前几首",
+                List.of(),
+                null,
+                List.of(),
+                0
+        );
+        assertFalse(handler.validate(emptyState, "get_playlist_tracks", Map.of("playlistId", "qqmusic:other", "limit", 5)).valid());
+
+        var playlistObservation = new AgentObservationBuilder(objectMapper).build("step-1", "get_user_playlists", Map.of("limit", 20), """
+                {
+                  "success": true,
+                  "count": 1,
+                  "playlists": [
+                    {"id": "qqmusic:target", "name": "目标歌单"}
+                  ]
+                }
+                """);
+        AgentLoopState observedState = new AgentLoopState(
+                "run-playlist",
+                "local",
+                "列出目标歌单前几首",
+                List.of(),
+                null,
+                List.of(playlistObservation),
+                0
+        );
+
+        assertTrue(handler.validate(observedState, "get_playlist_tracks", Map.of("playlistId", "qqmusic:target", "limit", 5)).valid());
+    }
+
+    @Test
     void executesDynamicSourceCapabilityThroughGenericToolExecutor() throws Exception {
         DynamicProvider provider = new DynamicProvider();
         MusicReadCapabilityHandler handler = handler(provider);
@@ -321,6 +359,22 @@ class MusicReadCapabilityHandlerSourceManifestTest {
         public Map<String, Object> execute(SourceToolCall call, SourceContext context) {
             executed = true;
             return Map.of("success", true);
+        }
+    }
+
+    private static final class PlaylistReadProvider extends DynamicProvider {
+        @Override
+        public List<SourceCapability> capabilities(SourceContext context) {
+            return List.of(new SourceCapability(
+                    "get_playlist_tracks",
+                    CapabilityEffect.READ,
+                    "读取歌单歌曲分页",
+                    Map.of("playlistId", "string", "limit", "number"),
+                    Set.of("playlistId"),
+                    true,
+                    "",
+                    "tracks"
+            ));
         }
     }
 }

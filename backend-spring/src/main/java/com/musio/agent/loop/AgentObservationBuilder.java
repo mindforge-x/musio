@@ -226,7 +226,7 @@ public class AgentObservationBuilder {
             if (!id.isBlank()) {
                 refs.add(name.isBlank() ? id : name + " id=" + id);
             }
-            if (refs.size() >= 5) {
+            if (refs.size() >= 20) {
                 break;
             }
         }

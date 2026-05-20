@@ -81,7 +81,12 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
             return AgentCapabilityValidationResult.rejected("unknown_tool");
         }
         if (!capabilities.containsKey(capabilityName)) {
-            return validateSourceRequiredArguments(capabilityName, arguments == null ? Map.of() : arguments);
+            Map<String, Object> safeArguments = arguments == null ? Map.of() : arguments;
+            AgentCapabilityValidationResult requiredArguments = validateSourceRequiredArguments(capabilityName, safeArguments);
+            if (!requiredArguments.valid()) {
+                return requiredArguments;
+            }
+            return MusicReadCapabilityValidator.validate(state, capabilityName, safeArguments, true);
         }
         return MusicReadCapabilityValidator.validate(state, capabilityName, arguments, supports(capabilityName));
     }

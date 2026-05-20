@@ -217,6 +217,9 @@ public class AgentStepPlanner {
                 - 当前任务记忆里的 recentRecommendedSongs 是近期已推荐歌曲；普通连续推荐应优先避免重复。用户明确点名、要求经典代表作、或继续讨论同一首时，可以允许重复。
                 - recommend_songs observation 会提供 requestedTotal、resolvedTotal、slotResults、songs、unresolved；推荐是否完成必须以这些结构化覆盖度为准。
                 - 如果 recommend_songs 已成功返回足够 songs / slotResults 已覆盖所有 slots，且用户没有继续要求评论、歌词、详情或写入，下一步应 final_answer。
+                - 歌单名解析必须保守：用户给的是歌单名、“这个歌单”或“前几首”时，只有在本轮 observations 或当前任务记忆中看到同一个歌单名和 playlistId 明确配对，才能用该 playlistId。
+                - 如果只看到其他歌单的 id，或歌单列表摘要里没有目标歌单名，不要猜最近/最后一个 playlistId；下一步应先调用 get_user_playlists（通常 limit=50）或 search_playlists。
+                - get_playlist_detail / get_playlist_tracks / get_playlist_songs 的 playlistId 必须来自用户显式输入的 id，或来自本轮 observations/当前任务记忆中目标歌单名对应的 id。
                 - 如果用户要歌词、评论或歌曲详情，但当前没有目标 songId，下一步应先搜索或利用已有 observation / 任务记忆里的歌曲 id。
                 - 如果用户明确说“当前播放/正在播放/播放器里/队列里/队列上一首”，并且动态记忆上下文提供了“当前播放状态”，应优先使用动态记忆里的播放器状态 songId；它的优先级高于 Agent Goal 或短期任务记忆中的旧目标歌曲。
                 - “正在播放的这首/当前播放这首/播放器里这首”指 currentPlayback 里的当前歌曲；“队列上一首”指 queueState 里的上一首。
