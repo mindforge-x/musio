@@ -88,33 +88,42 @@ final class AgentCapabilityArgumentRules {
             cleaned.put("limit", cleanLimit(cleaned.get("limit"), 20, 1, 50));
         }
         if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(capabilityName)) {
-            String playlistId = text(cleaned, "playlistId");
-            cleaned.put("playlistId", playlistId.isBlank() ? "default" : playlistId);
-            cleaned.put("songId", text(cleaned, "songId"));
-            cleaned.put("songTitle", text(cleaned, "songTitle"));
-            cleaned.put("artist", text(cleaned, "artist"));
-            List<String> songIds = stringList(cleaned.get("songIds"));
+            String playlistId = text(cleaned, MusioPlaylistCapabilityFields.PLAYLIST_ID);
+            cleaned.put(MusioPlaylistCapabilityFields.PLAYLIST_ID, playlistId.isBlank() ? MusioPlaylistCapabilityFields.DEFAULT_PLAYLIST_ID : playlistId);
+            cleaned.put(MusioPlaylistCapabilityFields.SONG_ID, text(cleaned, MusioPlaylistCapabilityFields.SONG_ID));
+            cleaned.put(MusioPlaylistCapabilityFields.SONG_TITLE, text(cleaned, MusioPlaylistCapabilityFields.SONG_TITLE));
+            cleaned.put(MusioPlaylistCapabilityFields.ARTIST, text(cleaned, MusioPlaylistCapabilityFields.ARTIST));
+            List<String> songIds = stringList(cleaned.get(MusioPlaylistCapabilityFields.SONG_IDS));
             if (songIds.isEmpty()) {
-                cleaned.remove("songIds");
+                cleaned.remove(MusioPlaylistCapabilityFields.SONG_IDS);
             } else {
-                cleaned.put("songIds", songIds.stream().limit(20).toList());
-                if (text(cleaned, "songId").isBlank()) {
-                    cleaned.put("songId", songIds.getFirst());
+                cleaned.put(MusioPlaylistCapabilityFields.SONG_IDS, songIds.stream().limit(20).toList());
+                if (text(cleaned, MusioPlaylistCapabilityFields.SONG_ID).isBlank()) {
+                    cleaned.put(MusioPlaylistCapabilityFields.SONG_ID, songIds.getFirst());
                 }
             }
-            List<Integer> songIndexes = integerList(cleaned.get("songIndexes"), 1, safeContext.songIndexMax());
+            List<Integer> songIndexes = integerList(cleaned.get(MusioPlaylistCapabilityFields.SONG_INDEXES), 1, safeContext.songIndexMax());
             if (songIndexes.isEmpty()) {
-                cleaned.remove("songIndexes");
+                cleaned.remove(MusioPlaylistCapabilityFields.SONG_INDEXES);
             } else {
-                cleaned.put("songIndexes", songIndexes.stream().limit(20).toList());
+                cleaned.put(MusioPlaylistCapabilityFields.SONG_INDEXES, songIndexes.stream().limit(20).toList());
             }
-            Integer songIndex = cleanRequiredLimit(cleaned.get("songIndex"), 1, safeContext.songIndexMax());
+            Integer songIndex = cleanRequiredLimit(cleaned.get(MusioPlaylistCapabilityFields.SONG_INDEX), 1, safeContext.songIndexMax());
             if (songIndex == null && !songIndexes.isEmpty()) {
-                cleaned.put("songIndex", songIndexes.getFirst());
+                cleaned.put(MusioPlaylistCapabilityFields.SONG_INDEX, songIndexes.getFirst());
             } else if (songIndex == null) {
-                cleaned.remove("songIndex");
+                cleaned.remove(MusioPlaylistCapabilityFields.SONG_INDEX);
             } else {
-                cleaned.put("songIndex", songIndex);
+                cleaned.put(MusioPlaylistCapabilityFields.SONG_INDEX, songIndex);
+            }
+        }
+        if (AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(capabilityName)) {
+            cleaned.put(MusioPlaylistCapabilityFields.PLAYLIST_NAME, text(cleaned, MusioPlaylistCapabilityFields.PLAYLIST_NAME));
+            String description = text(cleaned, MusioPlaylistCapabilityFields.PLAYLIST_DESCRIPTION);
+            if (description.isBlank()) {
+                cleaned.remove(MusioPlaylistCapabilityFields.PLAYLIST_DESCRIPTION);
+            } else {
+                cleaned.put(MusioPlaylistCapabilityFields.PLAYLIST_DESCRIPTION, description);
             }
         }
         return cleaned;
@@ -131,6 +140,9 @@ final class AgentCapabilityArgumentRules {
                 return AgentCapabilityValidationResult.accepted();
             }
             return validateMusioPlaylistRequiredArguments(arguments);
+        }
+        if (AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(capabilityName)) {
+            return validateMusioPlaylistCreateRequiredArguments(arguments);
         }
         return validateReadRequiredArguments(capabilityName, arguments);
     }
@@ -158,14 +170,21 @@ final class AgentCapabilityArgumentRules {
     }
 
     static AgentCapabilityValidationResult validateMusioPlaylistRequiredArguments(Map<String, Object> arguments) {
-        if (hasText(arguments, "songId")
-                || !stringList(arguments == null ? null : arguments.get("songIds")).isEmpty()
-                || hasText(arguments, "songTitle")
-                || integer(arguments, "songIndex") != null
-                || !integerList(arguments == null ? null : arguments.get("songIndexes"), 1, 100).isEmpty()) {
+        if (hasText(arguments, MusioPlaylistCapabilityFields.SONG_ID)
+                || !stringList(arguments == null ? null : arguments.get(MusioPlaylistCapabilityFields.SONG_IDS)).isEmpty()
+                || hasText(arguments, MusioPlaylistCapabilityFields.SONG_TITLE)
+                || integer(arguments, MusioPlaylistCapabilityFields.SONG_INDEX) != null
+                || !integerList(arguments == null ? null : arguments.get(MusioPlaylistCapabilityFields.SONG_INDEXES), 1, 100).isEmpty()) {
             return AgentCapabilityValidationResult.accepted();
         }
         return AgentCapabilityValidationResult.rejected("missing_song_reference");
+    }
+
+    static AgentCapabilityValidationResult validateMusioPlaylistCreateRequiredArguments(Map<String, Object> arguments) {
+        if (hasText(arguments, MusioPlaylistCapabilityFields.PLAYLIST_NAME)) {
+            return AgentCapabilityValidationResult.accepted();
+        }
+        return AgentCapabilityValidationResult.rejected("missing_playlist_name");
     }
 
     static String text(Map<String, Object> arguments, String key) {

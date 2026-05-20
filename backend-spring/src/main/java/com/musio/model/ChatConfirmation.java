@@ -12,16 +12,18 @@ public record ChatConfirmation(
         Song song,
         List<Song> songs,
         String selectionMode,
-        List<String> defaultSelectedSongIds
+        List<String> defaultSelectedSongIds,
+        String playlistName,
+        String playlistDescription
 ) {
     public ChatConfirmation(String type, String title, String description, String confirmText, String cancelText, Song song) {
         this("", type, title, description, confirmText, cancelText, song, song == null ? List.of() : List.of(song), "single",
-                song == null || song.id() == null || song.id().isBlank() ? List.of() : List.of(song.id()));
+                song == null || song.id() == null || song.id().isBlank() ? List.of() : List.of(song.id()), "", "");
     }
 
     public ChatConfirmation {
         actionId = actionId == null ? "" : actionId.strip();
-        type = type == null || type.isBlank() ? "local_playlist_add" : type.strip();
+        type = type == null || type.isBlank() ? ChatConfirmationTypes.LOCAL_PLAYLIST_ADD : type.strip();
         title = title == null ? "" : title.strip();
         description = description == null ? "" : description.strip();
         confirmText = confirmText == null || confirmText.isBlank() ? "确认收藏" : confirmText.strip();
@@ -44,5 +46,7 @@ public record ChatConfirmation(
         if (defaultSelectedSongIds.isEmpty()) {
             defaultSelectedSongIds = songs.stream().map(Song::id).toList();
         }
+        playlistName = playlistName == null ? "" : playlistName.strip();
+        playlistDescription = playlistDescription == null ? "" : playlistDescription.strip();
     }
 }

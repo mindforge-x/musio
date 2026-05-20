@@ -39,7 +39,8 @@ public class AgentCapabilityExecutor {
         if (handlerFor(capabilityName) != null) {
             return true;
         }
-        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(capabilityName)) {
+        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(capabilityName)
+                || AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(capabilityName)) {
             return musioPlaylistCapabilityExecutor != null;
         }
         return readToolExecutor != null && readToolExecutor.supports(capabilityName);
@@ -67,6 +68,9 @@ public class AgentCapabilityExecutor {
         if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(capabilityName)) {
             return Optional.of(musioPlaylistCapabilityExecutor.executeAddSongToMusioPlaylist(state, arguments));
         }
+        if (AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(capabilityName)) {
+            return Optional.of(musioPlaylistCapabilityExecutor.executeCreateMusioPlaylist(state, arguments));
+        }
         return readToolExecutor.executeTool(capabilityName, arguments);
     }
 
@@ -76,6 +80,9 @@ public class AgentCapabilityExecutor {
         }
         if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(capabilityName)) {
             return AgentCapabilityArgumentRules.validateMusioPlaylistRequiredArguments(arguments);
+        }
+        if (AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(capabilityName)) {
+            return AgentCapabilityArgumentRules.validateMusioPlaylistCreateRequiredArguments(arguments);
         }
         return AgentCapabilityValidationResult.accepted();
     }

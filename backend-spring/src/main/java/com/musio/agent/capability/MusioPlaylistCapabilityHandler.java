@@ -19,6 +19,13 @@ public class MusioPlaylistCapabilityHandler implements AgentCapabilityHandler {
             "{\"playlistId\": string, \"songId\": string, \"songIds\": string[], \"songTitle\": string, \"artist\": string, \"songIndex\": number, \"songIndexes\": number[]}",
             Set.of()
     );
+    private static final AgentCapability CREATE_PLAYLIST = new AgentCapability(
+            AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST,
+            CapabilityEffect.LOCAL_WRITE,
+            "创建本地 Musio 歌单，可携带用户明确提供的歌单描述；这是本地写入，必须先获得用户确认。",
+            "{\"name\": string, \"description\": string}",
+            Set.of(MusioPlaylistCapabilityFields.PLAYLIST_NAME)
+    );
 
     private final MusioPlaylistCapabilityExecutor executor;
 
@@ -28,12 +35,12 @@ public class MusioPlaylistCapabilityHandler implements AgentCapabilityHandler {
 
     @Override
     public List<AgentCapability> capabilities() {
-        return List.of(ADD_SONG);
+        return List.of(ADD_SONG, CREATE_PLAYLIST);
     }
 
     @Override
     public boolean supports(String capabilityName) {
-        return ADD_SONG.name().equals(capabilityName);
+        return ADD_SONG.name().equals(capabilityName) || CREATE_PLAYLIST.name().equals(capabilityName);
     }
 
     @Override
@@ -65,6 +72,9 @@ public class MusioPlaylistCapabilityHandler implements AgentCapabilityHandler {
         if (!supports(capabilityName)) {
             return AgentCapabilityValidationResult.rejected("unknown_tool");
         }
+        if (CREATE_PLAYLIST.name().equals(capabilityName)) {
+            return AgentCapabilityArgumentRules.validateMusioPlaylistCreateRequiredArguments(arguments == null ? Map.of() : arguments);
+        }
         return AgentCapabilityArgumentRules.validateMusioPlaylistRequiredArguments(arguments == null ? Map.of() : arguments);
     }
 
@@ -72,6 +82,9 @@ public class MusioPlaylistCapabilityHandler implements AgentCapabilityHandler {
     public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
         if (!supports(capabilityName)) {
             return Optional.empty();
+        }
+        if (CREATE_PLAYLIST.name().equals(capabilityName)) {
+            return Optional.of(executor.executeCreateMusioPlaylist(state, arguments == null ? Map.of() : arguments));
         }
         return Optional.of(executor.executeAddSongToMusioPlaylist(state, arguments == null ? Map.of() : arguments));
     }

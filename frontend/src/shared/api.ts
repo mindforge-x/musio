@@ -16,6 +16,7 @@ import {
   SourceContext,
   SystemStatus
 } from "./types";
+import { CHAT_CONFIRMATION_INPUT_FIELDS } from "./chatConfirmationConstants";
 
 const API_BASE = "";
 
@@ -89,8 +90,8 @@ export const api = {
         actionId,
         approved,
         editedInput: {
-          selectedSongIds,
-          reason: approved ? "approved" : "cancelled"
+          [CHAT_CONFIRMATION_INPUT_FIELDS.selectedSongIds]: selectedSongIds,
+          [CHAT_CONFIRMATION_INPUT_FIELDS.reason]: approved ? "approved" : "cancelled"
         }
       })
     }),

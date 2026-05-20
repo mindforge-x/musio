@@ -351,14 +351,20 @@ public class AgentTurnPlanner {
                 - 用户说“一首/1首/一个/一支/一曲”时，如果 toolCalls 中包含 search_songs，limit 必须填 1，不能使用默认 5。
                 - 不要编造 songId、playlistId 或用户没有提供且任务记忆中没有的标识符。
                 - 歌曲评论、歌词、详情类任务如果没有目标 songId，需要先 search_songs 找候选；如果有目标 songId，优先直接调用对应工具。
-                - 用户本轮明确说“收藏/保存/加入 Musio 歌单/帮我收藏某首歌/加入歌单”时，规划 add_song_to_musio_playlist 只表示本轮存在本地写入意图；是否执行由 PolicyGate 和 AgentStepLoop 决定。
+                - 用户本轮明确说“收藏/保存/加入 Musio 歌单/帮我收藏某首歌/加入歌单”时，规划 %2$s 只表示本轮存在本地写入意图；是否执行由 PolicyGate 和 AgentStepLoop 决定。
                 - 如果用户要收藏“刚才那首/第一首/第二首/这几首”等上一轮卡片歌曲，memoryUse.usesTaskMemory=true，usedFields 包含 lastResultSongs；多首优先填写 songIds，只有没有 songId 但能确定序号时才填写 songIndexes；单首可填写 songId 或 songIndex。
-                - 如果用户明确给出歌名或歌手但没有 songId，add_song_to_musio_playlist 填 songTitle/artist；后端会先解析或搜索真实歌曲。
-                - add_song_to_musio_playlist 是本地 Musio 歌单写入，不是只读工具；不要声称它已经执行成功，除非当前用户输入是明确确认语句。
+                - 如果用户明确给出歌名或歌手但没有 songId，%2$s 填 songTitle/artist；后端会先解析或搜索真实歌曲。
+                - 用户明确要求创建/新建本地 Musio 歌单，且给出清晰歌单名时，规划 %3$s，taskType=playlist，requiredOutcomes 包含 local_playlist_write，arguments 至少包含 name；如果用户给出描述，也写入 description。
+                - 用户要求创建歌单但没有明确歌单名时，不要规划 %3$s；使用 respond_only 询问歌单名，可以提示用户顺便给描述。不要替用户编造最终歌单名。
+                - %2$s 和 %3$s 是本地 Musio 歌单写入，不是只读工具；不要声称它已经执行成功，除非当前用户输入是明确确认语句。
                 - 当前只读工具可以直接 use_tools；QQ 音乐账号收藏、账号歌单写入、公开评论等账号级写入能力当前没有开放工具，应输出 request_confirmation 或 unsupported。
                 - 不需要工具时不要为了展示能力而调用工具。
                 - 不要输出 chain-of-thought。
-                """.formatted(turnPlannerManifest(userMessage).plannerToolList());
+                """.formatted(
+                turnPlannerManifest(userMessage).plannerToolList(),
+                AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+                AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST
+        );
     }
 
     private Set<String> allowedPlannerTools(String userMessage) {

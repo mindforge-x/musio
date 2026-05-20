@@ -2,6 +2,7 @@ package com.musio.agent.loop;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.model.ProviderType;
 import com.musio.model.Song;
 import org.springframework.stereotype.Component;
@@ -69,7 +70,8 @@ public class AgentObservationBuilder {
             String message = root.path("message").isTextual() ? root.path("message").asText() : "未提供错误原因";
             return toolName + " 失败：" + message;
         }
-        if ("add_song_to_musio_playlist".equals(toolName)) {
+        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(toolName)
+                || AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(toolName)) {
             String summary = root.path("summary").asText("");
             return summary.isBlank() ? toolName + " 成功，已写入 Musio 本地歌单" : summary;
         }

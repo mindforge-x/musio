@@ -6,10 +6,12 @@ import com.musio.agent.AgentRunContext;
 import com.musio.agent.AgentToolExecutor;
 import com.musio.agent.AgentRequiredOutcome;
 import com.musio.agent.ConfirmationService;
+import com.musio.agent.LocalWriteConfirmationConstants;
 import com.musio.agent.capability.AgentCapabilityExecutor;
 import com.musio.agent.capability.AgentCapabilityManifest;
 import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.agent.capability.AgentCapabilityValidationResult;
+import com.musio.agent.capability.MusioPlaylistCapabilityFields;
 import com.musio.agent.capability.MusioPlaylistCapabilityExecutor;
 import com.musio.agent.recommendation.RecommendationSlot;
 import com.musio.agent.recommendation.RecommendationSlots;
@@ -21,6 +23,7 @@ import com.musio.memory.context.MemoryType;
 import com.musio.model.AgentEvent;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.ChatConfirmation;
+import com.musio.model.ChatConfirmationTypes;
 import com.musio.model.PendingConfirmation;
 import com.musio.model.ProviderType;
 import com.musio.model.Song;
@@ -528,7 +531,23 @@ public class AgentLoopRunner {
             return null;
         }
         AgentCapabilityManifest manifest = manifestFor(state);
-        if (manifest == null || !manifest.allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)) {
+        if (manifest == null) {
+            return null;
+        }
+        if (requestedConfirmation != null
+                && AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(requestedConfirmation.toolName())
+                && manifest.allows(AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST)
+                && hasTextArgument(requestedConfirmation, MusioPlaylistCapabilityFields.PLAYLIST_NAME)) {
+            return new AgentStepAction(
+                    AgentStepActionType.TOOL_CALL,
+                    AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST,
+                    requestedConfirmation.arguments(),
+                    "创建 Musio 歌单",
+                    1.0,
+                    "required_outcome_recovery"
+            );
+        }
+        if (!manifest.allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)) {
             return null;
         }
         List<String> songIds = localPlaylistWriteTargetSongIds(state, requestedConfirmation);
@@ -563,7 +582,7 @@ public class AgentLoopRunner {
         }
         return state.observations().stream()
                 .anyMatch(observation -> observation.status() == AgentObservationStatus.SKIPPED
-                        && AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(observation.toolName())
+                        && isLocalPlaylistWriteTool(observation.toolName())
                         && observation.resultJson() != null
                         && observation.resultJson().contains("confirmation_"));
     }
@@ -677,7 +696,7 @@ public class AgentLoopRunner {
     }
 
     private AgentLoopState executeToolAction(AgentLoopState state, int step, AgentStepAction action, Set<String> executedCalls) {
-        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(action.toolName()) && !preConfirmedLocalPlaylistWrite(action)) {
+        if (isLocalPlaylistWriteTool(action.toolName()) && !preConfirmedLocalPlaylistWrite(action)) {
             ConfirmationDecision decision = confirmLocalPlaylistWrite(state, step, action);
             if (!decision.approved()) {
                 return appendSkipped(state, step, action, decision.reason());
@@ -712,15 +731,20 @@ public class AgentLoopRunner {
     }
 
     private boolean preConfirmedLocalPlaylistWrite(AgentStepAction action) {
-        return action != null && "pending_local_playlist_confirmation".equals(action.reason());
+        return action != null && LocalWriteConfirmationConstants.PENDING_REASON.equals(action.reason());
     }
 
     private ConfirmationDecision confirmLocalPlaylistWrite(AgentLoopState state, int step, AgentStepAction action) {
         if (eventBus == null || confirmationService == null || state == null || state.runId().isBlank()) {
             return ConfirmationDecision.approved(action);
         }
-        action = targetedLocalPlaylistWriteAction(state, action);
-        String actionId = "%s:%s".formatted(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST, stepId(step));
+        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(action.toolName())) {
+            action = targetedLocalPlaylistWriteAction(state, action);
+        } else if (AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(action.toolName())
+                && !hasTextArgument(action, MusioPlaylistCapabilityFields.PLAYLIST_NAME)) {
+            return ConfirmationDecision.rejected("missing_playlist_name");
+        }
+        String actionId = "%s:%s".formatted(action.toolName(), stepId(step));
         ChatConfirmation confirmation = localPlaylistConfirmation(actionId, state, action);
         log.info(
                 "AGENT_CONFIRMATION_REQUEST runId={} userId={} actionId={} toolName={} songIds={}",
@@ -750,6 +774,27 @@ public class AgentLoopRunner {
     }
 
     private ChatConfirmation localPlaylistConfirmation(String actionId, AgentLoopState state, AgentStepAction action) {
+        if (AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(action.toolName())) {
+            String name = textArgument(action, MusioPlaylistCapabilityFields.PLAYLIST_NAME);
+            String playlistDescription = textArgument(action, MusioPlaylistCapabilityFields.PLAYLIST_DESCRIPTION);
+            String description = playlistDescription.isBlank()
+                    ? "确认后会创建本地 Musio 歌单《%s》。".formatted(name)
+                    : "确认后会创建本地 Musio 歌单《%s》，并保存这段描述：%s".formatted(name, playlistDescription);
+            return new ChatConfirmation(
+                    actionId,
+                    ChatConfirmationTypes.LOCAL_PLAYLIST_CREATE,
+                    "创建本地歌单",
+                    description,
+                    "确认创建",
+                    "取消创建",
+                    null,
+                    List.of(),
+                    "none",
+                    List.of(),
+                    name,
+                    playlistDescription
+            );
+        }
         List<Song> songs = confirmationSongs(state, action);
         String title = songs.size() > 1 ? "选择要收藏的歌曲" : "收藏到 Musio 歌单";
         String description = songs.size() > 1
@@ -757,7 +802,7 @@ public class AgentLoopRunner {
                 : songs.isEmpty() ? "确认后会加入本地 Musio 默认歌单。" : "将《%s》加入本地 Musio 默认歌单。".formatted(songs.getFirst().title());
         return new ChatConfirmation(
                 actionId,
-                "local_playlist_add",
+                ChatConfirmationTypes.LOCAL_PLAYLIST_ADD,
                 title,
                 description,
                 "确认收藏",
@@ -765,7 +810,9 @@ public class AgentLoopRunner {
                 songs.isEmpty() ? null : songs.getFirst(),
                 songs,
                 songs.size() > 1 ? "multiple" : "single",
-                songs.stream().map(Song::id).toList()
+                songs.stream().map(Song::id).toList(),
+                "",
+                ""
         );
     }
 
@@ -829,6 +876,15 @@ public class AgentLoopRunner {
     private String textArgument(AgentStepAction action, String key) {
         Object value = action == null || action.arguments() == null ? null : action.arguments().get(key);
         return value instanceof String text && !text.isBlank() ? text.strip() : "";
+    }
+
+    private boolean hasTextArgument(AgentStepAction action, String key) {
+        return !textArgument(action, key).isBlank();
+    }
+
+    private boolean isLocalPlaylistWriteTool(String toolName) {
+        return AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(toolName)
+                || AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(toolName);
     }
 
     private List<String> artistArguments(AgentStepAction action) {
@@ -1194,7 +1250,7 @@ public class AgentLoopRunner {
     private Map<String, Object> confirmedArguments(Map<String, Object> originalArguments, PendingConfirmation confirmation) {
         Map<String, Object> arguments = new LinkedHashMap<>(originalArguments == null ? Map.of() : originalArguments);
         if (confirmation.editedInput() != null) {
-            Object selectedSongIds = confirmation.editedInput().get("selectedSongIds");
+            Object selectedSongIds = confirmation.editedInput().get(LocalWriteConfirmationConstants.EDITED_SELECTED_SONG_IDS);
             if (selectedSongIds instanceof List<?> list && !list.isEmpty()) {
                 List<String> ids = list.stream()
                         .filter(String.class::isInstance)
@@ -1215,7 +1271,10 @@ public class AgentLoopRunner {
     }
 
     private String confirmationRejectReason(PendingConfirmation confirmation) {
-        if (confirmation != null && confirmation.editedInput() != null && confirmation.editedInput().get("reason") instanceof String reason && !reason.isBlank()) {
+        if (confirmation != null
+                && confirmation.editedInput() != null
+                && confirmation.editedInput().get(LocalWriteConfirmationConstants.EDITED_REASON) instanceof String reason
+                && !reason.isBlank()) {
             return "confirmation_" + reason.strip();
         }
         return "confirmation_cancelled";
@@ -1561,7 +1620,7 @@ public class AgentLoopRunner {
         }
         for (AgentObservation observation : state.observations()) {
             if (observation.status() != AgentObservationStatus.SUCCESS
-                    || !AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(observation.toolName())) {
+                    || !isLocalPlaylistWriteTool(observation.toolName())) {
                 continue;
             }
             if (localPlaylistWriteComplete(observation)) {
@@ -1861,7 +1920,9 @@ public class AgentLoopRunner {
                 case "get_hot_comments" -> "comments";
                 case "get_lyrics" -> "lyrics";
                 case "get_song_detail" -> "detail";
-                case "get_user_playlists", "get_playlist_songs", "add_song_to_musio_playlist" -> "playlist";
+                case "get_user_playlists", "get_playlist_songs",
+                     AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+                     AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST -> "playlist";
                 case "get_user_music_profile" -> "profile";
                 case "search_songs" -> "search";
                 default -> "";

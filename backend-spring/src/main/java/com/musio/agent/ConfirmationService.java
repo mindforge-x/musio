@@ -38,9 +38,9 @@ public class ConfirmationService {
         try {
             return future.get(timeoutSeconds, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
-            return new PendingConfirmation(actionId, false, Map.of("reason", "timeout"));
+            return new PendingConfirmation(actionId, false, Map.of(LocalWriteConfirmationConstants.EDITED_REASON, "timeout"));
         } catch (Exception e) {
-            return new PendingConfirmation(actionId, false, Map.of("reason", "interrupted"));
+            return new PendingConfirmation(actionId, false, Map.of(LocalWriteConfirmationConstants.EDITED_REASON, "interrupted"));
         } finally {
             waitingConfirmations.remove(key);
         }

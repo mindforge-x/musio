@@ -174,4 +174,66 @@ class MusioPlaylistCapabilityExecutorTest {
         assertEquals("qqmusic:x1", playlistService.get("default").items().get(0).providerTrackId());
         assertEquals("qqmusic:h1", playlistService.get("default").items().get(1).providerTrackId());
     }
+
+    @Test
+    void createPlaylistPersistsNameAndDescription() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        MusioPlaylistService playlistService = new MusioPlaylistService(
+                tempDir.resolve("playlists").resolve("musio-playlists.json"),
+                objectMapper
+        );
+        AgentEventBus eventBus = new AgentEventBus();
+        MusioPlaylistCapabilityExecutor executor = new MusioPlaylistCapabilityExecutor(
+                playlistService,
+                null,
+                eventBus,
+                new AgentTracePublisher(eventBus),
+                objectMapper
+        );
+        AgentLoopState state = new AgentLoopState(
+                "run-1",
+                "local",
+                "帮我创建一个深夜代码歌单，描述是适合深夜写代码听",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                1
+        );
+
+        String resultJson = executor.executeCreateMusioPlaylist(state, Map.of(
+                "name", "深夜代码",
+                "description", "适合深夜写代码听"
+        ));
+
+        var root = objectMapper.readTree(resultJson);
+        assertEquals(true, root.path("success").asBoolean());
+        assertEquals("深夜代码", root.path("playlistName").asText());
+        assertEquals("适合深夜写代码听", root.path("description").asText());
+        MusioPlaylist playlist = playlistService.get(root.path("playlistId").asText());
+        assertEquals("深夜代码", playlist.name());
+        assertEquals("适合深夜写代码听", playlist.description());
+    }
+
+    @Test
+    void createPlaylistRejectsBlankName() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        MusioPlaylistService playlistService = new MusioPlaylistService(
+                tempDir.resolve("playlists").resolve("musio-playlists.json"),
+                objectMapper
+        );
+        AgentEventBus eventBus = new AgentEventBus();
+        MusioPlaylistCapabilityExecutor executor = new MusioPlaylistCapabilityExecutor(
+                playlistService,
+                null,
+                eventBus,
+                new AgentTracePublisher(eventBus),
+                objectMapper
+        );
+
+        String resultJson = executor.executeCreateMusioPlaylist(null, Map.of("name", " "));
+
+        var root = objectMapper.readTree(resultJson);
+        assertEquals(false, root.path("success").asBoolean());
+        assertEquals(1, playlistService.list().size());
+    }
 }

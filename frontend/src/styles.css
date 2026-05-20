@@ -7918,6 +7918,36 @@ canvas.magnetic-dot-field::before {
   gap: 7px;
 }
 
+.workspace-workbench .agent-workspace .chat-confirmation-playlist {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 5px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(126, 231, 196, 0.24);
+  border-radius: 7px;
+  background: rgba(126, 231, 196, 0.07);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-playlist span,
+.workspace-workbench .agent-workspace .chat-confirmation-playlist small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-playlist span {
+  color: rgba(245, 245, 245, 0.9);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-playlist small {
+  color: rgba(232, 232, 232, 0.54);
+  font-family: var(--font-data);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .workspace-workbench .agent-workspace .chat-confirmation-option {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;

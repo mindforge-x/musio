@@ -2,6 +2,7 @@ package com.musio.agent;
 
 import com.musio.agent.recommendation.RecommendationSlot;
 import com.musio.agent.recommendation.RecommendationSlots;
+import com.musio.agent.capability.AgentCapabilityRegistry;
 
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -89,7 +90,8 @@ final class AgentGoalNormalizer {
 
     private static Optional<AgentRequiredOutcome> hardOutcomeForToolHint(String toolName) {
         return switch (safe(toolName)) {
-            case "add_song_to_musio_playlist" -> Optional.of(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE);
+            case AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+                 AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST -> Optional.of(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE);
             default -> Optional.empty();
         };
     }

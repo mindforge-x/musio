@@ -1,6 +1,7 @@
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { BookmarkPlus, Check, ChevronDown, ChevronRight, ListPlus, LoaderCircle, Play, X } from "lucide-react";
+import { CHAT_CONFIRMATION_TYPES } from "../../shared/chatConfirmationConstants";
 import { Song } from "../../shared/types";
 import { ChatConfirmationState, ChatMessage, TraceStep } from "./chatTypes";
 import { MarkdownContent } from "./MarkdownContent";
@@ -151,6 +152,8 @@ function ConfirmationActions({
           ? "status-expired"
           : "status-pending";
   const multiple = confirmationSongs.length > 1;
+  const playlistCreate = confirmation.type === CHAT_CONFIRMATION_TYPES.localPlaylistCreate;
+  const canConfirm = playlistCreate || selectedSongIds.length > 0;
   const statusText = confirmed
     ? "已确认"
     : cancelled
@@ -203,6 +206,12 @@ function ConfirmationActions({
           })}
         </div>
       ) : null}
+      {playlistCreate && confirmation.playlistName ? (
+        <div className="chat-confirmation-playlist">
+          <span>{confirmation.playlistName}</span>
+          {confirmation.playlistDescription ? <small>{confirmation.playlistDescription}</small> : null}
+        </div>
+      ) : null}
       {actionable ? (
         <div className="chat-confirmation-actions">
           <button
@@ -222,9 +231,9 @@ function ConfirmationActions({
           <button
             type="button"
             className="confirm"
-            disabled={selectedSongIds.length === 0}
+            disabled={!canConfirm}
             onClick={(event) => {
-              if (resolved || selectedSongIds.length === 0) {
+              if (resolved || !canConfirm) {
                 return;
               }
               lockLocalControls(event);

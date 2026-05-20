@@ -17,6 +17,11 @@ import java.util.Locale;
 @Component
 public class AgentPolicyGate {
     private static final String USER_MUSIC_PROFILE_TOOL = "get_user_music_profile";
+    private static final List<String> LOCAL_PLAYLIST_CREATE_VERBS = List.of("创建", "新建", "建一个", "建个", "create");
+    private static final List<String> LOCAL_PLAYLIST_CONTEXT_TERMS = List.of("musio", "歌单", "playlist");
+    private static final List<String> LOCAL_PLAYLIST_FAVORITE_TERMS = List.of("收藏", "保存", "save");
+    private static final List<String> LOCAL_PLAYLIST_ADD_TERMS = List.of("加入", "添加", "加到", "放进", "存到", "add");
+    private static final List<String> LOCAL_PLAYLIST_SONG_REFERENCE_TERMS = List.of("这首", "这歌", "这首歌", "第一首", "第二首", "第三首", "某首歌");
 
     private final AgentCapabilityRegistry registry;
     private final ProviderStatusService providerStatusService;
@@ -55,14 +60,20 @@ public class AgentPolicyGate {
         if (turnPlan != null && turnPlan.hasTool(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)) {
             return true;
         }
+        if (turnPlan != null && turnPlan.hasTool(AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST)) {
+            return true;
+        }
         String normalized = normalize(userMessage);
         if (normalized.isBlank()) {
             return false;
         }
-        boolean explicitFavorite = containsAny(normalized, "收藏", "保存", "save");
-        boolean addVerb = containsAny(normalized, "加入", "添加", "加到", "放进", "存到", "add");
-        boolean localPlaylistContext = containsAny(normalized, "musio", "歌单", "这首", "这歌", "这首歌", "第一首", "第二首", "第三首", "某首歌");
-        return explicitFavorite || (addVerb && localPlaylistContext);
+        boolean createPlaylist = containsAny(normalized, LOCAL_PLAYLIST_CREATE_VERBS)
+                && containsAny(normalized, LOCAL_PLAYLIST_CONTEXT_TERMS);
+        boolean explicitFavorite = containsAny(normalized, LOCAL_PLAYLIST_FAVORITE_TERMS);
+        boolean addVerb = containsAny(normalized, LOCAL_PLAYLIST_ADD_TERMS);
+        boolean localPlaylistContext = containsAny(normalized, LOCAL_PLAYLIST_CONTEXT_TERMS)
+                || containsAny(normalized, LOCAL_PLAYLIST_SONG_REFERENCE_TERMS);
+        return createPlaylist || explicitFavorite || (addVerb && localPlaylistContext);
     }
 
     private AgentCapabilityManifest filterForSource(AgentCapabilityManifest manifest, SourceContext sourceContext) {
@@ -126,6 +137,15 @@ public class AgentPolicyGate {
     }
 
     private boolean containsAny(String value, String... needles) {
+        for (String needle : needles) {
+            if (value.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsAny(String value, List<String> needles) {
         for (String needle : needles) {
             if (value.contains(needle)) {
                 return true;

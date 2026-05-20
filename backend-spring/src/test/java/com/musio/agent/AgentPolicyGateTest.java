@@ -35,6 +35,17 @@ class AgentPolicyGateTest {
     }
 
     @Test
+    void exposesLocalPlaylistWriteForCreatePlaylistIntent() {
+        assertTrue(policyGate.manifestFor("帮我创建一个深夜代码歌单", null)
+                .allows(AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST));
+        assertTrue(policyGate.manifestFor("新建一个 Musio playlist", null)
+                .allows(AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST));
+
+        assertFalse(policyGate.manifestFor("给我推荐适合深夜听的歌", null)
+                .allows(AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST));
+    }
+
+    @Test
     void hidesSourceBackedReadToolsWhenActiveSourceIsNotAuthenticated() {
         AgentPolicyGate gate = new AgentPolicyGate(
                 new AgentCapabilityRegistry(),

@@ -1,4 +1,5 @@
 import { api } from "../../shared/api";
+import { CHAT_CONFIRMATION_TYPES } from "../../shared/chatConfirmationConstants";
 import { AgentEvent, ChatConfirmation, Song } from "../../shared/types";
 import { TraceStep, TraceStepStage, TraceStepStatus, TraceStepVisibility } from "./chatTypes";
 
@@ -79,11 +80,13 @@ function parseConfirmation(event: AgentEvent | null): ChatConfirmation | null {
     return null;
   }
   const actionId = typeof confirmation.actionId === "string" ? confirmation.actionId : "";
-  const type = typeof confirmation.type === "string" ? confirmation.type : "local_playlist_add";
+  const type = typeof confirmation.type === "string" ? confirmation.type : CHAT_CONFIRMATION_TYPES.localPlaylistAdd;
   const title = typeof confirmation.title === "string" ? confirmation.title : "收藏到 Musio 歌单";
   const description = typeof confirmation.description === "string" ? confirmation.description : "";
   const confirmText = typeof confirmation.confirmText === "string" ? confirmation.confirmText : "确认收藏";
   const cancelText = typeof confirmation.cancelText === "string" ? confirmation.cancelText : "取消收藏";
+  const playlistName = typeof confirmation.playlistName === "string" ? confirmation.playlistName : "";
+  const playlistDescription = typeof confirmation.playlistDescription === "string" ? confirmation.playlistDescription : "";
   const song = isSong(confirmation.song) ? confirmation.song : null;
   const songs = Array.isArray(confirmation.songs)
     ? confirmation.songs.filter(isSong)
@@ -92,7 +95,20 @@ function parseConfirmation(event: AgentEvent | null): ChatConfirmation | null {
   const defaultSelectedSongIds = Array.isArray(confirmation.defaultSelectedSongIds)
     ? confirmation.defaultSelectedSongIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
     : songs.map((item) => item.id);
-  return { actionId, type, title, description, confirmText, cancelText, song: song ?? songs[0] ?? null, songs, selectionMode, defaultSelectedSongIds };
+  return {
+    actionId,
+    type,
+    title,
+    description,
+    confirmText,
+    cancelText,
+    song: song ?? songs[0] ?? null,
+    songs,
+    selectionMode,
+    defaultSelectedSongIds,
+    playlistName,
+    playlistDescription
+  };
 }
 
 function isSong(value: unknown): value is Song {

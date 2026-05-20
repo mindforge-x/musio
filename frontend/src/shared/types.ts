@@ -56,7 +56,7 @@ export type Song = {
 
 export type ChatConfirmation = {
   actionId?: string;
-  type: "local_playlist_add" | string;
+  type: "local_playlist_add" | "local_playlist_create" | string;
   title: string;
   description: string;
   confirmText: string;
@@ -65,6 +65,8 @@ export type ChatConfirmation = {
   songs?: Song[];
   selectionMode?: "single" | "multiple" | string;
   defaultSelectedSongIds?: string[];
+  playlistName?: string;
+  playlistDescription?: string;
 };
 
 export type SongUrl = {

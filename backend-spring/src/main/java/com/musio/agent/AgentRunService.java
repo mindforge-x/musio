@@ -5,6 +5,7 @@ import com.musio.events.SseEventPublisher;
 import com.musio.memory.AgentTaskMemoryService;
 import com.musio.model.AgentEvent;
 import com.musio.model.ChatConfirmation;
+import com.musio.model.ChatConfirmationTypes;
 import com.musio.model.ChatHistoryMessage;
 import com.musio.model.ChatRequest;
 import com.musio.model.ChatRunResponse;
@@ -163,7 +164,7 @@ public class AgentRunService {
         if (confirmation == null || taskMemory == null || taskMemory.pendingLocalPlaylistAdd() == null) {
             return null;
         }
-        if (!"local_playlist_add".equals(confirmation.type())) {
+        if (!ChatConfirmationTypes.LOCAL_PLAYLIST_ADD.equals(confirmation.type())) {
             return null;
         }
         List<String> pendingSongIds = taskMemory.pendingLocalPlaylistAdd().songs().stream()

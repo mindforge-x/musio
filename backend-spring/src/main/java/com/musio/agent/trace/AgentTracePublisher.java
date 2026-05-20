@@ -5,6 +5,7 @@ import com.musio.agent.loop.AgentObservation;
 import com.musio.agent.loop.AgentObservationStatus;
 import com.musio.agent.loop.AgentStepAction;
 import com.musio.agent.loop.AgentStepActionType;
+import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.events.AgentEventBus;
 import com.musio.model.AgentEvent;
 import org.springframework.stereotype.Component;
@@ -366,13 +367,14 @@ public class AgentTracePublisher {
             case "get_hot_comments" -> "正在读取热门评论。";
             case "get_user_playlists" -> "正在读取你的 QQ 音乐歌单。";
             case "get_playlist_songs" -> "正在读取歌单里的歌曲。";
-            case "add_song_to_musio_playlist" -> "正在收藏到 Musio 歌单。";
+            case AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST -> "正在收藏到 Musio 歌单。";
+            case AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST -> "正在创建 Musio 歌单。";
             default -> "正在调用音乐能力。";
         };
     }
 
     private String doneSummary(String toolName, Map<String, Object> result) {
-        if ("add_song_to_musio_playlist".equals(toolName)) {
+        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(toolName)) {
             Object count = result.get("count");
             if (count instanceof Number number && number.intValue() > 1) {
                 return "已收藏到 Musio 歌单 " + number.intValue() + " 首。";
@@ -381,6 +383,12 @@ public class AgentTracePublisher {
             return title instanceof String text && !text.isBlank()
                     ? "已收藏到 Musio 歌单：" + text + "。"
                     : "已收藏到 Musio 歌单。";
+        }
+        if (AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(toolName)) {
+            Object playlistName = result.get("playlistName");
+            return playlistName instanceof String text && !text.isBlank()
+                    ? "已创建 Musio 歌单：" + text + "。"
+                    : "已创建 Musio 歌单。";
         }
         if ("get_user_music_profile".equals(toolName)) {
             return Boolean.TRUE.equals(result.get("success")) ? "已读取本地音乐偏好摘要。" : "音乐偏好摘要暂不可用。";
@@ -401,7 +409,8 @@ public class AgentTracePublisher {
             case "get_hot_comments" -> "读取热门评论";
             case "get_user_playlists" -> "读取歌单";
             case "get_playlist_songs" -> "读取歌单歌曲";
-            case "add_song_to_musio_playlist" -> "收藏到 Musio";
+            case AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST -> "收藏到 Musio";
+            case AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST -> "创建 Musio 歌单";
             default -> "调用音乐能力";
         };
     }

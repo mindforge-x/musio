@@ -10,6 +10,7 @@ import com.musio.agent.loop.AgentObservationStatus;
 import com.musio.agent.recommendation.RecommendationSlot;
 import com.musio.agent.recommendation.RecommendationSlots;
 import com.musio.model.AgentTaskMemory;
+import com.musio.model.ChatConfirmationTypes;
 import com.musio.model.AgentTaskRecommendationSlot;
 import com.musio.model.Song;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -365,7 +366,8 @@ public class MemoryWriter {
             case "get_hot_comments" -> "comments_read";
             case "get_lyrics" -> "lyrics_read";
             case "get_song_detail" -> "song_detail_read";
-            case AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST -> "local_playlist_add";
+            case AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST -> ChatConfirmationTypes.LOCAL_PLAYLIST_ADD;
+            case AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST -> ChatConfirmationTypes.LOCAL_PLAYLIST_CREATE;
             default -> "";
         };
     }

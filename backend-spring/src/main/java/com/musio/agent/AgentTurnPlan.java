@@ -2,6 +2,7 @@ package com.musio.agent;
 
 import com.musio.agent.recommendation.RecommendationSlot;
 import com.musio.agent.recommendation.RecommendationSlots;
+import com.musio.agent.capability.AgentCapabilityRegistry;
 
 import java.util.List;
 import java.util.Map;
@@ -29,7 +30,10 @@ record AgentTurnPlan(
             "get_user_playlists",
             "get_playlist_songs"
     );
-    private static final Set<String> LOCAL_WRITE_TOOLS = Set.of("add_song_to_musio_playlist");
+    private static final Set<String> LOCAL_WRITE_TOOLS = Set.of(
+            AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+            AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST
+    );
     private static final Set<String> ACCOUNT_WRITE_TOOLS = Set.of();
 
     AgentTurnPlan(

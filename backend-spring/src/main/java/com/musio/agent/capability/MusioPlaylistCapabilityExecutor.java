@@ -43,10 +43,43 @@ public class MusioPlaylistCapabilityExecutor {
         this.objectMapper = objectMapper == null ? new ObjectMapper() : objectMapper.findAndRegisterModules();
     }
 
+    public String executeCreateMusioPlaylist(AgentLoopState state, Map<String, Object> arguments) {
+        Map<String, Object> safeArguments = arguments == null ? Map.of() : arguments;
+        String runId = state == null ? "" : state.runId();
+        Map<String, Object> input = musioPlaylistCreateInput(safeArguments);
+        publishToolStart(runId, AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST, input);
+        tracePublisher.publishToolRunning(runId, AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST, input);
+
+        Map<String, Object> result;
+        try {
+            String name = text(safeArguments, MusioPlaylistCapabilityFields.PLAYLIST_NAME);
+            String description = text(safeArguments, MusioPlaylistCapabilityFields.PLAYLIST_DESCRIPTION);
+            if (name.isBlank()) {
+                result = createFailure("创建歌单前需要先确认歌单名。");
+            } else {
+                MusioPlaylist playlist = musioPlaylistService.create(name, description);
+                result = createSuccess(playlist);
+            }
+        } catch (Exception e) {
+            String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            result = createFailure("创建歌单失败：" + message);
+        }
+
+        publishToolResult(runId, AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST, result);
+        if (Boolean.TRUE.equals(result.get("success"))) {
+            tracePublisher.publishToolDone(runId, AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST, result);
+        } else {
+            tracePublisher.publishToolError(runId, AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST, String.valueOf(result.getOrDefault("message", "创建歌单失败。")));
+        }
+        return writeJson(result);
+    }
+
     public String executeAddSongToMusioPlaylist(AgentLoopState state, Map<String, Object> arguments) {
         Map<String, Object> safeArguments = arguments == null ? Map.of() : arguments;
         String runId = state == null ? "" : state.runId();
-        String playlistId = text(safeArguments, "playlistId").isBlank() ? "default" : text(safeArguments, "playlistId");
+        String playlistId = text(safeArguments, MusioPlaylistCapabilityFields.PLAYLIST_ID).isBlank()
+                ? MusioPlaylistCapabilityFields.DEFAULT_PLAYLIST_ID
+                : text(safeArguments, MusioPlaylistCapabilityFields.PLAYLIST_ID);
         Map<String, Object> input = musioPlaylistAddInput(playlistId, safeArguments);
         publishToolStart(runId, AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST, input);
         tracePublisher.publishToolRunning(runId, AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST, input);
@@ -264,23 +297,49 @@ public class MusioPlaylistCapabilityExecutor {
 
     private Map<String, Object> musioPlaylistAddInput(String playlistId, Map<String, Object> arguments) {
         Map<String, Object> input = new LinkedHashMap<>();
-        input.put("playlistId", playlistId);
-        copyTextArgument(arguments, input, "songId");
-        List<String> songIds = stringList(arguments.get("songIds"));
+        input.put(MusioPlaylistCapabilityFields.PLAYLIST_ID, playlistId);
+        copyTextArgument(arguments, input, MusioPlaylistCapabilityFields.SONG_ID);
+        List<String> songIds = stringList(arguments.get(MusioPlaylistCapabilityFields.SONG_IDS));
         if (!songIds.isEmpty()) {
-            input.put("songIds", songIds);
+            input.put(MusioPlaylistCapabilityFields.SONG_IDS, songIds);
         }
-        copyTextArgument(arguments, input, "songTitle");
-        copyTextArgument(arguments, input, "artist");
-        Integer songIndex = integer(arguments, "songIndex");
+        copyTextArgument(arguments, input, MusioPlaylistCapabilityFields.SONG_TITLE);
+        copyTextArgument(arguments, input, MusioPlaylistCapabilityFields.ARTIST);
+        Integer songIndex = integer(arguments, MusioPlaylistCapabilityFields.SONG_INDEX);
         if (songIndex != null) {
-            input.put("songIndex", songIndex);
+            input.put(MusioPlaylistCapabilityFields.SONG_INDEX, songIndex);
         }
-        List<Integer> songIndexes = integerList(arguments.get("songIndexes"));
+        List<Integer> songIndexes = integerList(arguments.get(MusioPlaylistCapabilityFields.SONG_INDEXES));
         if (!songIndexes.isEmpty()) {
-            input.put("songIndexes", songIndexes);
+            input.put(MusioPlaylistCapabilityFields.SONG_INDEXES, songIndexes);
         }
         return input;
+    }
+
+    private Map<String, Object> musioPlaylistCreateInput(Map<String, Object> arguments) {
+        Map<String, Object> input = new LinkedHashMap<>();
+        copyTextArgument(arguments, input, MusioPlaylistCapabilityFields.PLAYLIST_NAME);
+        copyTextArgument(arguments, input, MusioPlaylistCapabilityFields.PLAYLIST_DESCRIPTION);
+        return input;
+    }
+
+    private Map<String, Object> createSuccess(MusioPlaylist playlist) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("summary", "已创建本地 Musio 歌单：" + playlist.name() + "。");
+        result.put("playlistId", playlist.id());
+        result.put("playlistName", playlist.name());
+        result.put("description", playlist.description());
+        result.put("itemCount", playlist.items().size());
+        return result;
+    }
+
+    private Map<String, Object> createFailure(String message) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", false);
+        result.put("summary", message == null || message.isBlank() ? "创建歌单失败。" : message);
+        result.put("message", message == null || message.isBlank() ? "创建歌单失败。" : message);
+        return result;
     }
 
     private Map<String, Object> success(Song song, MusioPlaylist playlist, boolean existed) {

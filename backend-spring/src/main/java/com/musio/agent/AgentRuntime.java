@@ -21,6 +21,7 @@ import com.musio.config.MusioConfigService;
 import com.musio.events.AgentEventBus;
 import com.musio.model.AgentEvent;
 import com.musio.model.ChatConfirmation;
+import com.musio.model.ChatConfirmationTypes;
 import com.musio.model.ChatRequest;
 import com.musio.model.MusicProfileMemory;
 import com.musio.model.AgentTaskMemory;
@@ -327,7 +328,7 @@ public class AgentRuntime {
                     "refer_previous_song",
                     pending.sourceRequest(),
                     new AgentTurnMemoryUse(true, List.of("pendingLocalPlaylistAdd"), "用户确认执行本地 Musio 歌单写入。"),
-                    List.of(new AgentToolCall("add_song_to_musio_playlist", addArguments)),
+                    List.of(new AgentToolCall(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST, addArguments)),
                     1.0,
                     ""
             );
@@ -354,7 +355,7 @@ public class AgentRuntime {
                             addArguments,
                             "收藏到 Musio 歌单",
                             1.0,
-                            "pending_local_playlist_confirmation"
+                            LocalWriteConfirmationConstants.PENDING_REASON
                     ))
             );
             AgentLoopEvidence evidence = outcome.evidence();
@@ -506,7 +507,7 @@ public class AgentRuntime {
                 "refer_previous_song",
                 userMessage,
                 new AgentTurnMemoryUse(true, List.of("pendingLocalPlaylistAdd"), "用户确认执行本地 Musio 歌单写入。"),
-                List.of(new AgentToolCall("add_song_to_musio_playlist", addArguments)),
+                List.of(new AgentToolCall(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST, addArguments)),
                 1.0,
                 ""
         );
@@ -533,7 +534,7 @@ public class AgentRuntime {
                         addArguments,
                         "收藏到 Musio 歌单",
                         1.0,
-                        "pending_local_playlist_confirmation"
+                        LocalWriteConfirmationConstants.PENDING_REASON
                 ))
         );
         AgentLoopEvidence evidence = outcome.evidence();
@@ -577,7 +578,7 @@ public class AgentRuntime {
         if (confirmation == null || confirmation.editedInput() == null) {
             return List.of();
         }
-        Object selectedSongIds = confirmation.editedInput().get("selectedSongIds");
+        Object selectedSongIds = confirmation.editedInput().get(LocalWriteConfirmationConstants.EDITED_SELECTED_SONG_IDS);
         if (!(selectedSongIds instanceof List<?> list)) {
             return List.of();
         }
@@ -798,12 +799,15 @@ public class AgentRuntime {
                 return new PreludeContext("""
 
                         本轮用户表达了加入本地 Musio 歌单的意图，但本地歌单写入必须二次确认。
-                        本轮尚未执行 add_song_to_musio_playlist，不能说已经加入歌单。
+                        本轮尚未执行 %s，不能说已经加入歌单。
                         已保存待确认收藏目标：%s。
                         最终回答必须明确说明：尚未加入本地 Musio 歌单，可以点击确认按钮或回复“确认收藏”后写入。
                         工具调用阶段已经结束；最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
                         你必须直接生成面向用户的中文自然语言回答。
-                        """.formatted(songTitle(pendingLocalPlaylistAdd.song())),
+                        """.formatted(
+                                AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+                                songTitle(pendingLocalPlaylistAdd.song())
+                        ),
                         true,
                         List.of(pendingLocalPlaylistAdd.song()),
                         "",
@@ -832,7 +836,8 @@ public class AgentRuntime {
                 如果最终回答正文列出歌曲，必须严格按照上面的歌曲卡片顺序输出，不要重排、补歌或改写歌手。
                 工具状态以“状态”行和 result.success 为准：success=true 的工具不得写成失败、HTTP 500 或没有拿到结果。
                 如果评论、歌词或详情 observation 不存在，正文不得声称已经读取到对应内容。
-                如果出现 add_song_to_musio_playlist observation，最终回答必须明确说明歌曲已加入本地 Musio 默认歌单，不要写成 QQ 音乐账号歌单。
+                如果出现 %s observation，最终回答必须明确说明歌曲已加入本地 Musio 默认歌单，不要写成 QQ 音乐账号歌单。
+                如果出现 %s observation，最终回答必须明确说明本地 Musio 歌单已创建。
                 %s
                 工具调用阶段已经结束；最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
                 你必须直接生成面向用户的中文自然语言回答。
@@ -841,6 +846,8 @@ public class AgentRuntime {
                         outcome.reason(),
                         loopExecutionContext(evidence.observations()),
                         songTitles(evidence.songs()),
+                        AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+                        AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST,
                         localPlaylistFinalInstruction(pendingLocalPlaylistAdd, deferredConfirmationInstruction)
                 ),
                 true,
@@ -995,10 +1002,13 @@ public class AgentRuntime {
         }
         return """
                 本轮用户表达了加入本地 Musio 歌单的意图，但本地歌单写入必须二次确认。
-                本轮尚未执行 add_song_to_musio_playlist，不能说已经加入歌单。
+                本轮尚未执行 %s，不能说已经加入歌单。
                 已保存待确认收藏目标：%s。
                 最终回答必须明确说明：尚未加入本地 Musio 歌单，可以点击确认按钮或回复“确认收藏”后写入。
-                """.formatted(songTitles(pending.songs())).strip();
+                """.formatted(
+                AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+                songTitles(pending.songs())
+        ).strip();
     }
 
     private String localPlaylistFinalInstruction(PendingLocalPlaylistAdd pending, String deferredConfirmationInstruction) {
@@ -1079,7 +1089,7 @@ public class AgentRuntime {
                         addArguments,
                         "收藏到 Musio 歌单",
                         1.0,
-                        "pending_local_playlist_confirmation"
+                        LocalWriteConfirmationConstants.PENDING_REASON
                 ))
         );
     }
@@ -1088,15 +1098,15 @@ public class AgentRuntime {
         String safeReason = reason == null || reason.isBlank() ? "confirmation_cancelled" : reason.strip();
         return """
                 本轮用户没有同意本地 Musio 歌单写入，结果：%s。
-                本轮尚未执行 add_song_to_musio_playlist，不能说已经加入歌单。
+                本轮尚未执行 %s，不能说已经加入歌单。
                 最终回答必须明确说明：没有收藏到本地 Musio 歌单。
-                """.formatted(safeReason).strip();
+                """.formatted(safeReason, AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST).strip();
     }
 
     private String deferredConfirmationRejectReason(PendingConfirmation confirmation) {
         if (confirmation != null
                 && confirmation.editedInput() != null
-                && confirmation.editedInput().get("reason") instanceof String reason
+                && confirmation.editedInput().get(LocalWriteConfirmationConstants.EDITED_REASON) instanceof String reason
                 && !reason.isBlank()) {
             return "confirmation_" + reason.strip();
         }
@@ -1166,7 +1176,7 @@ public class AgentRuntime {
                 : "将《%s》加入本地 Musio 默认歌单。".formatted(songTitle(pending.song()));
         return new ChatConfirmation(
                 DEFERRED_LOCAL_PLAYLIST_CONFIRMATION_ACTION_ID,
-                "local_playlist_add",
+                ChatConfirmationTypes.LOCAL_PLAYLIST_ADD,
                 title,
                 description,
                 "确认收藏",
@@ -1174,7 +1184,9 @@ public class AgentRuntime {
                 pending.song(),
                 pending.songs(),
                 pending.songs().size() > 1 ? "multiple" : "single",
-                pending.songs().stream().map(Song::id).toList()
+                pending.songs().stream().map(Song::id).toList(),
+                "",
+                ""
         );
     }
 

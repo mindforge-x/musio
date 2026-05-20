@@ -114,6 +114,7 @@ public class BehaviorSummaryService {
             case "lyrics_read" -> "歌词读取";
             case "song_detail_read" -> "详情读取";
             case "local_playlist_add" -> "本地收藏";
+            case "local_playlist_create" -> "本地歌单创建";
             case "tool_failure" -> "工具失败";
             case "session_preference" -> "临时偏好";
             case "user_feedback" -> "用户反馈";
