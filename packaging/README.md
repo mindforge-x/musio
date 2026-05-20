@@ -82,4 +82,44 @@ tag: beta
 dry_run: false
 ```
 
-Publishing supports either npm trusted publishing or an `NPM_TOKEN` repository secret. Trusted publishing requires configuring each npm package to trust this GitHub repository and workflow.
+Publishing uses npm trusted publishing. Configure each package on npm to trust this GitHub repository and workflow:
+
+```text
+Repository owner: mindforge-x
+Repository name: musio
+Workflow filename: npm-release.yml
+Environment: unset
+```
+
+The configured package names are:
+
+```text
+@mindforge-x/musio
+@mindforge-x/musio-linux-x64
+@mindforge-x/musio-linux-arm64
+@mindforge-x/musio-darwin-x64
+@mindforge-x/musio-darwin-arm64
+@mindforge-x/musio-win32-x64
+@mindforge-x/musio-win32-arm64
+```
+
+npm trusted publishing requires the packages to already exist before adding trusted publisher rules. If these are brand-new packages, first create/publish them from an npm account that controls the `@mindforge-x` scope, then add the trusted publisher configuration above and use this workflow for later releases.
+
+CLI configuration is also possible with npm 11.10+:
+
+```bash
+npm install -g npm@^11.10.0
+for package in \
+  @mindforge-x/musio \
+  @mindforge-x/musio-linux-x64 \
+  @mindforge-x/musio-linux-arm64 \
+  @mindforge-x/musio-darwin-x64 \
+  @mindforge-x/musio-darwin-arm64 \
+  @mindforge-x/musio-win32-x64 \
+  @mindforge-x/musio-win32-arm64
+do
+  npm trust github "$package" --repo mindforge-x/musio --file npm-release.yml --yes
+done
+```
+
+The release workflow skips packages that already exist on npm, so rerunning the same beta version can be used to publish only the platform packages that failed in a previous matrix run.
