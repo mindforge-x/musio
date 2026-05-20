@@ -1767,13 +1767,63 @@ textarea {
 .markdown-content {
   display: grid;
   gap: 10px;
+  min-width: 0;
   color: #eeeeee;
   font-size: 15px;
   line-height: 1.65;
 }
 
-.markdown-content p {
+.markdown-content > * {
+  min-width: 0;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6,
+.markdown-content p,
+.markdown-content blockquote,
+.markdown-content pre,
+.markdown-content ul,
+.markdown-content ol,
+.markdown-content table {
   margin: 0;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  color: var(--text-display);
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.28;
+  overflow-wrap: anywhere;
+}
+
+.markdown-content h1 {
+  font-size: 19px;
+}
+
+.markdown-content h2 {
+  font-size: 17px;
+}
+
+.markdown-content h3 {
+  font-size: 15px;
+}
+
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  font-size: 14px;
+}
+
+.markdown-content p {
   overflow-wrap: anywhere;
 }
 
@@ -1782,21 +1832,47 @@ textarea {
   font-weight: 600;
 }
 
-.markdown-content ul {
+.markdown-content em {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.markdown-content a {
+  color: #8eddb8;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(142, 221, 184, 0.38);
+}
+
+.markdown-content a:hover {
+  color: #b4f0d0;
+  border-bottom-color: rgba(180, 240, 208, 0.72);
+}
+
+.markdown-content ul,
+.markdown-content ol {
   display: grid;
   gap: 8px;
-  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.markdown-content ul {
   padding: 0;
   list-style: none;
 }
 
+.markdown-content ol {
+  padding-left: 22px;
+}
+
 .markdown-content li {
-  position: relative;
-  padding-left: 18px;
   overflow-wrap: anywhere;
 }
 
-.markdown-content li::before {
+.markdown-content ul > li {
+  position: relative;
+  padding-left: 18px;
+}
+
+.markdown-content ul > li::before {
   content: "";
   position: absolute;
   left: 2px;
@@ -1806,6 +1882,110 @@ textarea {
   border: 1px solid var(--text-secondary);
   border-radius: 50%;
   transform: translateY(-50%);
+}
+
+.markdown-content li > p {
+  margin: 0;
+}
+
+.markdown-content input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0 8px 0 0;
+  vertical-align: -2px;
+  accent-color: #8eddb8;
+}
+
+.markdown-content li:has(input[type="checkbox"]) {
+  padding-left: 0;
+}
+
+.markdown-content li:has(input[type="checkbox"])::before {
+  display: none;
+}
+
+.markdown-content blockquote {
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid rgba(142, 221, 184, 0.42);
+  color: rgba(245, 245, 245, 0.74);
+}
+
+.markdown-content code {
+  padding: 2px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.26);
+  color: rgba(245, 245, 245, 0.92);
+  font-family: var(--font-data);
+  font-size: 0.92em;
+}
+
+.markdown-content pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 12px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(245, 245, 245, 0.88);
+  line-height: 1.55;
+}
+
+.markdown-content pre code {
+  display: block;
+  min-width: max-content;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.markdown-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.markdown-content table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.markdown-content th,
+.markdown-content td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.markdown-content th {
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.markdown-content tr:last-child td {
+  border-bottom: 0;
+}
+
+.markdown-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.markdown-content hr {
+  width: 100%;
+  height: 1px;
+  margin: 2px 0;
+  border: 0;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .trace-steps {
