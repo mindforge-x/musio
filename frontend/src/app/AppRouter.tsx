@@ -1,8 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { Activity, Cable, FileText, ListMusic, MessageCircle, MessageSquare, Play, QrCode, RotateCcw, Search, Terminal, Trash2, X } from "lucide-react";
+import {
+  Activity,
+  BookmarkPlus,
+  Cable,
+  Check,
+  FileText,
+  ListMusic,
+  MessageCircle,
+  MessageSquare,
+  Play,
+  QrCode,
+  RotateCcw,
+  Search,
+  Terminal,
+  Trash2,
+  X
+} from "lucide-react";
 import { api } from "../shared/api";
-import { EventLog, LoginStartResult, LoginStatus, ProviderStatus, Song, SongComment, SystemStatus } from "../shared/types";
+import { EventLog, LoginStartResult, LoginStatus, MusioPlaylist, ProviderStatus, Song, SongComment, SystemStatus } from "../shared/types";
 import { AgentChatPanel } from "../features/agent-chat/AgentChatPanel";
 import { AgentEvents } from "../features/agent-chat/AgentEvents";
 import { SongCards } from "../features/agent-chat/SongCards";
@@ -28,6 +44,7 @@ export function AppRouter() {
   const [providerStatusesLoaded, setProviderStatusesLoaded] = useState(false);
   const [loginPromptOpen, setLoginPromptOpen] = useState(false);
   const [loginPromptDismissed, setLoginPromptDismissed] = useState(false);
+  const [pendingFavoriteSong, setPendingFavoriteSong] = useState<Song | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [selectedSources, setSelectedSources] = useState<string[]>(["qqmusic"]);
   const [activeSource, setActiveSource] = useState("qqmusic");
@@ -193,12 +210,23 @@ export function AppRouter() {
   }
 
   function favoriteSong(song: Song) {
-    void api.addSongToMusioPlaylist("default", song)
-      .then(() => addEvent({ id: crypto.randomUUID(), name: "favorite", detail: `已收藏到 Musio：${song.title || song.id}` }))
-      .catch((error) => {
-        const detail = error instanceof Error && error.message ? error.message : "未知错误";
-        addEvent({ id: crypto.randomUUID(), name: "favorite", detail: `收藏失败：${detail}` });
+    setPendingFavoriteSong(song);
+  }
+
+  async function addFavoriteToPlaylist(playlist: MusioPlaylist, song: Song) {
+    try {
+      await api.addSongToMusioPlaylist(playlist.id, song);
+      addEvent({
+        id: crypto.randomUUID(),
+        name: "favorite",
+        detail: `已收藏到 ${playlist.name}：${song.title || song.id}`
       });
+      setPendingFavoriteSong(null);
+    } catch (error) {
+      const detail = error instanceof Error && error.message ? error.message : "未知错误";
+      addEvent({ id: crypto.randomUUID(), name: "favorite", detail: `收藏失败：${detail}` });
+      throw error;
+    }
   }
 
   function openDrawer(drawer: WorkbenchDrawer) {
@@ -390,6 +418,11 @@ export function AppRouter() {
         onAuthenticated={handleLoginPromptAuthenticated}
         onEvent={addEvent}
       />
+      <FavoritePlaylistDialog
+        song={pendingFavoriteSong}
+        onClose={() => setPendingFavoriteSong(null)}
+        onConfirm={addFavoriteToPlaylist}
+      />
     </main>
   );
 }
@@ -405,6 +438,171 @@ type LoginPromptModalProps = {
 
 const QQ_PROVIDER = "qqmusic";
 const LOGIN_TERMINAL_STATES = new Set(["DONE", "EXPIRED", "FAILED"]);
+
+type FavoritePlaylistDialogProps = {
+  song: Song | null;
+  onClose: () => void;
+  onConfirm: (playlist: MusioPlaylist, song: Song) => Promise<void>;
+};
+
+function FavoritePlaylistDialog({ song, onClose, onConfirm }: FavoritePlaylistDialogProps) {
+  const [playlists, setPlaylists] = useState<MusioPlaylist[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const open = Boolean(song);
+  const selectedPlaylist = playlists.find((playlist) => playlist.id === selectedId) ?? null;
+  const canSubmit = Boolean(song && selectedPlaylist && !loading && !submitting && !error);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setSubmitting(false);
+    setError(null);
+    api.musioPlaylists()
+      .then((items) => {
+        if (cancelled) {
+          return;
+        }
+        setPlaylists(items);
+        setSelectedId(items.find((item) => item.id === "default")?.id ?? items[0]?.id ?? null);
+      })
+      .catch((loadError) => {
+        if (cancelled) {
+          return;
+        }
+        setPlaylists([]);
+        setSelectedId(null);
+        setError(loadError instanceof Error && loadError.message ? loadError.message : "Musio 歌单读取失败");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !submitting) {
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, open, submitting]);
+
+  if (!song) {
+    return null;
+  }
+
+  async function submitFavorite() {
+    if (!song || !selectedPlaylist || !canSubmit) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onConfirm(selectedPlaylist, song);
+    } catch {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="favorite-playlist-overlay"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !submitting) {
+          onClose();
+        }
+      }}
+    >
+      <section className="favorite-playlist-dialog" role="dialog" aria-modal="true" aria-labelledby="favorite-playlist-title">
+        <button
+          type="button"
+          className="favorite-playlist-close"
+          aria-label="关闭收藏歌单选择"
+          onClick={onClose}
+          disabled={submitting}
+        >
+          <X size={16} />
+        </button>
+        <div className="favorite-playlist-heading">
+          <span className="favorite-playlist-mark">
+            <BookmarkPlus size={22} />
+          </span>
+          <div>
+            <h3 id="favorite-playlist-title">收藏到歌单</h3>
+            <p>选择一个本地 Musio 歌单保存这首歌</p>
+          </div>
+        </div>
+        <article className="favorite-playlist-song">
+          <div className="favorite-playlist-cover">
+            {song.artworkUrl ? <img src={song.artworkUrl} alt="" /> : <span>{song.title?.slice(0, 1) || "M"}</span>}
+          </div>
+          <div>
+            <strong>{song.title || song.id}</strong>
+            <span>{song.artists?.join(", ") || song.provider || "QQ 音乐"}</span>
+          </div>
+        </article>
+        <div className="favorite-playlist-list" aria-label="选择目标 Musio 歌单">
+          {loading ? (
+            <p className="favorite-playlist-status">读取本地歌单中。</p>
+          ) : error ? (
+            <p className="favorite-playlist-status error">读取失败：{error}</p>
+          ) : playlists.length === 0 ? (
+            <p className="favorite-playlist-status">还没有可用的 Musio 歌单。</p>
+          ) : (
+            playlists.map((playlist) => {
+              const selected = playlist.id === selectedId;
+              return (
+                <button
+                  type="button"
+                  key={playlist.id}
+                  className={selected ? "selected" : ""}
+                  onClick={() => setSelectedId(playlist.id)}
+                  aria-pressed={selected}
+                >
+                  <span className="favorite-playlist-select">
+                    {selected ? <Check size={14} /> : null}
+                  </span>
+                  <span className="favorite-playlist-copy">
+                    <strong>
+                      {playlist.name}
+                      {playlist.id === "default" ? <em>DEFAULT</em> : null}
+                    </strong>
+                    <small>{playlist.description || `${playlist.items.length} 首歌曲`}</small>
+                  </span>
+                  <span className="favorite-playlist-count">{playlist.items.length}</span>
+                </button>
+              );
+            })
+          )}
+        </div>
+        <div className="favorite-playlist-actions">
+          <button type="button" onClick={onClose} disabled={submitting}>
+            取消
+          </button>
+          <button type="button" className="primary" onClick={() => void submitFavorite()} disabled={!canSubmit}>
+            <BookmarkPlus size={16} />
+            <span>{submitting ? "收藏中" : "加入歌单"}</span>
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 function LoginPromptModal({ open, onClose, onAuthenticated, onEvent }: LoginPromptModalProps) {
   const [login, setLogin] = useState<LoginStartResult | null>(null);
