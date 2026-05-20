@@ -2140,12 +2140,69 @@ textarea:focus,
   place-items: center;
 }
 
+.musio-playlist-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.musio-playlist-modal {
+  width: min(430px, calc(100vw - 48px));
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.07), transparent 42%),
+    rgba(0, 0, 0, 0.92);
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.62),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.musio-playlist-modal-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.13);
+}
+
+.musio-playlist-modal-header h3 {
+  margin-top: 5px;
+  color: var(--text-display);
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.musio-playlist-modal-close {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+}
+
+.musio-playlist-modal-close:hover:not(:disabled) {
+  border-color: var(--text-display);
+  color: var(--text-display);
+}
+
 .musio-playlist-create-form {
   display: grid;
-  gap: 12px;
-  padding: 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.035);
+  gap: 14px;
 }
 
 .musio-playlist-create-form label {
@@ -2191,10 +2248,11 @@ textarea:focus,
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+  padding-top: 2px;
 }
 
-.musio-playlist-list .musio-playlist-create-actions button {
-  min-height: 38px;
+.musio-playlist-create-actions button {
+  min-height: 42px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2211,13 +2269,18 @@ textarea:focus,
   text-transform: uppercase;
 }
 
-.musio-playlist-list .musio-playlist-create-actions button::after {
-  display: none;
-}
-
-.musio-playlist-list .musio-playlist-create-actions button.primary {
+.musio-playlist-create-actions button.primary {
   border-color: var(--text-display);
   background: var(--text-display);
+  color: var(--black);
+}
+
+.musio-playlist-create-actions button:hover:not(:disabled) {
+  border-color: var(--text-display);
+  color: var(--text-display);
+}
+
+.musio-playlist-create-actions button.primary:hover:not(:disabled) {
   color: var(--black);
 }
 
@@ -8585,6 +8648,19 @@ canvas.magnetic-dot-field::before {
     width: 100%;
   }
 
+  .musio-playlist-modal-overlay {
+    padding: 12px;
+  }
+
+  .musio-playlist-modal {
+    width: min(420px, calc(100vw - 24px));
+    padding: 16px;
+  }
+
+  .musio-playlist-modal-header h3 {
+    font-size: 21px;
+  }
+
   .musio-playlists-layout {
     gap: 14px;
     margin-top: 16px;
@@ -8601,12 +8677,6 @@ canvas.magnetic-dot-field::before {
   .musio-playlist-list button {
     min-height: 70px;
     border-left: 0;
-    border-bottom: 0;
-    border-top: 2px solid transparent;
-  }
-
-  .musio-playlist-create-form {
-    min-width: min(320px, 82vw);
     border-bottom: 0;
     border-top: 2px solid transparent;
   }

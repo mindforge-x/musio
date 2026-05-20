@@ -41,6 +41,19 @@ export function MusioPlaylistsPage({
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (!createOpen) {
+      return;
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !creatingPlaylist) {
+        closeCreateDialog();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [createOpen, creatingPlaylist]);
+
   const selected = playlists.find((item) => item.id === selectedId) ?? null;
   const selectedItems = useMemo(() => selected ? orderedPlaylistItems(selected) : [], [selected]);
   const selectedSongs = useMemo(() => selectedItems.map(playlistItemToSong), [selectedItems]);
@@ -82,6 +95,19 @@ export function MusioPlaylistsPage({
     }
   }
 
+  function resetCreateForm() {
+    setCreateName("");
+    setCreateDescription("");
+  }
+
+  function closeCreateDialog() {
+    if (creatingPlaylist) {
+      return;
+    }
+    setCreateOpen(false);
+    resetCreateForm();
+  }
+
   async function createPlaylist(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canCreatePlaylist) {
@@ -95,8 +121,7 @@ export function MusioPlaylistsPage({
       });
       setPlaylists((current) => [...current, created]);
       setSelectedId(created.id);
-      setCreateName("");
-      setCreateDescription("");
+      resetCreateForm();
       setCreateOpen(false);
       onEvent({ id: crypto.randomUUID(), name: "playlist", detail: `已创建歌单：${created.name}` });
     } catch (error) {
@@ -125,7 +150,7 @@ export function MusioPlaylistsPage({
           <button
             type="button"
             className="musio-playlist-create-toggle"
-            onClick={() => setCreateOpen((current) => !current)}
+            onClick={() => setCreateOpen(true)}
             aria-expanded={createOpen}
           >
             <span className="musio-playlist-index">
@@ -134,48 +159,6 @@ export function MusioPlaylistsPage({
             <span className="musio-playlist-name">新建本地歌单</span>
             <small>CREATE PLAYLIST</small>
           </button>
-          {createOpen ? (
-            <form className="musio-playlist-create-form" onSubmit={createPlaylist}>
-              <label>
-                <span>歌单名称</span>
-                <input
-                  value={createName}
-                  onChange={(event) => setCreateName(event.target.value)}
-                  placeholder="例如：深夜代码"
-                  maxLength={80}
-                  autoFocus
-                />
-              </label>
-              <label>
-                <span>描述</span>
-                <textarea
-                  value={createDescription}
-                  onChange={(event) => setCreateDescription(event.target.value)}
-                  placeholder="可选"
-                  maxLength={240}
-                  rows={3}
-                />
-              </label>
-              <div className="musio-playlist-create-actions">
-                <button type="submit" className="primary" disabled={!canCreatePlaylist}>
-                  <Plus size={14} />
-                  <span>{creatingPlaylist ? "创建中" : "创建"}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCreateOpen(false);
-                    setCreateName("");
-                    setCreateDescription("");
-                  }}
-                  disabled={creatingPlaylist}
-                >
-                  <X size={14} />
-                  <span>取消</span>
-                </button>
-              </div>
-            </form>
-          ) : null}
           {playlists.length === 0 ? (
             <p className="empty-copy">{loading ? "读取 Musio 歌单中。" : "还没有 Musio 歌单。"}</p>
           ) : (
@@ -210,6 +193,72 @@ export function MusioPlaylistsPage({
           onRemoveItem={removeItem}
         />
       </div>
+      {createOpen ? (
+        <div
+          className="musio-playlist-modal-overlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeCreateDialog();
+            }
+          }}
+        >
+          <section
+            className="musio-playlist-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="musio-playlist-create-title"
+          >
+            <div className="musio-playlist-modal-header">
+              <div>
+                <p className="eyebrow">LOCAL PLAYLIST</p>
+                <h3 id="musio-playlist-create-title">新建本地歌单</h3>
+              </div>
+              <button
+                type="button"
+                className="musio-playlist-modal-close"
+                aria-label="关闭新建歌单弹窗"
+                onClick={closeCreateDialog}
+                disabled={creatingPlaylist}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <form className="musio-playlist-create-form" onSubmit={createPlaylist}>
+              <label>
+                <span>歌单名称</span>
+                <input
+                  value={createName}
+                  onChange={(event) => setCreateName(event.target.value)}
+                  placeholder="例如：深夜代码"
+                  maxLength={80}
+                  autoFocus
+                />
+              </label>
+              <label>
+                <span>描述</span>
+                <textarea
+                  value={createDescription}
+                  onChange={(event) => setCreateDescription(event.target.value)}
+                  placeholder="可选"
+                  maxLength={240}
+                  rows={3}
+                />
+              </label>
+              <div className="musio-playlist-create-actions">
+                <button type="submit" className="primary" disabled={!canCreatePlaylist}>
+                  <Plus size={14} />
+                  <span>{creatingPlaylist ? "创建中" : "创建"}</span>
+                </button>
+                <button type="button" onClick={closeCreateDialog} disabled={creatingPlaylist}>
+                  <X size={14} />
+                  <span>取消</span>
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }
