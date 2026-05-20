@@ -160,7 +160,10 @@ public class AgentStepPlanner {
                 toolName = text(root, "tool");
             }
             Map<String, Object> arguments = arguments(root);
-            if (actionType == AgentStepActionType.TOOL_CALL) {
+            if (actionType == AgentStepActionType.TOOL_CALL
+                    || (actionType == AgentStepActionType.REQUEST_CONFIRMATION
+                    && !toolName.isBlank()
+                    && effectiveManifest.allows(toolName))) {
                 if (!effectiveManifest.allows(toolName)) {
                     logRejectedAction(toolName, "unknown_tool");
                     return Optional.empty();
@@ -172,6 +175,9 @@ public class AgentStepPlanner {
                     logRejectedAction(toolName, validation.reason());
                     return Optional.empty();
                 }
+            } else if (actionType != AgentStepActionType.REQUEST_CONFIRMATION) {
+                toolName = "";
+                arguments = Map.of();
             } else {
                 toolName = "";
                 arguments = Map.of();

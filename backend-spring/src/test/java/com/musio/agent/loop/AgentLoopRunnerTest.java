@@ -1061,6 +1061,78 @@ class AgentLoopRunnerTest {
     }
 
     @Test
+    void createPlaylistRequestConfirmationPublishesCreateConfirmation() {
+        MusioPlaylistCapabilityExecutor playlistExecutor = new StubPlaylistCapabilityExecutor("""
+                {"success":true,"summary":"已创建本地 Musio 歌单：深夜听歌。","playlistId":"playlist-1","playlistName":"深夜听歌","description":"适合深夜聆听的歌单","itemCount":0}
+                """);
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(playlistExecutor);
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(playlistHandler));
+        AgentEventBus eventBus = new AgentEventBus();
+        ConfirmationService confirmationService = new ConfirmationService();
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(
+                                AgentStepActionType.REQUEST_CONFIRMATION,
+                                AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST,
+                                Map.of("name", "深夜听歌", "description", "适合深夜聆听的歌单"),
+                                "确认创建歌单",
+                                0.95,
+                                "创建歌单需要确认"
+                        )
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(playlistHandler)),
+                null,
+                eventBus,
+                confirmationService
+        );
+        List<com.musio.model.ChatConfirmation> confirmations = new java.util.ArrayList<>();
+        eventBus.subscribe("run-1", event -> {
+            if ("confirmation_request".equals(event.type())) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) event.data();
+                var confirmation = (com.musio.model.ChatConfirmation) data.get("confirmation");
+                confirmations.add(confirmation);
+                confirmationService.confirm("run-1", new PendingConfirmation(confirmation.actionId(), true, Map.of()));
+            }
+        });
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "帮我创建一个深夜听歌的歌单",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(true),
+                1,
+                new AgentGoal(
+                        "帮我创建一个深夜听歌的歌单",
+                        "帮我创建一个深夜听歌的歌单",
+                        "chat",
+                        "new_task",
+                        false,
+                        false,
+                        true,
+                        false,
+                        1,
+                        List.of(),
+                        List.of()
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(1, confirmations.size());
+        assertEquals(com.musio.model.ChatConfirmationTypes.LOCAL_PLAYLIST_CREATE, confirmations.getFirst().type());
+        assertEquals("深夜听歌", confirmations.getFirst().playlistName());
+        assertEquals(1, outcome.evidence().observations().size());
+        assertEquals(AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST, outcome.evidence().observations().getFirst().toolName());
+    }
+
+    @Test
     void inlineLocalWriteUsesRecommendationCountForPronounWriteIntentAfterBatchReads() {
         AgentCapabilityHandler recommendationHandler = new TwoSongRecommendationCapabilityHandler();
         CapturingPlaylistCapabilityExecutor playlistExecutor = new CapturingPlaylistCapabilityExecutor("""
@@ -1899,6 +1971,11 @@ class AgentLoopRunnerTest {
 
         @Override
         public String executeAddSongToMusioPlaylist(AgentLoopState state, Map<String, Object> arguments) {
+            return resultJson;
+        }
+
+        @Override
+        public String executeCreateMusioPlaylist(AgentLoopState state, Map<String, Object> arguments) {
             return resultJson;
         }
     }

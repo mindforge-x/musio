@@ -261,6 +261,37 @@ class AgentStepPlannerTest {
     }
 
     @Test
+    void preservesCreatePlaylistRequestConfirmationWhenManifestAllowsIt() {
+        AgentStepAction action = planner.parseAction("""
+                {
+                  "action": "request_confirmation",
+                  "toolName": "create_musio_playlist",
+                  "arguments": {"name": "深夜听歌", "description": "适合深夜聆听的歌单"},
+                  "publicActivity": "确认创建本地歌单",
+                  "confidence": 0.95,
+                  "reason": "创建本地歌单需要用户确认"
+                }
+                """, new AgentCapabilityRegistry().manifest(true)).orElseThrow();
+
+        assertEquals(AgentStepActionType.REQUEST_CONFIRMATION, action.action());
+        assertEquals(AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST, action.toolName());
+        assertEquals("深夜听歌", action.arguments().get("name"));
+        assertEquals("适合深夜聆听的歌单", action.arguments().get("description"));
+    }
+
+    @Test
+    void rejectsCreatePlaylistRequestConfirmationWithoutName() {
+        assertTrue(planner.parseAction("""
+                {
+                  "action": "request_confirmation",
+                  "toolName": "create_musio_playlist",
+                  "arguments": {"description": "缺少歌单名"},
+                  "confidence": 0.95
+                }
+                """, new AgentCapabilityRegistry().manifest(true)).isEmpty());
+    }
+
+    @Test
     void dropsLocalPlaylistWriteWhenManifestDoesNotAllowIt() {
         assertTrue(planner.parseAction("""
                 {

@@ -180,6 +180,27 @@ class AgentRuntimeTest {
     }
 
     @Test
+    void createPlaylistObservationSuppressesLegacyPendingConfirmation() {
+        AgentLoopEvidence evidence = new AgentLoopEvidence(
+                List.of(new AgentObservation(
+                        "loop.step.1",
+                        AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST,
+                        Map.of("name", "深夜听歌"),
+                        AgentObservationStatus.SUCCESS,
+                        "{\"success\":true,\"playlistName\":\"深夜听歌\"}",
+                        "已创建",
+                        List.of()
+                )),
+                List.of(),
+                "playlist",
+                null,
+                List.of()
+        );
+
+        assertTrue(AgentRuntime.loopHandledLocalPlaylistWrite(evidence));
+    }
+
+    @Test
     void readOnlyLoopEvidenceDoesNotSuppressLegacyPendingConfirmation() {
         AgentLoopEvidence evidence = new AgentLoopEvidence(
                 List.of(new AgentObservation(

@@ -521,31 +521,25 @@ public class AgentLoopRunner {
     }
 
     private AgentStepAction localPlaylistWriteRecoveryAction(AgentLoopState state, AgentStepAction requestedConfirmation) {
-        if (state == null || state.goal() == null || !state.goal().requiredOutcomes().contains(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)) {
+        if (state == null || localPlaylistWriteDeclinedObserved(state)) {
             return null;
         }
-        if (requiredOutcomeSatisfied(state, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)) {
-            return null;
-        }
-        if (localPlaylistWriteDeclinedObserved(state)) {
+        if (successfulLocalPlaylistWriteObserved(state)) {
             return null;
         }
         AgentCapabilityManifest manifest = manifestFor(state);
         if (manifest == null) {
             return null;
         }
-        if (requestedConfirmation != null
-                && AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(requestedConfirmation.toolName())
-                && manifest.allows(AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST)
-                && hasTextArgument(requestedConfirmation, MusioPlaylistCapabilityFields.PLAYLIST_NAME)) {
-            return new AgentStepAction(
-                    AgentStepActionType.TOOL_CALL,
-                    AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST,
-                    requestedConfirmation.arguments(),
-                    "创建 Musio 歌单",
-                    1.0,
-                    "required_outcome_recovery"
-            );
+        AgentStepAction explicitLocalWriteAction = explicitLocalPlaylistWriteConfirmationAction(manifest, requestedConfirmation);
+        if (explicitLocalWriteAction != null) {
+            return explicitLocalWriteAction;
+        }
+        if (state.goal() == null || !state.goal().requiredOutcomes().contains(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)) {
+            return null;
+        }
+        if (requiredOutcomeSatisfied(state, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)) {
+            return null;
         }
         if (!manifest.allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)) {
             return null;
@@ -574,6 +568,39 @@ public class AgentLoopRunner {
                 1.0,
                 "required_outcome_recovery"
         );
+    }
+
+    private AgentStepAction explicitLocalPlaylistWriteConfirmationAction(
+            AgentCapabilityManifest manifest,
+            AgentStepAction requestedConfirmation
+    ) {
+        if (requestedConfirmation == null || !isLocalPlaylistWriteTool(requestedConfirmation.toolName())) {
+            return null;
+        }
+        String toolName = requestedConfirmation.toolName();
+        if (!manifest.allows(toolName)) {
+            return null;
+        }
+        if (AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(toolName)
+                && !hasTextArgument(requestedConfirmation, MusioPlaylistCapabilityFields.PLAYLIST_NAME)) {
+            return null;
+        }
+        return new AgentStepAction(
+                AgentStepActionType.TOOL_CALL,
+                toolName,
+                requestedConfirmation.arguments(),
+                requestedConfirmation.publicActivity().isBlank()
+                        ? localPlaylistWritePublicActivity(toolName)
+                        : requestedConfirmation.publicActivity(),
+                requestedConfirmation.confidence(),
+                "requested_local_write_confirmation"
+        );
+    }
+
+    private String localPlaylistWritePublicActivity(String toolName) {
+        return AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(toolName)
+                ? "创建 Musio 歌单"
+                : "收藏到 Musio 歌单";
     }
 
     private boolean localPlaylistWriteDeclinedObserved(AgentLoopState state) {
@@ -1313,6 +1340,11 @@ public class AgentLoopRunner {
         if (requiredOutcomesSatisfied(state)) {
             return true;
         }
+        if (isLocalPlaylistWriteTool(action.toolName())
+                && successfulLocalPlaylistWriteObserved(state)
+                && canFinishAfterLocalPlaylistWrite(state)) {
+            return true;
+        }
         if (state.requestedSongCount() == 1
                 && manifestFor(state).allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)
                 && successfulToolObserved(state, "get_hot_comments")
@@ -1320,6 +1352,14 @@ public class AgentLoopRunner {
             return true;
         }
         return false;
+    }
+
+    private boolean canFinishAfterLocalPlaylistWrite(AgentLoopState state) {
+        if (state == null || state.goal() == null || state.goal().requiredOutcomes().isEmpty()) {
+            return true;
+        }
+        return state.goal().requiredOutcomes().stream()
+                .allMatch(outcome -> outcome == AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE || outcome == AgentRequiredOutcome.PLAYLIST);
     }
 
     private boolean requiredOutcomesSatisfied(AgentLoopState state) {

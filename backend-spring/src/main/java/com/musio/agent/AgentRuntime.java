@@ -7,6 +7,7 @@ import com.musio.agent.capability.CapabilityEffect;
 import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.agent.loop.AgentLoopEvidence;
 import com.musio.agent.loop.AgentLoopOutcome;
+import com.musio.agent.loop.AgentLoopOutcomeType;
 import com.musio.agent.loop.AgentLoopRunner;
 import com.musio.agent.loop.AgentLoopState;
 import com.musio.agent.loop.AgentObservation;
@@ -784,6 +785,15 @@ public class AgentRuntime {
                 songTitles(evidence.songs())
         );
         if (!evidence.hasObservations()) {
+            if (outcome.type() == AgentLoopOutcomeType.NEEDS_CONFIRMATION && goal.localWriteIntent()) {
+                return new PreludeContext("""
+
+                        本轮用户表达了本地 Musio 歌单写入意图，但尚未获得确认，也没有执行本地写入工具。
+                        最终回答不得声称歌单已经创建、歌曲已经收藏，或任何本地写入已经完成。
+                        必须直接说明：需要用户先确认后才会执行本地歌单写入。
+                        工具调用阶段已经结束；最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
+                        """, true, List.of(), "需要你先确认后，我才会执行本地歌单操作。", true, null, evidence);
+            }
             if (!deferredConfirmationInstruction.isBlank()) {
                 return new PreludeContext(
                         deferredConfirmationInstruction,
@@ -894,7 +904,8 @@ public class AgentRuntime {
             return false;
         }
         return evidence.observations().stream()
-                .anyMatch(observation -> AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(observation.toolName()));
+                .anyMatch(observation -> AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(observation.toolName())
+                        || AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(observation.toolName()));
     }
 
     private PendingLocalPlaylistAdd savePendingLocalPlaylistAdd(
