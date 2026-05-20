@@ -75,6 +75,19 @@ public class SongResolver {
         );
     }
 
+    public List<Song> searchFallbackSongs(String keyword, int requestedCount) {
+        String query = safe(keyword);
+        if (query.isBlank()) {
+            return List.of();
+        }
+        try {
+            int limit = Math.max(DEFAULT_SEARCH_LIMIT, requestedCount(requestedCount));
+            return providerGateway.defaultProvider().searchSongs(query, limit);
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
     private Optional<Song> strictMatch(RecommendationCandidate candidate) {
         List<Song> songs;
         try {

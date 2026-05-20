@@ -100,6 +100,35 @@ class RecommendationOrchestratorTest {
         assertTrue(response.answerText().contains("不展示可能不准确的歌曲卡片"));
     }
 
+    @Test
+    void fallsBackToSceneSearchWhenDraftCandidateCannotBeStrictlyResolved() {
+        RecordingTaskMemoryService taskMemory = new RecordingTaskMemoryService();
+        RecommendationOrchestrator orchestrator = new RecommendationOrchestrator(
+                new StubDraftGenerator(Optional.of(new RecommendationDraft(List.of(
+                        new RecommendationCandidate("夜跑", "徐良", "节奏明快，适合夜跑。", "night_run_song")
+                ), 0.9, "test"))),
+                new SongResolver(new MusicProviderGateway(List.of(new FakeProvider()))),
+                new AgentTracePublisher(eventBus),
+                taskMemory
+        );
+        AgentRunContext.setUserId("local");
+
+        RecommendationResponse response = orchestrator.recommend(
+                null,
+                "推荐一首适合夜跑的歌",
+                List.of(new RecommendationSlot("night_run_song", "scene", "夜跑", 1)),
+                List.of("追梦赤子心"),
+                AgentTaskMemory.empty("local")
+        );
+
+        assertEquals(1, response.songs().size());
+        assertEquals("NIGHT RUNNING", response.songs().getFirst().title());
+        assertEquals("night_run_song", response.result().resolved().getFirst().slotId());
+        assertTrue(response.answerText().contains("《NIGHT RUNNING》"));
+        assertFalse(response.answerText().contains("追梦赤子心"));
+        assertEquals(List.of("NIGHT RUNNING"), taskMemory.songTitles);
+    }
+
     private List<AgentEvent> subscribe(String runId) {
         List<AgentEvent> events = new ArrayList<>();
         eventBus.subscribe(runId, events::add);
@@ -119,6 +148,17 @@ class RecommendationOrchestratorTest {
                 com.musio.config.MusioConfig.Ai ai,
                 String userRequest,
                 int requestedCount,
+                List<String> avoidSongTitles,
+                AgentTaskMemory taskMemory
+        ) {
+            return draft;
+        }
+
+        @Override
+        public Optional<RecommendationDraft> generate(
+                com.musio.config.MusioConfig.Ai ai,
+                String userRequest,
+                List<RecommendationSlot> recommendationSlots,
                 List<String> avoidSongTitles,
                 AgentTaskMemory taskMemory
         ) {
@@ -157,6 +197,12 @@ class RecommendationOrchestratorTest {
         public List<Song> searchSongs(String keyword, int limit) {
             if ("安静 周杰伦".equals(keyword)) {
                 return List.of(new Song("qqmusic:quiet", ProviderType.QQMUSIC, "安静", List.of("周杰伦"), "范特西", 334, null));
+            }
+            if ("夜跑".equals(keyword)) {
+                return List.of(
+                        new Song("qqmusic:gala", ProviderType.QQMUSIC, "追梦赤子心", List.of("GALA"), "追梦痴子心", 310, null),
+                        new Song("qqmusic:night-running", ProviderType.QQMUSIC, "NIGHT RUNNING", List.of("Shin Sakiura", "AAAMYYY"), "NIGHT RUNNING", 238, null)
+                ).stream().limit(limit).toList();
             }
             return List.of();
         }
