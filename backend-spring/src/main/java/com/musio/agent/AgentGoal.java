@@ -4,6 +4,7 @@ import com.musio.agent.recommendation.RecommendationSlot;
 import com.musio.agent.recommendation.RecommendationSlots;
 
 import java.util.List;
+import java.util.Map;
 
 public record AgentGoal(
         String userMessage,
@@ -17,7 +18,8 @@ public record AgentGoal(
         int requestedSongCount,
         List<RecommendationSlot> recommendationSlots,
         List<String> avoidSongTitles,
-        List<AgentRequiredOutcome> requiredOutcomes
+        List<AgentRequiredOutcome> requiredOutcomes,
+        List<AgentLocalWriteIntent> localWriteIntents
 ) {
     public AgentGoal(
             String userMessage,
@@ -32,7 +34,24 @@ public record AgentGoal(
             List<String> avoidSongTitles,
             List<AgentRequiredOutcome> requiredOutcomes
     ) {
-        this(userMessage, effectiveRequest, taskType, contextMode, musicTask, toolEvidenceExpected, localWriteIntent, accountWriteIntent, requestedSongCount, List.of(), avoidSongTitles, requiredOutcomes);
+        this(userMessage, effectiveRequest, taskType, contextMode, musicTask, toolEvidenceExpected, localWriteIntent, accountWriteIntent, requestedSongCount, List.of(), avoidSongTitles, requiredOutcomes, List.of());
+    }
+
+    public AgentGoal(
+            String userMessage,
+            String effectiveRequest,
+            String taskType,
+            String contextMode,
+            boolean musicTask,
+            boolean toolEvidenceExpected,
+            boolean localWriteIntent,
+            boolean accountWriteIntent,
+            int requestedSongCount,
+            List<RecommendationSlot> recommendationSlots,
+            List<String> avoidSongTitles,
+            List<AgentRequiredOutcome> requiredOutcomes
+    ) {
+        this(userMessage, effectiveRequest, taskType, contextMode, musicTask, toolEvidenceExpected, localWriteIntent, accountWriteIntent, requestedSongCount, recommendationSlots, avoidSongTitles, requiredOutcomes, List.of());
     }
 
     public AgentGoal {
@@ -47,6 +66,7 @@ public record AgentGoal(
         requestedSongCount = Math.max(0, requestedSongCount);
         avoidSongTitles = avoidSongTitles == null ? List.of() : List.copyOf(avoidSongTitles);
         requiredOutcomes = requiredOutcomes == null ? List.of() : List.copyOf(requiredOutcomes);
+        localWriteIntents = localWriteIntents == null ? List.of() : List.copyOf(localWriteIntents);
     }
 
     static AgentGoal from(String userMessage, AgentTurnPlan turnPlan, AgentTaskContext taskContext, int requestedSongCount) {
@@ -75,7 +95,8 @@ public record AgentGoal(
                 requestedSongCount,
                 recommendationSlots,
                 taskContext == null ? List.of() : taskContext.avoidSongTitles(),
-                requiredOutcomes
+                requiredOutcomes,
+                localWriteIntents(turnPlan)
         );
     }
 
@@ -97,6 +118,7 @@ public record AgentGoal(
                 recommendationTotalCount: %s
                 avoidSongTitles: %s
                 requiredOutcomes: %s
+                localWriteIntents: %s
                 """.formatted(
                 effectiveRequest,
                 taskType,
@@ -109,8 +131,18 @@ public record AgentGoal(
                 RecommendationSlots.summary(recommendationSlots),
                 recommendationTotalCount() <= 0 ? "unspecified" : recommendationTotalCount(),
                 avoidSongTitles.isEmpty() ? "none" : String.join("、", avoidSongTitles),
-                requiredOutcomes.isEmpty() ? "none" : requiredOutcomes
+                requiredOutcomes.isEmpty() ? "none" : requiredOutcomes,
+                localWriteIntents.isEmpty() ? "none" : localWriteIntents.stream().map(AgentLocalWriteIntent::toolName).toList()
         ).strip();
+    }
+
+    private static List<AgentLocalWriteIntent> localWriteIntents(AgentTurnPlan turnPlan) {
+        if (turnPlan == null) {
+            return List.of();
+        }
+        return turnPlan.localWriteToolCalls().stream()
+                .map(call -> new AgentLocalWriteIntent(call.toolName(), call.arguments() == null ? Map.of() : call.arguments()))
+                .toList();
     }
 
     private static String safe(String value) {

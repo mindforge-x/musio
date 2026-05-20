@@ -2,6 +2,7 @@ package com.musio.agent.loop;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.musio.agent.AgentLocalWriteIntent;
 import com.musio.agent.AgentRunContext;
 import com.musio.agent.AgentToolExecutor;
 import com.musio.agent.AgentRequiredOutcome;
@@ -158,6 +159,15 @@ public class AgentLoopRunner {
                     publishLoopAction(state, step, recoveryAction);
                     state = executeToolAction(state, step, recoveryAction, executedCalls);
                     if (shouldFinishAfterTool(state, recoveryAction)) {
+                        return outcome(AgentLoopOutcomeType.COMPLETED, state, "tool_completion");
+                    }
+                    continue;
+                }
+                AgentStepAction localWriteAction = localPlaylistWriteRecoveryAction(state);
+                if (localWriteAction != null) {
+                    publishLoopAction(state, step, localWriteAction);
+                    state = executeToolAction(state, step, localWriteAction, executedCalls);
+                    if (shouldFinishAfterTool(state, localWriteAction)) {
                         return outcome(AgentLoopOutcomeType.COMPLETED, state, "tool_completion");
                     }
                     continue;
@@ -525,9 +535,6 @@ public class AgentLoopRunner {
         if (state == null || localPlaylistWriteDeclinedObserved(state)) {
             return null;
         }
-        if (successfulLocalPlaylistWriteObserved(state)) {
-            return null;
-        }
         AgentCapabilityManifest manifest = manifestFor(state);
         if (manifest == null) {
             return null;
@@ -541,6 +548,10 @@ public class AgentLoopRunner {
         }
         if (requiredOutcomeSatisfied(state, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)) {
             return null;
+        }
+        AgentStepAction pendingIntentAction = pendingLocalPlaylistIntentAction(state, manifest);
+        if (pendingIntentAction != null) {
+            return pendingIntentAction;
         }
         if (!manifest.allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)) {
             return null;
@@ -569,6 +580,52 @@ public class AgentLoopRunner {
                 1.0,
                 "required_outcome_recovery"
         );
+    }
+
+    private AgentStepAction pendingLocalPlaylistIntentAction(AgentLoopState state, AgentCapabilityManifest manifest) {
+        List<AgentLocalWriteIntent> intents = state == null || state.goal() == null ? List.of() : state.goal().localWriteIntents();
+        if (intents.isEmpty()) {
+            return null;
+        }
+        for (AgentLocalWriteIntent intent : intents) {
+            if (intent == null || intent.toolName().isBlank() || !manifest.allows(intent.toolName())) {
+                continue;
+            }
+            if (successfulLocalPlaylistToolObserved(state, intent.toolName())) {
+                continue;
+            }
+            Map<String, Object> arguments = new LinkedHashMap<>(intent.arguments());
+            if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(intent.toolName())) {
+                List<String> songIds = localPlaylistWriteTargetSongIds(state, new AgentStepAction(
+                        AgentStepActionType.TOOL_CALL,
+                        intent.toolName(),
+                        arguments,
+                        "",
+                        1.0,
+                        "local_write_intent"
+                ));
+                if (songIds.isEmpty()) {
+                    return null;
+                }
+                applyCreatedPlaylistTarget(state, arguments);
+                if (songIds.size() == 1) {
+                    arguments.put("songId", songIds.getFirst());
+                    arguments.remove("songIds");
+                } else {
+                    arguments.put("songIds", songIds);
+                    arguments.remove("songId");
+                }
+            }
+            return new AgentStepAction(
+                    AgentStepActionType.TOOL_CALL,
+                    intent.toolName(),
+                    arguments,
+                    localPlaylistWritePublicActivity(intent.toolName()),
+                    1.0,
+                    "required_outcome_recovery"
+            );
+        }
+        return null;
     }
 
     private AgentStepAction explicitLocalPlaylistWriteConfirmationAction(
@@ -1005,6 +1062,74 @@ public class AgentLoopRunner {
         );
     }
 
+    private void applyCreatedPlaylistTarget(AgentLoopState state, Map<String, Object> arguments) {
+        if (arguments == null || hasText(arguments, MusioPlaylistCapabilityFields.PLAYLIST_ID)) {
+            return;
+        }
+        Map<String, Object> created = latestCreatedPlaylistTarget(state);
+        if (created.isEmpty()) {
+            return;
+        }
+        String requestedName = text(arguments, MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME);
+        String createdName = text(created, MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME);
+        if (!requestedName.isBlank() && !requestedName.equals(createdName)) {
+            return;
+        }
+        if (requestedName.isBlank() && !createdName.isBlank()) {
+            arguments.put(MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME, createdName);
+        }
+        Object playlistId = created.get(MusioPlaylistCapabilityFields.PLAYLIST_ID);
+        if (playlistId instanceof String text && !text.isBlank()) {
+            arguments.put(MusioPlaylistCapabilityFields.PLAYLIST_ID, text.strip());
+        }
+    }
+
+    private Map<String, Object> latestCreatedPlaylistTarget(AgentLoopState state) {
+        if (state == null || state.observations() == null) {
+            return Map.of();
+        }
+        for (int i = state.observations().size() - 1; i >= 0; i--) {
+            AgentObservation observation = state.observations().get(i);
+            if (observation.status() != AgentObservationStatus.SUCCESS
+                    || !AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST.equals(observation.toolName())
+                    || observation.resultJson() == null
+                    || observation.resultJson().isBlank()) {
+                continue;
+            }
+            try {
+                JsonNode root = objectMapper.readTree(observation.resultJson());
+                if (!root.path("success").asBoolean(false)) {
+                    continue;
+                }
+                String playlistId = root.path("playlistId").asText("");
+                String playlistName = root.path("playlistName").asText("");
+                if (playlistId.isBlank() && playlistName.isBlank()) {
+                    continue;
+                }
+                Map<String, Object> result = new LinkedHashMap<>();
+                if (!playlistId.isBlank()) {
+                    result.put(MusioPlaylistCapabilityFields.PLAYLIST_ID, playlistId.strip());
+                }
+                if (!playlistName.isBlank()) {
+                    result.put(MusioPlaylistCapabilityFields.TARGET_PLAYLIST_NAME, playlistName.strip());
+                }
+                return result;
+            } catch (Exception ignored) {
+                return Map.of();
+            }
+        }
+        return Map.of();
+    }
+
+    private boolean hasText(Map<String, Object> arguments, String key) {
+        return !text(arguments, key).isBlank();
+    }
+
+    private String text(Map<String, Object> arguments, String key) {
+        Object value = arguments == null ? null : arguments.get(key);
+        return value instanceof String text && !text.isBlank() ? text.strip() : "";
+    }
+
     private List<String> localPlaylistWriteTargetSongIds(AgentLoopState state, AgentStepAction action) {
         List<String> explicitIds = requestedSongIds(action);
         if (explicitIds.isEmpty()) {
@@ -1365,7 +1490,7 @@ public class AgentLoopRunner {
         if (state.requestedSongCount() == 1
                 && manifestFor(state).allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)
                 && successfulToolObserved(state, "get_hot_comments")
-                && successfulLocalPlaylistWriteObserved(state)) {
+                && successfulLocalPlaylistToolObserved(state, AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)) {
             return true;
         }
         return false;
@@ -1374,6 +1499,10 @@ public class AgentLoopRunner {
     private boolean canFinishAfterLocalPlaylistWrite(AgentLoopState state) {
         if (state == null || state.goal() == null || state.goal().requiredOutcomes().isEmpty()) {
             return true;
+        }
+        if (state.goal().requiredOutcomes().contains(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)
+                && !requiredOutcomeSatisfied(state, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)) {
+            return false;
         }
         return state.goal().requiredOutcomes().stream()
                 .allMatch(outcome -> outcome == AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE || outcome == AgentRequiredOutcome.PLAYLIST);
@@ -1410,7 +1539,7 @@ public class AgentLoopRunner {
                     || successfulLocalPlaylistWriteObserved(state);
             case PROFILE -> successfulToolObserved(state, "get_user_music_profile");
             case PLAYBACK -> false;
-            case LOCAL_PLAYLIST_WRITE -> successfulLocalPlaylistWriteObserved(state);
+            case LOCAL_PLAYLIST_WRITE -> successfulRequiredLocalPlaylistWriteObserved(state);
             case ACCOUNT_WRITE -> false;
         };
     }
@@ -1678,6 +1807,41 @@ public class AgentLoopRunner {
         for (AgentObservation observation : state.observations()) {
             if (observation.status() != AgentObservationStatus.SUCCESS
                     || !isLocalPlaylistWriteTool(observation.toolName())) {
+                continue;
+            }
+            if (localPlaylistWriteComplete(observation)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean successfulRequiredLocalPlaylistWriteObserved(AgentLoopState state) {
+        if (state == null || state.goal() == null) {
+            return successfulLocalPlaylistWriteObserved(state);
+        }
+        List<AgentLocalWriteIntent> intents = state.goal().localWriteIntents();
+        if (intents == null || intents.isEmpty()) {
+            return successfulLocalPlaylistWriteObserved(state);
+        }
+        for (AgentLocalWriteIntent intent : intents) {
+            if (intent == null || intent.toolName().isBlank() || !isLocalPlaylistWriteTool(intent.toolName())) {
+                continue;
+            }
+            if (!successfulLocalPlaylistToolObserved(state, intent.toolName())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean successfulLocalPlaylistToolObserved(AgentLoopState state, String toolName) {
+        if (state == null || state.observations() == null || toolName == null || toolName.isBlank()) {
+            return false;
+        }
+        for (AgentObservation observation : state.observations()) {
+            if (observation.status() != AgentObservationStatus.SUCCESS
+                    || !toolName.equals(observation.toolName())) {
                 continue;
             }
             if (localPlaylistWriteComplete(observation)) {

@@ -3,6 +3,7 @@ package com.musio.agent.loop;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.ConfirmationService;
 import com.musio.agent.AgentGoal;
+import com.musio.agent.AgentLocalWriteIntent;
 import com.musio.agent.AgentRunContext;
 import com.musio.agent.AgentRequiredOutcome;
 import com.musio.agent.AgentToolExecutor;
@@ -1134,6 +1135,92 @@ class AgentLoopRunnerTest {
     }
 
     @Test
+    void compositeCreatePlaylistThenAddRecommendedSongCompletesBothWrites() {
+        AgentCapabilityHandler recommendationHandler = new StubRecommendationCapabilityHandler();
+        CompositePlaylistCapabilityExecutor playlistExecutor = new CompositePlaylistCapabilityExecutor();
+        MusicReadCapabilityHandler readHandler = musicReadCapabilityHandler();
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(playlistExecutor);
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler, readHandler, playlistHandler));
+        AgentEventBus eventBus = new AgentEventBus();
+        ConfirmationService confirmationService = new ConfirmationService();
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "推荐一首摇滚歌曲", "count", 1), "生成推荐", 0.9, "开放推荐"),
+                        new AgentStepAction(
+                                AgentStepActionType.REQUEST_CONFIRMATION,
+                                AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST,
+                                Map.of("name", "摇滚"),
+                                "确认创建歌单",
+                                0.95,
+                                "创建歌单需要确认"
+                        ),
+                        AgentStepAction.finalAnswer("结束", 0.9)
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler, readHandler, playlistHandler)),
+                null,
+                eventBus,
+                confirmationService
+        );
+        List<com.musio.model.ChatConfirmation> confirmations = new java.util.ArrayList<>();
+        eventBus.subscribe("run-1", event -> {
+            if ("confirmation_request".equals(event.type())) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) event.data();
+                var confirmation = (com.musio.model.ChatConfirmation) data.get("confirmation");
+                confirmations.add(confirmation);
+                confirmationService.confirm("run-1", new PendingConfirmation(confirmation.actionId(), true, Map.of("selectedSongIds", confirmation.defaultSelectedSongIds())));
+            }
+        });
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "给我推荐一首歌，并创建一个摇滚歌单，最后将这首歌加入到这个歌单里去",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(true),
+                1,
+                new AgentGoal(
+                        "给我推荐一首歌，并创建一个摇滚歌单，最后将这首歌加入到这个歌单里去",
+                        "推荐一首歌，创建摇滚歌单，并将推荐的歌加入摇滚歌单",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        true,
+                        false,
+                        1,
+                        List.of(),
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE),
+                        List.of(
+                                new AgentLocalWriteIntent(AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST, Map.of("name", "摇滚")),
+                                new AgentLocalWriteIntent(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST, Map.of("playlistName", "摇滚"))
+                        )
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(3, outcome.evidence().observations().size());
+        assertEquals(AgentCapabilityRegistry.RECOMMEND_SONGS, outcome.evidence().observations().get(0).toolName());
+        assertEquals(AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST, outcome.evidence().observations().get(1).toolName());
+        assertEquals(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST, outcome.evidence().observations().get(2).toolName());
+        assertEquals(2, confirmations.size());
+        assertEquals(com.musio.model.ChatConfirmationTypes.LOCAL_PLAYLIST_CREATE, confirmations.get(0).type());
+        assertEquals(com.musio.model.ChatConfirmationTypes.LOCAL_PLAYLIST_ADD, confirmations.get(1).type());
+        assertEquals(1, playlistExecutor.createCalls.size());
+        assertEquals(1, playlistExecutor.addCalls.size());
+        assertEquals("playlist-rock", playlistExecutor.addCalls.getFirst().get("playlistId"));
+        assertEquals("摇滚", playlistExecutor.addCalls.getFirst().get("playlistName"));
+        assertEquals("qqmusic:quiet", playlistExecutor.addCalls.getFirst().get("songId"));
+    }
+
+    @Test
     void inlineLocalWriteUsesRecommendationCountForPronounWriteIntentAfterBatchReads() {
         AgentCapabilityHandler recommendationHandler = new TwoSongRecommendationCapabilityHandler();
         CapturingPlaylistCapabilityExecutor playlistExecutor = new CapturingPlaylistCapabilityExecutor("""
@@ -2078,6 +2165,39 @@ class AgentLoopRunnerTest {
         public String executeAddSongToMusioPlaylist(AgentLoopState state, Map<String, Object> arguments) {
             calls.add(Map.copyOf(arguments));
             return resultJson;
+        }
+    }
+
+    private static class CompositePlaylistCapabilityExecutor extends MusioPlaylistCapabilityExecutor {
+        private final List<Map<String, Object>> createCalls = new java.util.ArrayList<>();
+        private final List<Map<String, Object>> addCalls = new java.util.ArrayList<>();
+
+        private CompositePlaylistCapabilityExecutor() {
+            super(null, null, null, null, new ObjectMapper());
+        }
+
+        @Override
+        public String executeCreateMusioPlaylist(AgentLoopState state, Map<String, Object> arguments) {
+            createCalls.add(Map.copyOf(arguments));
+            return """
+                    {"success":true,"summary":"已创建本地 Musio 歌单：摇滚。","playlistId":"playlist-rock","playlistName":"摇滚","description":"","itemCount":0}
+                    """;
+        }
+
+        @Override
+        public AgentCapabilityPreparationResult prepareAddSongToMusioPlaylistArguments(Map<String, Object> arguments) {
+            Map<String, Object> prepared = new java.util.LinkedHashMap<>(arguments == null ? Map.of() : arguments);
+            prepared.put("playlistId", "playlist-rock");
+            prepared.put("playlistName", "摇滚");
+            return AgentCapabilityPreparationResult.accepted(prepared);
+        }
+
+        @Override
+        public String executeAddSongToMusioPlaylist(AgentLoopState state, Map<String, Object> arguments) {
+            addCalls.add(Map.copyOf(arguments));
+            return """
+                    {"success":true,"summary":"已帮你收藏到目标 Musio 歌单：安静 - 周杰伦。","playlistId":"playlist-rock","playlistName":"摇滚","songId":"qqmusic:quiet","songTitle":"安静","song":{"id":"qqmusic:quiet","provider":"QQMUSIC","title":"安静","artists":["周杰伦"],"album":"范特西","durationSeconds":334,"artworkUrl":null}}
+                    """;
         }
     }
 

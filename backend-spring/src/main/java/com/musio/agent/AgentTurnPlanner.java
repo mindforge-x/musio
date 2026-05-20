@@ -355,6 +355,7 @@ public class AgentTurnPlanner {
                 - 如果用户要收藏“刚才那首/第一首/第二首/这几首”等上一轮卡片歌曲，memoryUse.usesTaskMemory=true，usedFields 包含 lastResultSongs；多首优先填写 songIds，只有没有 songId 但能确定序号时才填写 songIndexes；单首可填写 songId 或 songIndex。
                 - 如果用户明确给出歌名或歌手但没有 songId，%2$s 填 songTitle/artist；后端会先解析或搜索真实歌曲。
                 - 用户明确要求创建/新建本地 Musio 歌单，且给出清晰歌单名时，规划 %3$s，taskType=playlist，requiredOutcomes 包含 local_playlist_write，arguments 至少包含 name；如果用户给出描述，也写入 description。
+                - 用户同时要求创建歌单并把本轮推荐/搜索歌曲加入该歌单时，toolCalls 必须同时包含 %3$s 和 %2$s；%2$s.arguments 使用目标 playlistName，不要因为需要先推荐而省略收藏意图。
                 - 用户要求创建歌单但没有明确歌单名时，不要规划 %3$s；使用 respond_only 询问歌单名，可以提示用户顺便给描述。不要替用户编造最终歌单名。
                 - %2$s 和 %3$s 是本地 Musio 歌单写入，不是只读工具；不要声称它已经执行成功，除非当前用户输入是明确确认语句。
                 - 当前只读工具可以直接 use_tools；QQ 音乐账号收藏、账号歌单写入、公开评论等账号级写入能力当前没有开放工具，应输出 request_confirmation 或 unsupported。

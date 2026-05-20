@@ -240,6 +240,7 @@ public class AgentStepPlanner {
                 - %2$s 只能在用户已经确认收藏的确认轮次调用；初次表达收藏/保存/加入 Musio 歌单意图时，不要直接写入，应让后端保存待确认目标并请求用户确认。
                 - 初次写入意图输出 request_confirmation 时，如果已知要收藏哪首歌，也要把同一组 %2$s 参数放进 arguments；例如用户说“把当前播放的歌曲加入歌单”且 currentPlayback 有 id，就输出 toolName=%2$s，arguments={"playlistId":"default","songId":当前播放 songId,"songTitle":歌曲名,"artist":歌手}。如果用户说“加入 X 歌单/收藏到 X 歌单”，arguments 使用 playlistName=X；没有指定歌单时 playlistId 缺省为 default。
                 - 如果用户要求创建/新建本地 Musio 歌单且给出明确歌单名，输出 request_confirmation，toolName=%3$s，arguments 至少包含 name；如果用户同时给出描述，也要包含 description。
+                - 如果用户同时要求“创建歌单”和“把推荐/搜索到的歌曲加入这个歌单”，创建歌单成功不代表任务完成；创建成功后仍必须继续请求 %2$s 的收藏确认，目标歌单使用本轮刚创建的歌单名。
                 - 如果用户要求创建歌单但没有明确歌单名，不要调用 %3$s，不要请求写入授权；应 final_answer 询问歌单名，并提示可以补充描述。
                 - 如果用户要把多首已推荐/已搜索歌曲加入 Musio 歌单，优先用 %2$s.songIds 一次传入多个 songId；没有 songId 但有明确序号时才用 songIndexes。
                 - %2$s 如果已经能确定 songId/songIds，不要再同时填写可能冲突的 songIndex/songIndexes；序号只用于“第一首/第二首/这几首”这种没有明确 songId 的引用。
