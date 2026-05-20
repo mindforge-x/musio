@@ -24,7 +24,9 @@ class QQMusicProviderSourceProviderTest {
 
         List<SourceCapability> capabilities = provider.capabilities(SourceContext.defaultContext());
 
-        assertEquals(List.of("search_songs"), capabilities.stream().map(SourceCapability::name).toList());
+        assertTrue(capabilities.stream().anyMatch(capability -> "search_tracks".equals(capability.name())));
+        assertTrue(capabilities.stream().anyMatch(capability -> "resolve_playback".equals(capability.name())));
+        assertTrue(capabilities.stream().anyMatch(capability -> "search_songs".equals(capability.name())));
     }
 
     @Test
@@ -44,6 +46,15 @@ class QQMusicProviderSourceProviderTest {
 
         assertTrue(capabilities.stream().anyMatch(capability -> "search_songs".equals(capability.name())));
         assertTrue(capabilities.stream().anyMatch(capability -> "get_hot_comments".equals(capability.name())));
+    }
+
+    @Test
+    void hidesCapabilitiesWhenManifestMissesRequiredP0Tools() {
+        QQMusicProvider provider = new QQMusicProvider(null, new StubSidecarClient(false, false, true));
+
+        List<SourceCapability> capabilities = provider.capabilities(SourceContext.defaultContext());
+
+        assertTrue(capabilities.isEmpty());
     }
 
     @Test
@@ -67,16 +78,22 @@ class QQMusicProviderSourceProviderTest {
     private static final class StubSidecarClient extends QQMusicSidecarClient {
         private final boolean failManifest;
         private final boolean allowStaticManifestFallback;
+        private final boolean incompleteP0;
         private String lastToolName;
 
         private StubSidecarClient(boolean failManifest) {
-            this(failManifest, false);
+            this(failManifest, false, false);
         }
 
         private StubSidecarClient(boolean failManifest, boolean allowStaticManifestFallback) {
+            this(failManifest, allowStaticManifestFallback, false);
+        }
+
+        private StubSidecarClient(boolean failManifest, boolean allowStaticManifestFallback, boolean incompleteP0) {
             super(null);
             this.failManifest = failManifest;
             this.allowStaticManifestFallback = allowStaticManifestFallback;
+            this.incompleteP0 = incompleteP0;
         }
 
         @Override
@@ -92,13 +109,96 @@ class QQMusicProviderSourceProviderTest {
             return new SourceManifest(
                     "qqmusic",
                     "QQ 音乐",
-                    List.of(
+                    incompleteP0 ? List.of(
                             new SourceCapability(
                                     "search_songs",
                                     CapabilityEffect.READ,
                                     "搜索歌曲",
                                     Map.of("keyword", "string", "limit", "number"),
                                     Set.of("keyword", "limit"),
+                                    true,
+                                    "",
+                                    "songs"
+                            ),
+                            new SourceCapability(
+                                    "disabled_tool",
+                                    CapabilityEffect.READ,
+                                    "disabled",
+                                    Map.of(),
+                                    Set.of(),
+                                    false,
+                                    "disabled",
+                                    "generic"
+                            )
+                    ) : List.of(
+                            new SourceCapability(
+                                    "get_source_status",
+                                    "P0",
+                                    CapabilityEffect.READ,
+                                    "状态",
+                                    Map.of(),
+                                    Set.of(),
+                                    true,
+                                    true,
+                                    "",
+                                    "source_status"
+                            ),
+                            new SourceCapability(
+                                    "search_tracks",
+                                    "P0",
+                                    CapabilityEffect.READ,
+                                    "搜索歌曲",
+                                    Map.of("keyword", "string", "limit", "number"),
+                                    Set.of("keyword", "limit"),
+                                    true,
+                                    true,
+                                    "",
+                                    "tracks"
+                            ),
+                            new SourceCapability(
+                                    "get_track_detail",
+                                    "P0",
+                                    CapabilityEffect.READ,
+                                    "详情",
+                                    Map.of("trackId", "string"),
+                                    Set.of("trackId"),
+                                    true,
+                                    true,
+                                    "",
+                                    "track_detail"
+                            ),
+                            new SourceCapability(
+                                    "get_track_playability",
+                                    "P0",
+                                    CapabilityEffect.READ,
+                                    "可播性",
+                                    Map.of("trackId", "string"),
+                                    Set.of("trackId"),
+                                    true,
+                                    true,
+                                    "",
+                                    "track_playability"
+                            ),
+                            new SourceCapability(
+                                    "resolve_playback",
+                                    "P0",
+                                    CapabilityEffect.READ,
+                                    "播放解析",
+                                    Map.of("trackId", "string"),
+                                    Set.of("trackId"),
+                                    true,
+                                    true,
+                                    "",
+                                    "playback_resolution"
+                            ),
+                            new SourceCapability(
+                                    "search_songs",
+                                    "LEGACY",
+                                    CapabilityEffect.READ,
+                                    "搜索歌曲",
+                                    Map.of("keyword", "string", "limit", "number"),
+                                    Set.of("keyword", "limit"),
+                                    false,
                                     true,
                                     "",
                                     "songs"

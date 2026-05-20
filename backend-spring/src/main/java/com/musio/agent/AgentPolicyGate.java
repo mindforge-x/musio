@@ -83,7 +83,7 @@ public class AgentPolicyGate {
         SourceContext context = sourceContext == null ? SourceContext.defaultContext() : sourceContext;
         ProviderStatus status = sourceStatus(context);
         boolean sourceSearchAvailable = manifest.capabilities().stream()
-                .anyMatch(capability -> "search_songs".equals(capability.name()));
+                .anyMatch(capability -> "search_songs".equals(capability.name()) || "search_tracks".equals(capability.name()));
         List<AgentCapability> allowed = manifest.capabilities().stream()
                 .filter(capability -> allowedForSource(capability, context, status))
                 .filter(capability -> allowsSourceDependencies(capability, sourceSearchAvailable))

@@ -36,9 +36,13 @@ import com.musio.model.ProviderType;
 import com.musio.model.Song;
 import com.musio.model.SongDetail;
 import com.musio.model.SongUrl;
+import com.musio.model.SourceContext;
 import com.musio.model.UserProfile;
 import com.musio.providers.MusicProvider;
 import com.musio.providers.MusicProviderGateway;
+import com.musio.providers.MusicSourceProvider;
+import com.musio.providers.SourceCapability;
+import com.musio.providers.SourceToolCall;
 import com.musio.tools.MusicReadTools;
 import org.junit.jupiter.api.Test;
 
@@ -201,6 +205,56 @@ class AgentLoopRunnerTest {
         assertEquals(2, evidence.observations().size());
         assertEquals(AgentObservationStatus.SKIPPED, evidence.observations().getFirst().status());
         assertEquals("search_songs", evidence.observations().get(1).toolName());
+    }
+
+    @Test
+    void resolvesUnobservedPlaylistIdByReadingPlaylistListFirst() {
+        MusicReadCapabilityHandler readHandler = new MusicReadCapabilityHandler(musicReadTools(new PlaylistSourceProvider()));
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(readHandler));
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_playlist_tracks", Map.of("playlistId", "qqmusic:xh", "page", 1, "limit", 5), "读歌单歌曲", 0.9, "模型误用了其他歌单 id"),
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_playlist_tracks", Map.of("playlistId", "qqmusic:target", "page", 1, "limit", 5), "读目标歌单歌曲", 0.9, "使用已观测到的目标歌单 id"),
+                        AgentStepAction.finalAnswer("完成", 0.9)
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(readHandler))
+        );
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-playlist",
+                "local",
+                "列出目标歌单前几首",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.readManifest(),
+                0,
+                new AgentGoal(
+                        "列出目标歌单前几首",
+                        "列出目标歌单前几首",
+                        "playlist",
+                        "follow_up",
+                        true,
+                        true,
+                        false,
+                        false,
+                        0,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.PLAYLIST)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(2, outcome.evidence().observations().size());
+        assertEquals("get_user_playlists", outcome.evidence().observations().getFirst().toolName());
+        assertEquals(50, outcome.evidence().observations().getFirst().arguments().get("limit"));
+        assertEquals("get_playlist_tracks", outcome.evidence().observations().get(1).toolName());
+        assertEquals("qqmusic:target", outcome.evidence().observations().get(1).arguments().get("playlistId"));
+        assertEquals(AgentObservationStatus.SUCCESS, outcome.evidence().observations().get(1).status());
     }
 
     @Test
@@ -2688,6 +2742,75 @@ class AgentLoopRunnerTest {
         @Override
         public SongUrl getSongUrl(String songId) {
             throw new UnsupportedOperationException();
+        }
+    }
+
+    private static class PlaylistSourceProvider extends FakeProvider implements MusicSourceProvider {
+        @Override
+        public String sourceId() {
+            return ProviderType.QQMUSIC.sourceId();
+        }
+
+        @Override
+        public List<SourceCapability> capabilities(SourceContext context) {
+            return List.of(
+                    new SourceCapability(
+                            "get_user_playlists",
+                            CapabilityEffect.READ,
+                            "读取用户歌单",
+                            Map.of("limit", "number"),
+                            Set.of(),
+                            true,
+                            "",
+                            "playlists"
+                    ),
+                    new SourceCapability(
+                            "get_playlist_tracks",
+                            CapabilityEffect.READ,
+                            "读取歌单歌曲分页",
+                            Map.of("playlistId", "string", "limit", "number", "page", "number"),
+                            Set.of("playlistId"),
+                            true,
+                            "",
+                            "tracks"
+                    )
+            );
+        }
+
+        @Override
+        public Map<String, Object> execute(SourceToolCall call, SourceContext context) {
+            if ("get_user_playlists".equals(call.toolName())) {
+                return Map.of(
+                        "success", true,
+                        "sourceId", "qqmusic",
+                        "toolName", "get_user_playlists",
+                        "resultType", "playlists",
+                        "count", 2,
+                        "playlists", List.of(
+                                Map.of("id", "qqmusic:xh", "name", "xh"),
+                                Map.of("id", "qqmusic:target", "name", "目标歌单")
+                        )
+                );
+            }
+            if ("get_playlist_tracks".equals(call.toolName())) {
+                return Map.of(
+                        "success", true,
+                        "sourceId", "qqmusic",
+                        "toolName", "get_playlist_tracks",
+                        "resultType", "tracks",
+                        "count", 1,
+                        "songs", List.of(Map.of(
+                                "id", "qqmusic:song",
+                                "provider", "QQMUSIC",
+                                "title", "目标歌曲",
+                                "artists", List.of("歌手"),
+                                "album", "测试",
+                                "durationSeconds", 180,
+                                "artworkUrl", ""
+                        ))
+                );
+            }
+            return Map.of("success", false, "message", "unknown tool");
         }
     }
 

@@ -22,19 +22,43 @@ record AgentTurnPlan(
         List<String> avoidSongTitles
 ) {
     private static final Set<String> READ_ONLY_LOOP_TOOLS = Set.of(
+            "get_source_status",
+            "search_tracks",
+            "get_track_detail",
+            "get_track_playability",
+            "resolve_playback",
             "search_songs",
             "get_user_music_profile",
             "get_song_detail",
             "get_lyrics",
             "get_hot_comments",
+            "get_track_comments",
             "get_user_playlists",
-            "get_playlist_songs"
+            "get_playlist_detail",
+            "get_playlist_songs",
+            "get_playlist_tracks",
+            "search_artists",
+            "get_artist_detail",
+            "get_artist_tracks",
+            "search_albums",
+            "get_album_detail",
+            "get_album_tracks",
+            "search_playlists",
+            "get_recommend_tracks",
+            "get_recommend_playlists",
+            "get_chart_categories",
+            "get_chart_detail"
     );
     private static final Set<String> LOCAL_WRITE_TOOLS = Set.of(
             AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
             AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST
     );
-    private static final Set<String> ACCOUNT_WRITE_TOOLS = Set.of();
+    private static final Set<String> ACCOUNT_WRITE_TOOLS = Set.of(
+            "create_provider_playlist",
+            "add_tracks_to_provider_playlist",
+            "remove_tracks_from_provider_playlist",
+            "delete_provider_playlist"
+    );
 
     AgentTurnPlan(
             TurnDisposition disposition,
@@ -186,7 +210,7 @@ record AgentTurnPlan(
                 continue;
             }
             Map<String, Object> arguments = call.arguments();
-            if ("search_songs".equals(call.toolName())) {
+            if ("search_songs".equals(call.toolName()) || "search_tracks".equals(call.toolName())) {
                 return new ToolIntent(text(arguments, "keyword"), integer(arguments, "limit"), stringList(arguments, "excludedTitles"));
             }
         }

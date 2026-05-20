@@ -240,10 +240,12 @@ public class QQMusicSidecarClient {
     private SourceCapability toSourceCapability(SidecarCapability capability) {
         return new SourceCapability(
                 capability.name(),
+                capability.tier(),
                 effect(capability.effect()),
                 capability.description(),
                 capability.inputSchema() == null ? Map.of() : capability.inputSchema(),
                 capability.required() == null ? Set.of() : Set.copyOf(capability.required()),
+                capability.requiredCapability() != null && capability.requiredCapability(),
                 capability.enabled() == null || capability.enabled(),
                 capability.disabledReason(),
                 capability.resultType()
@@ -282,8 +284,17 @@ public class QQMusicSidecarClient {
             result.put("songs", objectMapper.convertValue(root.get("songs"), new TypeReference<List<SidecarSong>>() {
             }).stream().map(this::toSong).toList());
         }
+        if (root.has("tracks")) {
+            List<Song> tracks = objectMapper.convertValue(root.get("tracks"), new TypeReference<List<SidecarSong>>() {
+            }).stream().map(this::toSong).toList();
+            result.put("tracks", tracks);
+            result.putIfAbsent("songs", tracks);
+        }
         if (root.has("song")) {
             result.put("song", toSongDetail(objectMapper.convertValue(root.get("song"), SidecarSongDetail.class)));
+        }
+        if (root.has("track")) {
+            result.put("track", toSongDetail(objectMapper.convertValue(root.get("track"), SidecarSongDetail.class)));
         }
         if (root.has("songUrl")) {
             SidecarSongUrl songUrl = objectMapper.convertValue(root.get("songUrl"), SidecarSongUrl.class);
@@ -472,10 +483,12 @@ public class QQMusicSidecarClient {
 
     private record SidecarCapability(
             String name,
+            String tier,
             String effect,
             String description,
             @JsonProperty("input_schema") Map<String, Object> inputSchema,
             List<String> required,
+            @JsonProperty("required_capability") Boolean requiredCapability,
             Boolean enabled,
             @JsonProperty("disabled_reason") String disabledReason,
             @JsonProperty("result_type") String resultType

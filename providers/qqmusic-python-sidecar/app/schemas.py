@@ -29,6 +29,37 @@ class SongUrl(BaseModel):
     expires_in_seconds: int | None = None
 
 
+class TrackPlayabilityQuality(BaseModel):
+    quality: str
+    playable: bool
+    state: str
+    message: str = ""
+
+
+class TrackPlayability(BaseModel):
+    provider: str = "qqmusic"
+    track_id: str
+    playable: bool
+    state: str
+    reason: str = ""
+    best_quality: str | None = None
+    quality_results: list[TrackPlayabilityQuality] = Field(default_factory=list)
+    checked_at: str
+
+
+class PlaybackResolution(BaseModel):
+    provider: str = "qqmusic"
+    track_id: str
+    playback_mode: str
+    stream_url: str | None = None
+    provider_uri: str | None = None
+    web_url: str | None = None
+    expires_at: str | None = None
+    expires_in_seconds: int | None = None
+    state: str
+    unsupported_reason: str | None = None
+
+
 class Lyrics(BaseModel):
     song_id: str
     plain_text: str = ""
@@ -48,6 +79,38 @@ class Playlist(BaseModel):
     id: str
     name: str
     song_count: int | None = None
+    artwork_url: str | None = None
+
+
+class Album(BaseModel):
+    id: str
+    provider: str = "qqmusic"
+    title: str
+    artists: list[str] = Field(default_factory=list)
+    artwork_url: str | None = None
+    release_date: str | None = None
+    song_count: int | None = None
+    description: str | None = None
+
+
+class Artist(BaseModel):
+    id: str
+    provider: str = "qqmusic"
+    name: str
+    avatar_url: str | None = None
+    alias: list[str] = Field(default_factory=list)
+    genres: list[str] = Field(default_factory=list)
+    description: str | None = None
+    song_count: int | None = None
+    album_count: int | None = None
+
+
+class Chart(BaseModel):
+    id: str
+    provider: str = "qqmusic"
+    name: str
+    description: str | None = None
+    update_frequency: str | None = None
     artwork_url: str | None = None
 
 
@@ -94,10 +157,12 @@ class LoginStatus(BaseModel):
 
 class SourceCapability(BaseModel):
     name: str
+    tier: str = "P1"
     effect: str = "read"
     description: str = ""
     input_schema: dict[str, Any] = Field(default_factory=dict)
     required: list[str] = Field(default_factory=list)
+    required_capability: bool = False
     enabled: bool = True
     disabled_reason: str | None = None
     result_type: str = "generic"

@@ -58,8 +58,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
+
+      - name: Use npm CLI with trusted publishing support
+        run: |
+          npm install -g npm@^11.10.0
+          node --version
+          npm --version
 
       - uses: actions/setup-java@v4
         with:
@@ -125,10 +131,16 @@ jobs:
 
       - name: Publish platform package
         if: ${{ !inputs.dry_run }}
-        run: npm publish --access public --provenance --tag "${{ inputs.tag }}"
+        shell: bash
+        run: |
+          package_name="$(node -p "require('./package.json').name")"
+          package_version="$(node -p "require('./package.json').version")"
+          if npm view "${package_name}@${package_version}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+            echo "${package_name}@${package_version} is already published; skipping."
+            exit 0
+          fi
+          npm publish --access public --tag "${{ inputs.tag }}"
         working-directory: packaging/platforms/${{ matrix.target }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   launcher:
     name: Publish launcher
@@ -139,8 +151,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
+
+      - name: Use npm CLI with trusted publishing support
+        run: |
+          npm install -g npm@^11.10.0
+          node --version
+          npm --version
 
       - name: Resolve release version
         shell: bash
@@ -160,7 +178,13 @@ jobs:
 
       - name: Publish launcher package
         if: ${{ !inputs.dry_run }}
-        run: npm publish --access public --provenance --tag "${{ inputs.tag }}"
+        shell: bash
+        run: |
+          package_name="$(node -p "require('./package.json').name")"
+          package_version="$(node -p "require('./package.json').version")"
+          if npm view "${package_name}@${package_version}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+            echo "${package_name}@${package_version} is already published; skipping."
+            exit 0
+          fi
+          npm publish --access public --tag "${{ inputs.tag }}"
         working-directory: packaging/npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -243,6 +243,11 @@ final class AgentCapabilityStateFacts {
                     addTextId(ids, playlist.path("id").asText(""));
                 }
             }
+            JsonNode playlist = root.path("playlist");
+            if (playlist.isObject()) {
+                addTextId(ids, playlist.path("id").asText(""));
+            }
+            addTextId(ids, root.path("playlistId").asText(""));
         } catch (Exception ignored) {
             return Set.of();
         }

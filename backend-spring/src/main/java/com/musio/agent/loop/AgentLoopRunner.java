@@ -454,15 +454,31 @@ public class AgentLoopRunner {
             case COMMENTS -> readBySongIdsAction(state, manifest, "get_hot_comments", "读取热门评论", "required_outcome_recovery");
             case DETAIL -> readDetailAction(state, manifest);
             case RECOMMENDATION -> recommendAction(state, manifest);
+            case PLAYLIST -> playlistDiscoveryAction(state, manifest);
             case LOCAL_PLAYLIST_WRITE -> localPlaylistWriteRecoveryAction(state);
             default -> null;
         };
+    }
+
+    private AgentStepAction playlistDiscoveryAction(AgentLoopState state, AgentCapabilityManifest manifest) {
+        if (manifest == null || !manifest.allows("get_user_playlists") || successfulToolObserved(state, "get_user_playlists")) {
+            return null;
+        }
+        return new AgentStepAction(
+                AgentStepActionType.TOOL_CALL,
+                "get_user_playlists",
+                Map.of("limit", 50),
+                "读取歌单列表",
+                1.0,
+                "required_outcome_recovery"
+        );
     }
 
     private AgentStepAction normalizeReadAction(AgentLoopState state, AgentStepAction action) {
         if (action == null || action.action() != AgentStepActionType.TOOL_CALL) {
             return action;
         }
+        action = normalizePlaylistReadAction(state, action);
         List<String> playerStateIds = explicitPlayerStateReadTargetSongIds(state);
         if (!playerStateIds.isEmpty() && isReadableSongTool(action.toolName())) {
             return withReadSongIds(action, playerStateIds);
@@ -492,6 +508,37 @@ public class AgentLoopRunner {
                 action.confidence(),
                 action.reason()
         );
+    }
+
+    private AgentStepAction normalizePlaylistReadAction(AgentLoopState state, AgentStepAction action) {
+        if (state == null || action == null || !isPlaylistIdReadTool(action.toolName())) {
+            return action;
+        }
+        if (successfulToolObserved(state, "get_user_playlists") || successfulToolObserved(state, "search_playlists")) {
+            return action;
+        }
+        AgentCapabilityManifest manifest = manifestFor(state);
+        if (manifest == null || !manifest.allows("get_user_playlists") || capabilityExecutor == null || !capabilityExecutor.canExecute("get_user_playlists")) {
+            return action;
+        }
+        AgentCapabilityValidationResult validation = capabilityExecutor.validate(state, action.toolName(), action.arguments());
+        if (validation.valid() || !"playlist_id_not_observed".equals(validation.reason())) {
+            return action;
+        }
+        return new AgentStepAction(
+                AgentStepActionType.TOOL_CALL,
+                "get_user_playlists",
+                Map.of("limit", 50),
+                "读取歌单列表",
+                action.confidence(),
+                "playlist_id_resolution"
+        );
+    }
+
+    private boolean isPlaylistIdReadTool(String toolName) {
+        return "get_playlist_songs".equals(toolName)
+                || "get_playlist_tracks".equals(toolName)
+                || "get_playlist_detail".equals(toolName);
     }
 
     private AgentStepAction withReadSongIds(AgentStepAction action, List<String> songIds) {
@@ -1530,13 +1577,11 @@ public class AgentLoopRunner {
                     1.0,
                     "outcome_verification"
             ));
-            case SEARCH -> successfulToolObserved(state, "search_songs");
-            case COMMENTS -> readOutcomeSatisfied(state, "get_hot_comments");
+            case SEARCH -> successfulToolObserved(state, "search_songs") || successfulToolObserved(state, "search_tracks");
+            case COMMENTS -> readOutcomeSatisfied(state, "get_hot_comments") || readOutcomeSatisfied(state, "get_track_comments");
             case LYRICS -> readOutcomeSatisfied(state, "get_lyrics");
-            case DETAIL -> successfulToolObserved(state, "get_song_detail");
-            case PLAYLIST -> successfulToolObserved(state, "get_user_playlists")
-                    || successfulToolObserved(state, "get_playlist_songs")
-                    || successfulLocalPlaylistWriteObserved(state);
+            case DETAIL -> successfulToolObserved(state, "get_song_detail") || successfulToolObserved(state, "get_track_detail");
+            case PLAYLIST -> playlistOutcomeSatisfied(state);
             case PROFILE -> successfulToolObserved(state, "get_user_music_profile");
             case PLAYBACK -> false;
             case LOCAL_PLAYLIST_WRITE -> successfulRequiredLocalPlaylistWriteObserved(state);
@@ -1554,6 +1599,29 @@ public class AgentLoopRunner {
             return false;
         }
         return recommendationSatisfied(state, action);
+    }
+
+    private boolean playlistOutcomeSatisfied(AgentLoopState state) {
+        if (playlistTrackReadIntent(state)) {
+            return successfulToolObserved(state, "get_playlist_songs")
+                    || successfulToolObserved(state, "get_playlist_tracks")
+                    || successfulLocalPlaylistWriteObserved(state);
+        }
+        return successfulToolObserved(state, "get_user_playlists")
+                || successfulToolObserved(state, "get_playlist_songs")
+                || successfulToolObserved(state, "get_playlist_tracks")
+                || successfulToolObserved(state, "get_playlist_detail")
+                || successfulLocalPlaylistWriteObserved(state);
+    }
+
+    private boolean playlistTrackReadIntent(AgentLoopState state) {
+        if (state == null) {
+            return false;
+        }
+        String text = normalizeText((state.userMessage() == null ? "" : state.userMessage())
+                + " "
+                + (state.goal() == null ? "" : state.goal().effectiveRequest()));
+        return containsAny(text, "前几首", "歌曲列表", "歌单里", "歌单中的", "里面的歌", "里的歌", "哪些歌", "有什么歌", "播放");
     }
 
     private AgentObservation lastSuccessfulObservation(AgentLoopState state, String toolName) {
@@ -2138,14 +2206,13 @@ public class AgentLoopRunner {
             }
             return switch (observation.toolName()) {
                 case AgentCapabilityRegistry.RECOMMEND_SONGS -> "recommend";
-                case "get_hot_comments" -> "comments";
+                case "get_hot_comments", "get_track_comments" -> "comments";
                 case "get_lyrics" -> "lyrics";
-                case "get_song_detail" -> "detail";
-                case "get_user_playlists", "get_playlist_songs",
-                     AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
-                     AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST -> "playlist";
+                case "get_song_detail", "get_track_detail" -> "detail";
+                case "get_user_playlists", "get_playlist_songs", "get_playlist_tracks", "get_playlist_detail", "add_song_to_musio_playlist",AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+                        AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST -> "playlist";
                 case "get_user_music_profile" -> "profile";
-                case "search_songs" -> "search";
+                case "search_songs", "search_tracks" -> "search";
                 default -> "";
             };
         }

@@ -39,7 +39,7 @@ final class MusicReadCapabilityValidator {
                 return AgentCapabilityValidationResult.rejected("tool_result_already_observed");
             }
         }
-        if ("get_playlist_songs".equals(capabilityName)
+        if (requiresObservedPlaylistId(capabilityName)
                 && !AgentCapabilityStateFacts.knownPlaylistIds(state).contains(AgentCapabilityStateFacts.text(safeArguments, "playlistId"))) {
             return AgentCapabilityValidationResult.rejected("playlist_id_not_observed");
         }
@@ -52,5 +52,11 @@ final class MusicReadCapabilityValidator {
 
     private static boolean supportsBatchSongIds(String capabilityName) {
         return "get_lyrics".equals(capabilityName) || "get_hot_comments".equals(capabilityName);
+    }
+
+    private static boolean requiresObservedPlaylistId(String capabilityName) {
+        return "get_playlist_songs".equals(capabilityName)
+                || "get_playlist_tracks".equals(capabilityName)
+                || "get_playlist_detail".equals(capabilityName);
     }
 }

@@ -32,7 +32,7 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
     @Override
     public List<AgentCapability> capabilities() {
         Map<String, AgentCapability> values = new LinkedHashMap<>();
-        for (SourceCapability capability : sourceCapabilities(SourceCapability::enabled)) {
+        for (SourceCapability capability : sourceCapabilities(this::isReadableSourceCapability)) {
             values.put(capability.name(), capability.toAgentCapability(argumentSpec(capability.inputSchema())));
         }
         values.put(USER_MUSIC_PROFILE, capabilities.get(USER_MUSIC_PROFILE).spec());
@@ -81,7 +81,12 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
             return AgentCapabilityValidationResult.rejected("unknown_tool");
         }
         if (!capabilities.containsKey(capabilityName)) {
-            return validateSourceRequiredArguments(capabilityName, arguments == null ? Map.of() : arguments);
+            Map<String, Object> safeArguments = arguments == null ? Map.of() : arguments;
+            AgentCapabilityValidationResult requiredArguments = validateSourceRequiredArguments(capabilityName, safeArguments);
+            if (!requiredArguments.valid()) {
+                return requiredArguments;
+            }
+            return MusicReadCapabilityValidator.validate(state, capabilityName, safeArguments, true);
         }
         return MusicReadCapabilityValidator.validate(state, capabilityName, arguments, supports(capabilityName));
     }
@@ -129,9 +134,13 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
         if (capabilityName == null || capabilityName.isBlank()) {
             return Optional.empty();
         }
-        return sourceCapabilities(SourceCapability::enabled).stream()
+        return sourceCapabilities(this::isReadableSourceCapability).stream()
                 .filter(capability -> capabilityName.equals(capability.name()))
                 .findFirst();
+    }
+
+    private boolean isReadableSourceCapability(SourceCapability capability) {
+        return capability != null && capability.enabled() && capability.effect() == CapabilityEffect.READ;
     }
 
     private boolean isLocalCapability(String capabilityName) {
