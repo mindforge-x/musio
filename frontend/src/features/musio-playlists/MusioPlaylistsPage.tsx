@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { Plus, X } from "lucide-react";
+import { Music2, Plus, Sparkles, X } from "lucide-react";
 import { EventLog, MusioPlaylist, MusioPlaylistItem, Song } from "../../shared/types";
 import { musioPlaylistClient } from "./musioPlaylistClient";
 import { MusioPlaylistDetail } from "./MusioPlaylistDetail";
@@ -11,6 +11,9 @@ type MusioPlaylistsPageProps = {
   onAddSongsToQueue: (songs: Song[], sourceLabel: string) => void;
   onEvent: (event: EventLog) => void;
 };
+
+const PLAYLIST_NAME_MAX_LENGTH = 50;
+const PLAYLIST_DESCRIPTION_MAX_LENGTH = 200;
 
 export function MusioPlaylistsPage({
   currentSongId,
@@ -210,9 +213,10 @@ export function MusioPlaylistsPage({
             aria-labelledby="musio-playlist-create-title"
           >
             <div className="musio-playlist-modal-header">
-              <div>
-                <p className="eyebrow">LOCAL PLAYLIST</p>
+              <div className="musio-playlist-modal-title">
+                <Sparkles size={30} />
                 <h3 id="musio-playlist-create-title">新建本地歌单</h3>
+                <p>为你的音乐收藏创建一个新的歌单</p>
               </div>
               <button
                 type="button"
@@ -226,34 +230,47 @@ export function MusioPlaylistsPage({
             </div>
             <form className="musio-playlist-create-form" onSubmit={createPlaylist}>
               <label>
-                <span>歌单名称</span>
-                <input
-                  value={createName}
-                  onChange={(event) => setCreateName(event.target.value)}
-                  placeholder="例如：深夜代码"
-                  maxLength={80}
-                  autoFocus
-                />
+                <span className="musio-playlist-field-label">歌单名称</span>
+                <div className="musio-playlist-field-control">
+                  <input
+                    value={createName}
+                    onChange={(event) => setCreateName(event.target.value)}
+                    placeholder="例如：深夜代码"
+                    maxLength={PLAYLIST_NAME_MAX_LENGTH}
+                    autoFocus
+                  />
+                  <span className="musio-playlist-field-count">
+                    {createName.length}/{PLAYLIST_NAME_MAX_LENGTH}
+                  </span>
+                </div>
               </label>
               <label>
-                <span>描述</span>
-                <textarea
-                  value={createDescription}
-                  onChange={(event) => setCreateDescription(event.target.value)}
-                  placeholder="可选"
-                  maxLength={240}
-                  rows={3}
-                />
+                <span className="musio-playlist-field-label">描述（可选）</span>
+                <div className="musio-playlist-field-control">
+                  <textarea
+                    value={createDescription}
+                    onChange={(event) => setCreateDescription(event.target.value)}
+                    placeholder="说点关于这个歌单的故事吧..."
+                    maxLength={PLAYLIST_DESCRIPTION_MAX_LENGTH}
+                    rows={4}
+                  />
+                  <span className="musio-playlist-field-count">
+                    {createDescription.length}/{PLAYLIST_DESCRIPTION_MAX_LENGTH}
+                  </span>
+                </div>
               </label>
-              <div className="musio-playlist-create-actions">
-                <button type="submit" className="primary" disabled={!canCreatePlaylist}>
-                  <Plus size={14} />
-                  <span>{creatingPlaylist ? "创建中" : "创建"}</span>
-                </button>
-                <button type="button" onClick={closeCreateDialog} disabled={creatingPlaylist}>
-                  <X size={14} />
-                  <span>取消</span>
-                </button>
+              <div className="musio-playlist-create-footer">
+                <div className="musio-playlist-create-ornament" aria-hidden="true">
+                  <span />
+                  <Music2 size={25} />
+                  <span />
+                </div>
+                <div className="musio-playlist-create-actions">
+                  <button type="submit" className="primary" disabled={!canCreatePlaylist}>
+                    <Plus size={18} />
+                    <span>{creatingPlaylist ? "创建中" : "创建歌单"}</span>
+                  </button>
+                </div>
               </div>
             </form>
           </section>
