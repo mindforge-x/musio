@@ -58,8 +58,24 @@ class MusicReadCapabilityHandlerSourceManifestTest {
         assertTrue(names.contains("get_similar_songs"));
         assertTrue(names.contains("get_user_music_profile"));
         assertFalse(names.contains("disabled_tool"));
+        assertFalse(names.contains("add_tracks_to_provider_playlist"));
         assertTrue(handler.supports("get_similar_songs"));
         assertFalse(handler.supports("disabled_tool"));
+        assertFalse(handler.supports("add_tracks_to_provider_playlist"));
+    }
+
+    @Test
+    void doesNotExposeAccountWriteSourceCapabilitiesToReadHandler() {
+        MusicReadCapabilityHandler handler = handler(new DynamicProvider());
+        AgentRunContext.setSourceContext(new SourceContext(List.of("qqmusic"), "qqmusic", "local"));
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(handler));
+
+        assertFalse(registry.manifest(false).allows("add_tracks_to_provider_playlist"));
+        assertFalse(registry.manifest(true).allows("add_tracks_to_provider_playlist"));
+        assertTrue(handler.execute(null, "add_tracks_to_provider_playlist", Map.of(
+                "playlistId", "qqmusic:1",
+                "trackIds", List.of("qqmusic:2")
+        )).isEmpty());
     }
 
     @Test
@@ -187,6 +203,18 @@ class MusicReadCapabilityHandlerSourceManifestTest {
                             false,
                             "disabled in test",
                             "generic"
+                    ),
+                    new SourceCapability(
+                            "add_tracks_to_provider_playlist",
+                            "P2",
+                            CapabilityEffect.ACCOUNT_WRITE,
+                            "远端账号写入契约",
+                            Map.of("playlistId", "string", "trackIds", "string[]"),
+                            Set.of("playlistId", "trackIds"),
+                            false,
+                            true,
+                            "",
+                            "playlist_write_result"
                     )
             );
         }

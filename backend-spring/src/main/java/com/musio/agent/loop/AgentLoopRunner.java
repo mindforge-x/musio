@@ -1285,12 +1285,14 @@ public class AgentLoopRunner {
                     1.0,
                     "outcome_verification"
             ));
-            case SEARCH -> successfulToolObserved(state, "search_songs");
-            case COMMENTS -> readOutcomeSatisfied(state, "get_hot_comments");
+            case SEARCH -> successfulToolObserved(state, "search_songs") || successfulToolObserved(state, "search_tracks");
+            case COMMENTS -> readOutcomeSatisfied(state, "get_hot_comments") || readOutcomeSatisfied(state, "get_track_comments");
             case LYRICS -> readOutcomeSatisfied(state, "get_lyrics");
-            case DETAIL -> successfulToolObserved(state, "get_song_detail");
+            case DETAIL -> successfulToolObserved(state, "get_song_detail") || successfulToolObserved(state, "get_track_detail");
             case PLAYLIST -> successfulToolObserved(state, "get_user_playlists")
                     || successfulToolObserved(state, "get_playlist_songs")
+                    || successfulToolObserved(state, "get_playlist_tracks")
+                    || successfulToolObserved(state, "get_playlist_detail")
                     || successfulLocalPlaylistWriteObserved(state);
             case PROFILE -> successfulToolObserved(state, "get_user_music_profile");
             case PLAYBACK -> false;
@@ -1858,12 +1860,12 @@ public class AgentLoopRunner {
             }
             return switch (observation.toolName()) {
                 case AgentCapabilityRegistry.RECOMMEND_SONGS -> "recommend";
-                case "get_hot_comments" -> "comments";
+                case "get_hot_comments", "get_track_comments" -> "comments";
                 case "get_lyrics" -> "lyrics";
-                case "get_song_detail" -> "detail";
-                case "get_user_playlists", "get_playlist_songs", "add_song_to_musio_playlist" -> "playlist";
+                case "get_song_detail", "get_track_detail" -> "detail";
+                case "get_user_playlists", "get_playlist_songs", "get_playlist_tracks", "get_playlist_detail", "add_song_to_musio_playlist" -> "playlist";
                 case "get_user_music_profile" -> "profile";
-                case "search_songs" -> "search";
+                case "search_songs", "search_tracks" -> "search";
                 default -> "";
             };
         }

@@ -32,7 +32,7 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
     @Override
     public List<AgentCapability> capabilities() {
         Map<String, AgentCapability> values = new LinkedHashMap<>();
-        for (SourceCapability capability : sourceCapabilities(SourceCapability::enabled)) {
+        for (SourceCapability capability : sourceCapabilities(this::isReadableSourceCapability)) {
             values.put(capability.name(), capability.toAgentCapability(argumentSpec(capability.inputSchema())));
         }
         values.put(USER_MUSIC_PROFILE, capabilities.get(USER_MUSIC_PROFILE).spec());
@@ -129,9 +129,13 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
         if (capabilityName == null || capabilityName.isBlank()) {
             return Optional.empty();
         }
-        return sourceCapabilities(SourceCapability::enabled).stream()
+        return sourceCapabilities(this::isReadableSourceCapability).stream()
                 .filter(capability -> capabilityName.equals(capability.name()))
                 .findFirst();
+    }
+
+    private boolean isReadableSourceCapability(SourceCapability capability) {
+        return capability != null && capability.enabled() && capability.effect() == CapabilityEffect.READ;
     }
 
     private boolean isLocalCapability(String capabilityName) {

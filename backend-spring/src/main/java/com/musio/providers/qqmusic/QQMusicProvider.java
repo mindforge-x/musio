@@ -48,7 +48,12 @@ public class QQMusicProvider implements MusicProvider, MusicSourceProvider {
     @Override
     public List<SourceCapability> capabilities(SourceContext context) {
         try {
-            return sidecarClient.manifest().enabledCapabilities();
+            com.musio.providers.SourceManifest manifest = sidecarClient.manifest();
+            if (!manifest.p0Complete()) {
+                log.warn("QQ Music sidecar manifest is missing required P0 capabilities: {}", manifest.missingRequiredP0Capabilities());
+                return List.of();
+            }
+            return manifest.enabledCapabilities();
         } catch (RuntimeException error) {
             if (sidecarClient.allowStaticManifestFallback()) {
                 log.warn("QQ Music sidecar manifest unavailable; using static compatibility capability fallback: {}", errorMessage(error));

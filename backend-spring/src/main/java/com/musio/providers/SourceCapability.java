@@ -9,16 +9,32 @@ import java.util.Set;
 
 public record SourceCapability(
         String name,
+        String tier,
         CapabilityEffect effect,
         String description,
         Map<String, Object> inputSchema,
         Set<String> required,
+        boolean requiredCapability,
         boolean enabled,
         String disabledReason,
         String resultType
 ) {
+    public SourceCapability(
+            String name,
+            CapabilityEffect effect,
+            String description,
+            Map<String, Object> inputSchema,
+            Set<String> required,
+            boolean enabled,
+            String disabledReason,
+            String resultType
+    ) {
+        this(name, "", effect, description, inputSchema, required, false, enabled, disabledReason, resultType);
+    }
+
     public SourceCapability {
         name = name == null ? "" : name.strip();
+        tier = tier == null ? "" : tier.strip().toUpperCase(java.util.Locale.ROOT);
         effect = effect == null ? CapabilityEffect.READ : effect;
         description = description == null ? "" : description.strip();
         inputSchema = inputSchema == null ? Map.of() : Map.copyOf(inputSchema);
@@ -33,5 +49,9 @@ public record SourceCapability(
 
     public List<String> requiredList() {
         return required.stream().toList();
+    }
+
+    public boolean isP0() {
+        return "P0".equals(tier);
     }
 }
