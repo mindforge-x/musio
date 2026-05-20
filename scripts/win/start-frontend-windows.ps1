@@ -20,6 +20,22 @@ function Test-PortListening {
     return $null -ne (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
 }
 
+function Test-FrontendDependenciesCurrent {
+    $viteCmd = Join-Path $FrontendDir "node_modules\.bin\vite.cmd"
+    $packageLock = Join-Path $FrontendDir "package-lock.json"
+    $installedLock = Join-Path $FrontendDir "node_modules\.package-lock.json"
+    if (-not (Test-Path $viteCmd)) {
+        return $false
+    }
+    if (-not (Test-Path $packageLock)) {
+        return $true
+    }
+    if (-not (Test-Path $installedLock)) {
+        return $false
+    }
+    return (Get-Item $installedLock).LastWriteTimeUtc -ge (Get-Item $packageLock).LastWriteTimeUtc
+}
+
 function Wait-Http {
     param([string]$Name, [string]$Url, [int]$TimeoutSeconds = 30)
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -41,8 +57,7 @@ if (-not (Get-Command "npm.cmd" -ErrorAction SilentlyContinue)) {
     throw "npm.cmd was not found in PATH. Install Node.js and ensure npm is available in PATH."
 }
 
-$viteCmd = Join-Path $FrontendDir "node_modules\.bin\vite.cmd"
-if (-not (Test-Path $viteCmd)) {
+if (-not (Test-FrontendDependenciesCurrent)) {
     Write-Host "Installing Windows frontend dependencies..."
     Push-Location $FrontendDir
     try {

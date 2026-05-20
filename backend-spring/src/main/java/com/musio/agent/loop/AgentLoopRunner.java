@@ -2209,7 +2209,7 @@ public class AgentLoopRunner {
                 case "get_hot_comments", "get_track_comments" -> "comments";
                 case "get_lyrics" -> "lyrics";
                 case "get_song_detail", "get_track_detail" -> "detail";
-                case "get_user_playlists", "get_playlist_songs", "get_playlist_tracks", "get_playlist_detail", "add_song_to_musio_playlist",AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+                case "get_user_playlists", "get_playlist_songs", "get_playlist_tracks", "get_playlist_detail", AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
                         AgentCapabilityRegistry.CREATE_MUSIO_PLAYLIST -> "playlist";
                 case "get_user_music_profile" -> "profile";
                 case "search_songs", "search_tracks" -> "search";
