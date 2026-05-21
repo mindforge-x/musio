@@ -78,6 +78,14 @@ final class AgentCapabilityStateFacts {
             return ids;
         }
         ids.addAll(providerIdsInText(state.userMessage() == null ? "" : state.userMessage()));
+        AgentTaskMemory memory = state.taskMemory();
+        if (memory != null) {
+            ids.addAll(playlistIdsInTaskMemoryText(memory.currentTask()));
+            ids.addAll(playlistIdsInTaskMemoryText(memory.lastEffectiveRequest()));
+            for (String summary : memory.lastObservationSummaries()) {
+                ids.addAll(playlistIdsInTaskMemoryText(summary));
+            }
+        }
         for (AgentObservation observation : state.observations()) {
             ids.addAll(playlistIdsFromResultJson(observation.resultJson()));
         }
@@ -185,6 +193,24 @@ final class AgentCapabilityStateFacts {
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("qqmusic:[A-Za-z0-9:_-]+").matcher(value);
         while (matcher.find()) {
             ids.add(matcher.group());
+        }
+        return ids;
+    }
+
+    private static Set<String> playlistIdsInTaskMemoryText(String value) {
+        if (value == null || value.isBlank()) {
+            return Set.of();
+        }
+        String normalized = value.toLowerCase(java.util.Locale.ROOT);
+        if (!normalized.contains("歌单") && !normalized.contains("playlist")) {
+            return Set.of();
+        }
+        Set<String> ids = new LinkedHashSet<>();
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?i)\\b(?:playlistId|playlist_id|id)\\s*[=:：]\\s*(qqmusic:[A-Za-z0-9:_-]+)")
+                .matcher(value);
+        while (matcher.find()) {
+            ids.add(matcher.group(1));
         }
         return ids;
     }

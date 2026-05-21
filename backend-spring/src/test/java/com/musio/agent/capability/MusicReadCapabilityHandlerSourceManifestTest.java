@@ -10,6 +10,7 @@ import com.musio.agent.loop.AgentObservationStatus;
 import com.musio.agent.loop.AgentStepAction;
 import com.musio.agent.loop.AgentStepActionType;
 import com.musio.events.AgentEventBus;
+import com.musio.model.AgentTaskMemory;
 import com.musio.model.Comment;
 import com.musio.model.LoginStartResult;
 import com.musio.model.LoginStatus;
@@ -31,6 +32,7 @@ import com.musio.agent.trace.AgentTracePublisher;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -180,6 +182,69 @@ class MusicReadCapabilityHandlerSourceManifestTest {
         );
 
         assertTrue(handler.validate(observedState, "get_playlist_tracks", Map.of("playlistId", "qqmusic:target", "limit", 5)).valid());
+    }
+
+    @Test
+    void validatesSourcePlaylistReadsAgainstTaskMemoryPlaylistIds() {
+        MusicReadCapabilityHandler handler = handler(new PlaylistReadProvider());
+        AgentRunContext.setSourceContext(new SourceContext(List.of("qqmusic"), "qqmusic", "local"));
+
+        AgentTaskMemory playlistMemory = new AgentTaskMemory(
+                "local",
+                "",
+                "查看歌单「全网热搜BGM丨抖音热门歌曲集」(id=qqmusic:8563693162)里的歌曲",
+                "",
+                null,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                null,
+                "playlist",
+                List.of("search_playlists 成功，歌单 10 个：全网<em>热搜BGM</em>丨抖音热门歌曲集 id=qqmusic:8563693162；其他歌单 id=qqmusic:7518572888"),
+                null,
+                Instant.EPOCH
+        );
+        AgentLoopState playlistMemoryState = new AgentLoopState(
+                "run-playlist-memory",
+                "local",
+                "这个里面有啥歌",
+                List.of(),
+                playlistMemory,
+                List.of(),
+                0
+        );
+
+        assertTrue(handler.validate(playlistMemoryState, "get_playlist_tracks", Map.of("playlistId", "qqmusic:8563693162", "limit", 5)).valid());
+        assertTrue(handler.validate(playlistMemoryState, "get_playlist_tracks", Map.of("playlistId", "8563693162", "limit", 5)).valid());
+
+        AgentTaskMemory songMemory = new AgentTaskMemory(
+                "local",
+                "",
+                "把 songId=qqmusic:002kLjjv0w884W 加入歌单",
+                "",
+                null,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                null,
+                "search",
+                List.of("search_songs 成功，歌曲 1 首：咏春 id=qqmusic:002kLjjv0w884W"),
+                null,
+                Instant.EPOCH
+        );
+        AgentLoopState songMemoryState = new AgentLoopState(
+                "run-song-memory",
+                "local",
+                "这个里面有啥歌",
+                List.of(),
+                songMemory,
+                List.of(),
+                0
+        );
+
+        assertFalse(handler.validate(songMemoryState, "get_playlist_tracks", Map.of("playlistId", "qqmusic:002kLjjv0w884W", "limit", 5)).valid());
     }
 
     @Test

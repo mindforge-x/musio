@@ -40,7 +40,7 @@ final class MusicReadCapabilityValidator {
             }
         }
         if (requiresObservedPlaylistId(capabilityName)
-                && !AgentCapabilityStateFacts.knownPlaylistIds(state).contains(AgentCapabilityStateFacts.text(safeArguments, "playlistId"))) {
+                && !knownIdMatches(AgentCapabilityStateFacts.knownPlaylistIds(state), AgentCapabilityStateFacts.text(safeArguments, "playlistId"))) {
             return AgentCapabilityValidationResult.rejected("playlist_id_not_observed");
         }
         if (requiresObservedAlbumId(capabilityName)
