@@ -6,6 +6,7 @@ import {
   Cable,
   Check,
   FileText,
+  Github,
   ListMusic,
   MessageCircle,
   MessageSquare,
@@ -349,6 +350,16 @@ export function AppRouter() {
                     <span className={`radio-state ${item.healthy ? "online" : ""}`} key={item.key}>{item.label}</span>
                   ))}
                   <span>{status ? status.aiModel : "MODEL OFFLINE"}</span>
+                  <a
+                    className="radio-github-link"
+                    href="https://github.com/mindforge-x/musio"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="在 GitHub 打开 Musio"
+                    title="GitHub"
+                  >
+                    <Github size={17} />
+                  </a>
                 </div>
               </header>
               <PlayerShell
