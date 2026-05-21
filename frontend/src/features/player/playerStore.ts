@@ -9,8 +9,8 @@ const SPECTRUM_MAX_HZ = 16_000;
 const PLAYBACK_RECOVERY_DELAY_MS = 2600;
 const PLAYBACK_RECOVERY_MAX_ATTEMPTS = 3;
 const PLAYBACK_PROGRESS_STALL_MS = 7000;
-const DESKTOP_SPECTRUM_UPDATE_MS = 70;
-const MOBILE_SPECTRUM_UPDATE_MS = 220;
+const DESKTOP_SPECTRUM_UPDATE_MS = 32;
+const MOBILE_SPECTRUM_UPDATE_MS = 64;
 const IDLE_SPECTRUM_LEVELS = Array.from({ length: SPECTRUM_BAR_COUNT }, () => 6);
 const QUIET_SPECTRUM_LEVELS = Array.from({ length: SPECTRUM_BAR_COUNT }, () => 6);
 const PLAYER_QUEUE_STORAGE_KEY = "musio.player.queue.v1";
@@ -253,7 +253,7 @@ export function usePlayerStore() {
       if (!analyserRef.current) {
         const analyser = audioContext.createAnalyser();
         analyser.fftSize = 512;
-        analyser.smoothingTimeConstant = 0.68;
+        analyser.smoothingTimeConstant = 0.82;
         analyserRef.current = analyser;
         spectrumDataRef.current = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
       }

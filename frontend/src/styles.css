@@ -4583,13 +4583,15 @@ textarea:focus,
 
 .player-spectrum i {
   width: 3px;
+  height: 100%;
   min-height: 3px;
   border-radius: 999px 999px 0 0;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.52));
   opacity: 0.52;
   transform-origin: bottom;
-  transition: height 80ms linear, opacity 120ms ease;
+  will-change: transform, opacity;
+  transition: transform 48ms linear, opacity 80ms linear;
 }
 
 .player-spectrum.active i {
@@ -4903,6 +4905,7 @@ textarea:focus,
 .spectrum-divider .player-spectrum i {
   flex: 1 1 0;
   width: auto;
+  height: 100%;
   min-width: 2px;
   max-width: 7px;
   min-height: 4px;
@@ -4917,7 +4920,7 @@ textarea:focus,
   box-shadow:
     0 0 8px rgba(255, 255, 255, 0.12),
     0 0 1px rgba(255, 255, 255, 0.8);
-  transition: height 58ms linear, opacity 80ms linear;
+  transition: transform 42ms linear, opacity 70ms linear;
 }
 
 .spectrum-divider .player-spectrum i:nth-child(8n) {

@@ -15,15 +15,19 @@ export function PlayerSpectrum({ levels }: PlayerSpectrumProps) {
         <span>{peak.toString().padStart(3, "0")} PEAK</span>
       </div>
       <div className="player-spectrum">
-        {levels.map((level, index) => (
-          <i
-            key={index}
-            style={{
-              height: `${level}%`,
-              opacity: 0.34 + (level / 100) * 0.58
-            }}
-          />
-        ))}
+        {levels.map((level, index) => {
+          const normalizedLevel = Math.max(0.04, Math.min(level, 100) / 100);
+          return (
+            <i
+              key={index}
+              style={{
+                height: "100%",
+                opacity: 0.34 + normalizedLevel * 0.58,
+                transform: `scaleY(${normalizedLevel})`
+              }}
+            />
+          );
+        })}
       </div>
     </div>
   );
