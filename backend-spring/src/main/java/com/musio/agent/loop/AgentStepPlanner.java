@@ -227,6 +227,7 @@ public class AgentStepPlanner {
                 - 如果只看到其他歌单的 id，或歌单列表摘要里没有目标歌单名，不要猜最近/最后一个 playlistId；下一步应先调用 get_user_playlists（通常 limit=50）或 search_playlists。
                 - get_playlist_detail / get_playlist_tracks / get_playlist_songs 的 playlistId 必须来自用户显式输入的 id，或来自本轮 observations/当前任务记忆中目标歌单名对应的 id。
                 - get_album_detail / get_album_tracks 的 albumId 必须来自用户显式输入的 id，或来自 search_albums/get_album_detail 的 observation；只知道专辑名时先调用 search_albums，不要猜 albumId。
+                - 用户询问“专辑里的歌 / 专辑曲目 / 收录歌曲 / tracklist”时，流程应是 search_albums -> get_album_tracks；已有目标专辑 albumId 后优先调用 get_album_tracks。不要为了曲目列表调用 get_album_detail，除非用户还问专辑简介、发行日期、封面或其他专辑元信息。
                 - 如果用户要歌词、评论或歌曲详情，但当前没有目标 songId，下一步应先搜索或利用已有 observation / 任务记忆里的歌曲 id。
                 - 如果用户明确说“当前播放/正在播放/播放器里/队列里/队列上一首”，并且动态记忆上下文提供了“当前播放状态”，应优先使用动态记忆里的播放器状态 songId；它的优先级高于 Agent Goal 或短期任务记忆中的旧目标歌曲。
                 - “正在播放的这首/当前播放这首/播放器里这首”指 currentPlayback 里的当前歌曲；“队列上一首”指 queueState 里的上一首。
