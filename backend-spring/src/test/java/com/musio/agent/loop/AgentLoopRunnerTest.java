@@ -258,6 +258,47 @@ class AgentLoopRunnerTest {
     }
 
     @Test
+    void normalizesAlbumReadToolsToObservedAlbumId() {
+        AlbumSourceProvider provider = new AlbumSourceProvider();
+        MusicReadCapabilityHandler readHandler = new MusicReadCapabilityHandler(musicReadTools(provider));
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(readHandler));
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "search_albums", Map.of("keyword", "范特西", "limit", 5, "page", 1), "搜索专辑", 0.9, "先找专辑"),
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_album_detail", Map.of("albumId", "002MAeob3zRfVa"), "读专辑详情", 0.9, "模型误用了其他专辑 id"),
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_album_tracks", Map.of("albumId", "002MAeob3zRfVa", "page", 1, "limit", 20), "读专辑歌曲", 0.9, "继续误用专辑 id"),
+                        AgentStepAction.finalAnswer("完成", 0.9)
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(readHandler))
+        );
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-album",
+                "local",
+                "看看专辑《范特西》里的歌",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.readManifest()
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(3, outcome.evidence().observations().size());
+        assertEquals("search_albums", outcome.evidence().observations().getFirst().toolName());
+        assertTrue(outcome.evidence().observations().getFirst().plannerSummary().contains("qqmusic:album:000I5jJB3blWeN"));
+        assertEquals("get_album_detail", outcome.evidence().observations().get(1).toolName());
+        assertEquals("qqmusic:album:000I5jJB3blWeN", outcome.evidence().observations().get(1).arguments().get("albumId"));
+        assertEquals("get_album_tracks", outcome.evidence().observations().get(2).toolName());
+        assertEquals("qqmusic:album:000I5jJB3blWeN", outcome.evidence().observations().get(2).arguments().get("albumId"));
+        assertEquals("qqmusic:album:000I5jJB3blWeN", provider.calls.get(1).arguments().get("albumId"));
+        assertEquals("qqmusic:album:000I5jJB3blWeN", provider.calls.get(2).arguments().get("albumId"));
+    }
+
+    @Test
     void explicitCurrentPlaybackReadOverridesPreviousTaskSong() {
         AgentLoopRunner runner = new AgentLoopRunner(
                 new SequencedPlanner(List.of(
@@ -2806,6 +2847,107 @@ class AgentLoopRunnerTest {
                                 "artists", List.of("歌手"),
                                 "album", "测试",
                                 "durationSeconds", 180,
+                                "artworkUrl", ""
+                        ))
+                );
+            }
+            return Map.of("success", false, "message", "unknown tool");
+        }
+    }
+
+    private static class AlbumSourceProvider extends FakeProvider implements MusicSourceProvider {
+        private final List<SourceToolCall> calls = new java.util.ArrayList<>();
+
+        @Override
+        public String sourceId() {
+            return ProviderType.QQMUSIC.sourceId();
+        }
+
+        @Override
+        public List<SourceCapability> capabilities(SourceContext context) {
+            return List.of(
+                    new SourceCapability(
+                            "search_albums",
+                            CapabilityEffect.READ,
+                            "按关键词搜索专辑",
+                            Map.of("keyword", "string", "limit", "number", "page", "number"),
+                            Set.of("keyword"),
+                            true,
+                            "",
+                            "albums"
+                    ),
+                    new SourceCapability(
+                            "get_album_detail",
+                            CapabilityEffect.READ,
+                            "读取专辑详情",
+                            Map.of("albumId", "string"),
+                            Set.of("albumId"),
+                            true,
+                            "",
+                            "album_detail"
+                    ),
+                    new SourceCapability(
+                            "get_album_tracks",
+                            CapabilityEffect.READ,
+                            "读取专辑歌曲分页",
+                            Map.of("albumId", "string", "limit", "number", "page", "number"),
+                            Set.of("albumId"),
+                            true,
+                            "",
+                            "tracks"
+                    )
+            );
+        }
+
+        @Override
+        public Map<String, Object> execute(SourceToolCall call, SourceContext context) {
+            calls.add(call);
+            if ("search_albums".equals(call.toolName())) {
+                return Map.of(
+                        "success", true,
+                        "sourceId", "qqmusic",
+                        "toolName", "search_albums",
+                        "resultType", "albums",
+                        "count", 1,
+                        "albums", List.of(Map.of(
+                                "id", "qqmusic:album:000I5jJB3blWeN",
+                                "provider", "qqmusic",
+                                "title", "范特西",
+                                "artists", List.of("周杰伦"),
+                                "release_date", "2001-09-14",
+                                "song_count", 10
+                        ))
+                );
+            }
+            if ("get_album_detail".equals(call.toolName())) {
+                return Map.of(
+                        "success", true,
+                        "sourceId", "qqmusic",
+                        "toolName", "get_album_detail",
+                        "resultType", "album_detail",
+                        "album", Map.of(
+                                "id", call.arguments().get("albumId"),
+                                "provider", "qqmusic",
+                                "title", "范特西",
+                                "artists", List.of("周杰伦"),
+                                "song_count", 10
+                        )
+                );
+            }
+            if ("get_album_tracks".equals(call.toolName())) {
+                return Map.of(
+                        "success", true,
+                        "sourceId", "qqmusic",
+                        "toolName", "get_album_tracks",
+                        "resultType", "tracks",
+                        "count", 1,
+                        "songs", List.of(Map.of(
+                                "id", "qqmusic:song",
+                                "provider", "QQMUSIC",
+                                "title", "爱在西元前",
+                                "artists", List.of("周杰伦"),
+                                "album", "范特西",
+                                "durationSeconds", 234,
                                 "artworkUrl", ""
                         ))
                 );

@@ -479,6 +479,7 @@ public class AgentLoopRunner {
             return action;
         }
         action = normalizePlaylistReadAction(state, action);
+        action = normalizeAlbumReadAction(state, action);
         List<String> playerStateIds = explicitPlayerStateReadTargetSongIds(state);
         if (!playerStateIds.isEmpty() && isReadableSongTool(action.toolName())) {
             return withReadSongIds(action, playerStateIds);
@@ -508,6 +509,104 @@ public class AgentLoopRunner {
                 action.confidence(),
                 action.reason()
         );
+    }
+
+    private AgentStepAction normalizeAlbumReadAction(AgentLoopState state, AgentStepAction action) {
+        if (state == null || action == null || !isAlbumIdReadTool(action.toolName())) {
+            return action;
+        }
+        String requestedId = text(action.arguments(), "albumId");
+        if (requestedId.isBlank()) {
+            return action;
+        }
+        List<String> observedAlbumIds = observedAlbumIds(state);
+        if (observedAlbumIds.isEmpty()) {
+            return action;
+        }
+        for (String observedId : observedAlbumIds) {
+            if (sameProviderId(observedId, requestedId)) {
+                return observedId.equals(requestedId) ? action : withAlbumId(action, observedId, "album_id_resolution");
+            }
+        }
+        return withAlbumId(action, observedAlbumIds.getFirst(), "album_id_resolution");
+    }
+
+    private AgentStepAction withAlbumId(AgentStepAction action, String albumId, String reason) {
+        if (action == null || albumId == null || albumId.isBlank()) {
+            return action;
+        }
+        Map<String, Object> arguments = new LinkedHashMap<>(action.arguments() == null ? Map.of() : action.arguments());
+        arguments.put("albumId", albumId.strip());
+        return new AgentStepAction(
+                action.action(),
+                action.toolName(),
+                arguments,
+                action.publicActivity(),
+                action.confidence(),
+                reason == null || reason.isBlank() ? action.reason() : reason
+        );
+    }
+
+    private boolean isAlbumIdReadTool(String toolName) {
+        return "get_album_detail".equals(toolName) || "get_album_tracks".equals(toolName);
+    }
+
+    private List<String> observedAlbumIds(AgentLoopState state) {
+        if (state == null || state.observations() == null) {
+            return List.of();
+        }
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        for (AgentObservation observation : state.observations()) {
+            if (observation == null
+                    || observation.status() != AgentObservationStatus.SUCCESS
+                    || observation.resultJson() == null
+                    || observation.resultJson().isBlank()) {
+                continue;
+            }
+            try {
+                JsonNode root = objectMapper.readTree(observation.resultJson());
+                readAlbumIds(root.path("albums"), ids);
+                readAlbumId(root.path("album"), ids);
+                addAlbumId(ids, root.path("albumId").asText(""));
+                addAlbumId(ids, root.path("album_id").asText(""));
+            } catch (Exception ignored) {
+                // Bad observations are handled by validation; album grounding is a best-effort guard.
+            }
+        }
+        return List.copyOf(ids);
+    }
+
+    private void readAlbumIds(JsonNode albumsNode, Set<String> ids) {
+        if (albumsNode == null || !albumsNode.isArray()) {
+            return;
+        }
+        for (JsonNode albumNode : albumsNode) {
+            readAlbumId(albumNode, ids);
+        }
+    }
+
+    private void readAlbumId(JsonNode albumNode, Set<String> ids) {
+        if (albumNode == null || !albumNode.isObject()) {
+            return;
+        }
+        addAlbumId(ids, albumNode.path("id").asText(""));
+        addAlbumId(ids, albumNode.path("albumId").asText(""));
+        addAlbumId(ids, albumNode.path("album_id").asText(""));
+    }
+
+    private void addAlbumId(Set<String> ids, String value) {
+        if (value != null && value.startsWith("qqmusic:")) {
+            ids.add(value.strip());
+        }
+    }
+
+    private boolean sameProviderId(String observedId, String requestedId) {
+        if (observedId == null || requestedId == null || observedId.isBlank() || requestedId.isBlank()) {
+            return false;
+        }
+        String observed = observedId.strip();
+        String requested = requestedId.strip();
+        return observed.equals(requested) || observed.endsWith(":" + requested);
     }
 
     private AgentStepAction normalizePlaylistReadAction(AgentLoopState state, AgentStepAction action) {

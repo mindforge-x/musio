@@ -43,6 +43,11 @@ final class MusicReadCapabilityValidator {
                 && !AgentCapabilityStateFacts.knownPlaylistIds(state).contains(AgentCapabilityStateFacts.text(safeArguments, "playlistId"))) {
             return AgentCapabilityValidationResult.rejected("playlist_id_not_observed");
         }
+        if (requiresObservedAlbumId(capabilityName)
+                && !knownIdMatches(AgentCapabilityStateFacts.knownAlbumIds(state), AgentCapabilityStateFacts.text(safeArguments, "albumId"))
+                && !userMessageContainsId(state, AgentCapabilityStateFacts.text(safeArguments, "albumId"))) {
+            return AgentCapabilityValidationResult.rejected("album_id_not_observed");
+        }
         return AgentCapabilityValidationResult.accepted();
     }
 
@@ -58,5 +63,33 @@ final class MusicReadCapabilityValidator {
         return "get_playlist_songs".equals(capabilityName)
                 || "get_playlist_tracks".equals(capabilityName)
                 || "get_playlist_detail".equals(capabilityName);
+    }
+
+    private static boolean requiresObservedAlbumId(String capabilityName) {
+        return "get_album_detail".equals(capabilityName) || "get_album_tracks".equals(capabilityName);
+    }
+
+    private static boolean knownIdMatches(java.util.Set<String> knownIds, String requestedId) {
+        if (requestedId == null || requestedId.isBlank()) {
+            return false;
+        }
+        String requested = requestedId.strip();
+        if (knownIds.contains(requested)) {
+            return true;
+        }
+        for (String knownId : knownIds) {
+            if (knownId != null && !knownId.isBlank() && knownId.strip().endsWith(":" + requested)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean userMessageContainsId(AgentLoopState state, String requestedId) {
+        if (state == null || requestedId == null || requestedId.isBlank()) {
+            return false;
+        }
+        String userMessage = state.userMessage() == null ? "" : state.userMessage();
+        return !userMessage.isBlank() && userMessage.contains(requestedId.strip());
     }
 }

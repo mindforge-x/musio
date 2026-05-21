@@ -111,6 +111,15 @@ public class AgentObservationBuilder {
         if (playlists.isArray()) {
             return toolName + " 成功，歌单 " + playlists.size() + " 个：" + playlistRefs(playlists);
         }
+        JsonNode albums = root.path("albums");
+        if (albums.isArray()) {
+            return toolName + " 成功，专辑 " + albums.size() + " 张：" + albumRefs(albums);
+        }
+        JsonNode album = root.path("album");
+        if (album.isObject()) {
+            String refs = albumRefs(List.of(album));
+            return refs.isBlank() ? toolName + " 成功，已读取专辑详情" : toolName + " 成功，已读取专辑：" + refs;
+        }
         JsonNode count = root.path("count");
         if (count.isNumber()) {
             return toolName + " 成功，返回 " + count.asInt() + " 条结果";
@@ -229,6 +238,32 @@ public class AgentObservationBuilder {
                 refs.add(name.isBlank() ? id : name + " id=" + id);
             }
             if (refs.size() >= 20) {
+                break;
+            }
+        }
+        return String.join("；", refs);
+    }
+
+    private String albumRefs(Iterable<JsonNode> albums) {
+        List<String> refs = new ArrayList<>();
+        for (JsonNode album : albums) {
+            String id = album.path("id").asText(album.path("albumId").asText(album.path("album_id").asText("")));
+            String title = album.path("title").asText(album.path("name").asText(""));
+            String artist = "";
+            JsonNode artists = album.path("artists");
+            if (artists.isArray() && !artists.isEmpty()) {
+                List<String> names = new ArrayList<>();
+                for (JsonNode item : artists) {
+                    if (item.isTextual() && !item.asText().isBlank()) {
+                        names.add(item.asText().strip());
+                    }
+                }
+                artist = names.isEmpty() ? "" : " - " + String.join("/", names);
+            }
+            if (!id.isBlank()) {
+                refs.add((title.isBlank() ? id : title + artist + " id=" + id));
+            }
+            if (refs.size() >= 10) {
                 break;
             }
         }

@@ -84,6 +84,18 @@ final class AgentCapabilityStateFacts {
         return ids;
     }
 
+    static Set<String> knownAlbumIds(AgentLoopState state) {
+        Set<String> ids = new LinkedHashSet<>();
+        if (state == null) {
+            return ids;
+        }
+        ids.addAll(albumIdsInText(state.userMessage() == null ? "" : state.userMessage()));
+        for (AgentObservation observation : state.observations()) {
+            ids.addAll(albumIdsFromResultJson(observation.resultJson()));
+        }
+        return ids;
+    }
+
     static Set<String> successfulReadSongIds(AgentLoopState state, String toolName) {
         Set<String> ids = new LinkedHashSet<>();
         if (state == null || state.observations() == null || toolName == null || toolName.isBlank()) {
@@ -99,6 +111,18 @@ final class AgentCapabilityStateFacts {
             } else {
                 ids.addAll(resultIds);
             }
+        }
+        return ids;
+    }
+
+    private static Set<String> albumIdsInText(String value) {
+        Set<String> ids = new LinkedHashSet<>();
+        if (value == null || value.isBlank()) {
+            return ids;
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("qqmusic:album:[A-Za-z0-9:_-]+").matcher(value);
+        while (matcher.find()) {
+            ids.add(matcher.group());
         }
         return ids;
     }
@@ -252,6 +276,37 @@ final class AgentCapabilityStateFacts {
             return Set.of();
         }
         return ids;
+    }
+
+    private static Set<String> albumIdsFromResultJson(String resultJson) {
+        Set<String> ids = new LinkedHashSet<>();
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(resultJson == null ? "{}" : resultJson);
+            JsonNode albums = root.path("albums");
+            if (albums.isArray()) {
+                for (JsonNode album : albums) {
+                    addAlbumId(ids, album);
+                }
+            }
+            JsonNode album = root.path("album");
+            if (album.isObject()) {
+                addAlbumId(ids, album);
+            }
+            addTextId(ids, root.path("albumId").asText(""));
+            addTextId(ids, root.path("album_id").asText(""));
+        } catch (Exception ignored) {
+            return Set.of();
+        }
+        return ids;
+    }
+
+    private static void addAlbumId(Set<String> ids, JsonNode album) {
+        if (album == null || !album.isObject()) {
+            return;
+        }
+        addTextId(ids, album.path("id").asText(""));
+        addTextId(ids, album.path("albumId").asText(""));
+        addTextId(ids, album.path("album_id").asText(""));
     }
 
     private static void addSongId(Set<String> ids, Song song) {
