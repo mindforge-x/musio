@@ -96,6 +96,18 @@ final class AgentCapabilityStateFacts {
         return ids;
     }
 
+    static Set<String> knownChartIds(AgentLoopState state) {
+        Set<String> ids = new LinkedHashSet<>();
+        if (state == null) {
+            return ids;
+        }
+        ids.addAll(chartIdsInText(state.userMessage() == null ? "" : state.userMessage()));
+        for (AgentObservation observation : state.observations()) {
+            ids.addAll(chartIdsFromResultJson(observation.resultJson()));
+        }
+        return ids;
+    }
+
     static Set<String> successfulReadSongIds(AgentLoopState state, String toolName) {
         Set<String> ids = new LinkedHashSet<>();
         if (state == null || state.observations() == null || toolName == null || toolName.isBlank()) {
@@ -121,6 +133,18 @@ final class AgentCapabilityStateFacts {
             return ids;
         }
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("qqmusic:album:[A-Za-z0-9:_-]+").matcher(value);
+        while (matcher.find()) {
+            ids.add(matcher.group());
+        }
+        return ids;
+    }
+
+    private static Set<String> chartIdsInText(String value) {
+        Set<String> ids = new LinkedHashSet<>();
+        if (value == null || value.isBlank()) {
+            return ids;
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("qqmusic:chart:[A-Za-z0-9:_-]+").matcher(value);
         while (matcher.find()) {
             ids.add(matcher.group());
         }
@@ -300,6 +324,38 @@ final class AgentCapabilityStateFacts {
         return ids;
     }
 
+    private static Set<String> chartIdsFromResultJson(String resultJson) {
+        Set<String> ids = new LinkedHashSet<>();
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(resultJson == null ? "{}" : resultJson);
+            JsonNode charts = root.path("charts");
+            if (charts.isArray()) {
+                for (JsonNode chart : charts) {
+                    addChartId(ids, chart);
+                }
+            }
+            JsonNode categories = root.path("categories");
+            if (categories.isArray()) {
+                for (JsonNode category : categories) {
+                    JsonNode categoryCharts = category.path("charts");
+                    if (categoryCharts.isArray()) {
+                        for (JsonNode chart : categoryCharts) {
+                            addChartId(ids, chart);
+                        }
+                    }
+                }
+            }
+            JsonNode chart = root.path("chart");
+            if (chart.isObject()) {
+                addChartId(ids, chart);
+            }
+            addTextId(ids, root.path("chartId").asText(""));
+        } catch (Exception ignored) {
+            return Set.of();
+        }
+        return ids;
+    }
+
     private static void addAlbumId(Set<String> ids, JsonNode album) {
         if (album == null || !album.isObject()) {
             return;
@@ -307,6 +363,15 @@ final class AgentCapabilityStateFacts {
         addTextId(ids, album.path("id").asText(""));
         addTextId(ids, album.path("albumId").asText(""));
         addTextId(ids, album.path("album_id").asText(""));
+    }
+
+    private static void addChartId(Set<String> ids, JsonNode chart) {
+        if (chart == null || !chart.isObject()) {
+            return;
+        }
+        addTextId(ids, chart.path("id").asText(""));
+        addTextId(ids, chart.path("chartId").asText(""));
+        addTextId(ids, chart.path("topId").asText(""));
     }
 
     private static void addSongId(Set<String> ids, Song song) {

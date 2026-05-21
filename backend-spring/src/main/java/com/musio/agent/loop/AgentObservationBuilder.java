@@ -120,6 +120,15 @@ public class AgentObservationBuilder {
             String refs = albumRefs(List.of(album));
             return refs.isBlank() ? toolName + " 成功，已读取专辑详情" : toolName + " 成功，已读取专辑：" + refs;
         }
+        JsonNode charts = root.path("charts");
+        if (charts.isArray()) {
+            return toolName + " 成功，排行榜 " + charts.size() + " 个：" + chartRefs(root);
+        }
+        JsonNode chart = root.path("chart");
+        if (chart.isObject()) {
+            String refs = chartRefs(List.of(chart));
+            return refs.isBlank() ? toolName + " 成功，已读取排行榜" : toolName + " 成功，已读取排行榜：" + refs;
+        }
         JsonNode count = root.path("count");
         if (count.isNumber()) {
             return toolName + " 成功，返回 " + count.asInt() + " 条结果";
@@ -234,6 +243,39 @@ public class AgentObservationBuilder {
         for (JsonNode playlist : playlists) {
             String id = playlist.path("id").asText("");
             String name = playlist.path("name").asText("");
+            if (!id.isBlank()) {
+                refs.add(name.isBlank() ? id : name + " id=" + id);
+            }
+            if (refs.size() >= 20) {
+                break;
+            }
+        }
+        return String.join("；", refs);
+    }
+
+    private String chartRefs(JsonNode root) {
+        List<JsonNode> charts = new ArrayList<>();
+        JsonNode chartsNode = root.path("charts");
+        if (chartsNode.isArray()) {
+            chartsNode.forEach(charts::add);
+        }
+        JsonNode categories = root.path("categories");
+        if (categories.isArray()) {
+            for (JsonNode category : categories) {
+                JsonNode nestedCharts = category.path("charts");
+                if (nestedCharts.isArray()) {
+                    nestedCharts.forEach(charts::add);
+                }
+            }
+        }
+        return chartRefs(charts);
+    }
+
+    private String chartRefs(Iterable<JsonNode> charts) {
+        List<String> refs = new ArrayList<>();
+        for (JsonNode chart : charts) {
+            String id = chart.path("id").asText(chart.path("chartId").asText(chart.path("topId").asText("")));
+            String name = chart.path("name").asText(chart.path("title").asText(""));
             if (!id.isBlank()) {
                 refs.add(name.isBlank() ? id : name + " id=" + id);
             }

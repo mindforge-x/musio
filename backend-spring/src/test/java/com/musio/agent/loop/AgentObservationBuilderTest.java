@@ -84,6 +84,34 @@ class AgentObservationBuilderTest {
     }
 
     @Test
+    void includesChartRefsInPlannerSummary() {
+        AgentObservation observation = builder.build("step-1", "get_chart_categories", Map.of(), """
+                {
+                  "success": true,
+                  "count": 2,
+                  "categories": [
+                    {
+                      "id": "1",
+                      "name": "巅峰榜",
+                      "charts": [
+                        {"id": "qqmusic:chart:26", "name": "热歌榜"},
+                        {"id": "qqmusic:chart:27", "name": "新歌榜"}
+                      ]
+                    }
+                  ],
+                  "charts": [
+                    {"id": "qqmusic:chart:26", "name": "热歌榜"},
+                    {"id": "qqmusic:chart:27", "name": "新歌榜"}
+                  ]
+                }
+                """);
+
+        assertEquals(AgentObservationStatus.SUCCESS, observation.status());
+        assertTrue(observation.plannerSummary().contains("热歌榜 id=qqmusic:chart:26"));
+        assertTrue(observation.plannerSummary().contains("新歌榜 id=qqmusic:chart:27"));
+    }
+
+    @Test
     void buildsRecommendationObservationWithSlotCoverage() {
         AgentObservation observation = builder.build("step-1", "recommend_songs", Map.of("request", "推荐两首许嵩和一首后弦"), """
                 {

@@ -48,6 +48,11 @@ final class MusicReadCapabilityValidator {
                 && !userMessageContainsId(state, AgentCapabilityStateFacts.text(safeArguments, "albumId"))) {
             return AgentCapabilityValidationResult.rejected("album_id_not_observed");
         }
+        if (requiresObservedChartId(capabilityName)
+                && !looksLikeChartId(AgentCapabilityStateFacts.text(safeArguments, "chartId"))
+                && !knownIdMatches(AgentCapabilityStateFacts.knownChartIds(state), AgentCapabilityStateFacts.text(safeArguments, "chartId"))) {
+            return AgentCapabilityValidationResult.rejected("chart_id_not_observed");
+        }
         return AgentCapabilityValidationResult.accepted();
     }
 
@@ -67,6 +72,22 @@ final class MusicReadCapabilityValidator {
 
     private static boolean requiresObservedAlbumId(String capabilityName) {
         return "get_album_detail".equals(capabilityName) || "get_album_tracks".equals(capabilityName);
+    }
+
+    private static boolean requiresObservedChartId(String capabilityName) {
+        return "get_chart_detail".equals(capabilityName);
+    }
+
+    private static boolean looksLikeChartId(String requestedId) {
+        if (requestedId == null || requestedId.isBlank()) {
+            return false;
+        }
+        String value = requestedId.strip();
+        if (value.matches("\\d+")) {
+            return true;
+        }
+        String prefix = "qqmusic:chart:";
+        return value.startsWith(prefix) && value.substring(prefix.length()).matches("\\d+");
     }
 
     private static boolean knownIdMatches(java.util.Set<String> knownIds, String requestedId) {

@@ -215,7 +215,7 @@ public class AgentStepPlanner {
                 - 每次最多输出一个 action。
                 - 需要真实音乐数据时输出 action=tool_call。
                 - 信息已经足够回答时输出 action=final_answer。
-                - 不要编造 songId、playlistId 或 albumId；这类 id 必须来自用户输入、当前任务记忆或本轮 observations。
+                - 不要编造 songId、playlistId、albumId 或 chartId；这类 id 必须来自用户输入、当前任务记忆或本轮 observations。
                 - 开放推荐、场景推荐、风格推荐或心境推荐，且 recommend_songs 出现在“本轮可用能力”时，优先调用 recommend_songs；不要直接把“深夜学习”“写代码”“治愈”等场景词塞进 search_songs.keyword。
                 - recommend_songs 会先生成具体歌曲候选，再精确匹配真实歌曲；它的 songs observation 可作为后续评论、歌词、详情或收藏的 songId 来源。
                 - recommend_songs.request 应保留用户完整推荐需求；count 应等于本轮推荐总数，未明确时默认 5。
@@ -228,6 +228,7 @@ public class AgentStepPlanner {
                 - get_playlist_detail / get_playlist_tracks / get_playlist_songs 的 playlistId 必须来自用户显式输入的 id，或来自本轮 observations/当前任务记忆中目标歌单名对应的 id。
                 - get_album_detail / get_album_tracks 的 albumId 必须来自用户显式输入的 id，或来自 search_albums/get_album_detail 的 observation；只知道专辑名时先调用 search_albums，不要猜 albumId。
                 - 用户询问“专辑里的歌 / 专辑曲目 / 收录歌曲 / tracklist”时，流程应是 search_albums -> get_album_tracks；已有目标专辑 albumId 后优先调用 get_album_tracks。不要为了曲目列表调用 get_album_detail，除非用户还问专辑简介、发行日期、封面或其他专辑元信息。
+                - get_chart_detail 的 chartId 必须来自用户显式输入的真实 id，或来自 get_chart_categories 的 observation；只知道榜单名或“巅峰榜”等榜单分类名时，下一步应先调用 get_chart_categories，不要把榜单名/分类名填进 chartId。
                 - 如果用户要歌词、评论或歌曲详情，但当前没有目标 songId，下一步应先搜索或利用已有 observation / 任务记忆里的歌曲 id。
                 - 如果用户明确说“当前播放/正在播放/播放器里/队列里/队列上一首”，并且动态记忆上下文提供了“当前播放状态”，应优先使用动态记忆里的播放器状态 songId；它的优先级高于 Agent Goal 或短期任务记忆中的旧目标歌曲。
                 - “正在播放的这首/当前播放这首/播放器里这首”指 currentPlayback 里的当前歌曲；“队列上一首”指 queueState 里的上一首。

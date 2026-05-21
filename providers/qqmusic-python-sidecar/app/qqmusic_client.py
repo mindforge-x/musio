@@ -406,7 +406,8 @@ class QQMusicClient:
 
     async def chart_detail(self, chart_id: str, limit: int, page: int) -> dict[str, Any]:
         async with self._client() as client:
-            result = await self._raw_response(client.top.get_detail(int(self._typed_value(chart_id, "chart")), num=limit, page=page))
+            resolved_chart_id = await self._resolve_chart_id(client, chart_id)
+            result = await self._raw_response(client.top.get_detail(resolved_chart_id, num=limit, page=page))
             tracks = [self._to_song(song) for song in self._items_at(result, "songInfoList")[:limit]]
             return {
                 "chart": self._to_chart(self._value(result, "data")),
@@ -414,6 +415,40 @@ class QQMusicClient:
                 "tracks": tracks,
                 "songs": tracks,
             }
+
+    async def _resolve_chart_id(self, client: Client, chart_id: str) -> int:
+        value = self._typed_value(chart_id, "chart")
+        numeric_id = self._chart_numeric_id(value)
+        if numeric_id is not None:
+            return numeric_id
+
+        requested = self._normalize_lookup_text(chart_id)
+        if not requested:
+            raise ValueError("chartId must not be empty.")
+
+        categories = await client.top.get_category()
+        category_matches: list[Any] = []
+        for category in getattr(categories, "group", []) or []:
+            charts = getattr(category, "toplist", []) or []
+            if self._normalize_lookup_text(getattr(category, "name", "")) == requested:
+                category_matches.extend(charts)
+            for chart in charts:
+                if self._chart_matches(chart, requested):
+                    chart_numeric_id = self._chart_numeric_id(self._value(chart, "id", "topId"))
+                    if chart_numeric_id is not None:
+                        return chart_numeric_id
+        if len(category_matches) == 1:
+            chart_numeric_id = self._chart_numeric_id(self._value(category_matches[0], "id", "topId"))
+            if chart_numeric_id is not None:
+                return chart_numeric_id
+        if category_matches:
+            names = "、".join(
+                self._text(self._value(chart, "name", "title"))
+                for chart in category_matches[:8]
+                if self._text(self._value(chart, "name", "title"))
+            )
+            raise ValueError(f"chartId '{chart_id}' is a chart category, not a chart id. Choose one chart from: {names}.")
+        raise ValueError(f"Unknown QQ Music chartId: {chart_id}. Use get_chart_categories first and pass a chart id.")
 
     async def _build_music_gene(self, client: Client, credential: Credential) -> dict[str, Any]:
         euin = credential.encrypt_uin
@@ -1233,6 +1268,25 @@ class QQMusicClient:
         typed_prefix = f"{_SONG_ID_PREFIX}{kind}:"
         raw = value.removeprefix(typed_prefix).removeprefix(_SONG_ID_PREFIX)
         return int(raw) if raw.isdigit() else raw
+
+    def _chart_numeric_id(self, value: Any) -> int | None:
+        if isinstance(value, int):
+            return value if value > 0 else None
+        raw = self._text(value)
+        return int(raw) if raw.isdigit() else None
+
+    def _chart_matches(self, chart: Any, requested: str) -> bool:
+        if chart is None or not requested:
+            return False
+        for field in ("id", "topId", "name", "title", "title_detail", "titleDetail", "title_sub", "titleSub"):
+            value = self._value(chart, field)
+            if self._normalize_lookup_text(value) == requested:
+                return True
+        return False
+
+    def _normalize_lookup_text(self, value: Any) -> str:
+        text = re.sub(r"<[^>]+>", "", self._text(value))
+        return re.sub(r"[\s\u3000]+", "", text).lower()
 
     def _song_payload(self, song: Any) -> Any:
         if isinstance(song, dict):

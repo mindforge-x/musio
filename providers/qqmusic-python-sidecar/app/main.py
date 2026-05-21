@@ -201,7 +201,7 @@ _CAPABILITIES = [
     SourceCapability(
         name="get_chart_detail",
         tier="P2",
-        description="读取排行榜详情和歌曲",
+        description="读取排行榜详情和歌曲；chartId 应来自 get_chart_categories 返回的具体榜单 id，不是分类名",
         input_schema={"chartId": "string", "limit": "number", "page": "number"},
         required=["chartId"],
         result_type="chart_detail",
@@ -441,7 +441,10 @@ async def execute_tool(tool_name: str, payload: dict[str, Any] | None = None) ->
         case "get_chart_detail":
             limit = _int_arg(arguments, "limit", 20, 1, 50)
             page = _int_arg(arguments, "page", 1, 1, 100)
-            result = await client.chart_detail(_required_text(arguments, "chartId"), limit, page)
+            try:
+                result = await client.chart_detail(_required_text(arguments, "chartId"), limit, page)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             return _tool_result(tool_name, "chart_detail", **result)
         case "create_provider_playlist" | "add_tracks_to_provider_playlist" | "remove_tracks_from_provider_playlist" | "delete_provider_playlist":
             raise HTTPException(status_code=403, detail="ACCOUNT_WRITE capability is reserved and requires explicit confirmation before implementation.")

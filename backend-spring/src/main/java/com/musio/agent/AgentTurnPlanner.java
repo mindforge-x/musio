@@ -349,9 +349,10 @@ public class AgentTurnPlanner {
                 - search_songs.keyword 只写正向搜索目标，例如歌手、歌曲名或风格；不要把排除、比较或“不是 X 是 Y”这类关系拼进 keyword。
                 - search_songs.arguments.limit 必须显式填写。根据当前用户输入和 effectiveRequest 的数量含义填写；只有当前请求完全没有数量含义时才用默认 5。
                 - 用户说“一首/1首/一个/一支/一曲”时，如果 toolCalls 中包含 search_songs，limit 必须填 1，不能使用默认 5。
-                - 不要编造 songId、playlistId 或 albumId；这类 id 必须来自用户输入或任务记忆，只有专辑名、歌单名、歌曲名时不能自行补 id。
+                - 不要编造 songId、playlistId、albumId 或 chartId；这类 id 必须来自用户输入或任务记忆，只有专辑名、歌单名、歌曲名、榜单名或榜单分类名时不能自行补 id。
                 - 歌曲评论、歌词、详情类任务如果没有目标 songId，需要先 search_songs 找候选；如果有目标 songId，优先直接调用对应工具。
                 - 用户询问“专辑里的歌 / 专辑曲目 / 收录歌曲 / tracklist”时，使用 disposition=use_tools、taskType=detail、requiredOutcomes 至少包含 detail；只知道专辑名时先规划 search_albums 或让 StepLoop 先 search_albums，后续必须用 search_albums observation 中的 albumId 调 get_album_tracks。不要为曲目列表先规划 get_album_detail，除非用户还问专辑简介、发行日期、封面或其他专辑元信息。
+                - 用户询问 QQ 音乐排行榜、榜单、巅峰榜、新歌榜、热歌榜等时，使用 disposition=use_tools、taskType=detail、requiredOutcomes 至少包含 detail。只有明确给出真实 chartId 时才规划 get_chart_detail；只有榜单名或分类名时先规划 get_chart_categories 或交给 StepLoop 先读分类，再用 observation 中的 chartId 调 get_chart_detail。
                 - 用户本轮明确说“收藏/保存/加入 Musio 歌单/帮我收藏某首歌/加入歌单”时，规划 %2$s 只表示本轮存在本地写入意图；是否执行由 PolicyGate 和 AgentStepLoop 决定。用户说“加入/收藏到 X 歌单”时，arguments 填 playlistName=X；没有指定歌单时不填 playlistName，后端使用默认歌单。
                 - 如果用户要收藏“刚才那首/第一首/第二首/这几首”等上一轮卡片歌曲，memoryUse.usesTaskMemory=true，usedFields 包含 lastResultSongs；多首优先填写 songIds，只有没有 songId 但能确定序号时才填写 songIndexes；单首可填写 songId 或 songIndex。
                 - 如果用户明确给出歌名或歌手但没有 songId，%2$s 填 songTitle/artist；后端会先解析或搜索真实歌曲。
