@@ -336,7 +336,7 @@ export function AppRouter() {
               <span className="radio-rhythm-wave" aria-hidden="true" />
               <header className="radio-header">
                 <div className="radio-brand">
-                  <div className="radio-avatar">M</div>
+                  <div className="radio-avatar logo-avatar" role="img" aria-label="Musio logo" />
                   <div>
                     <p>Musio FM</p>
                     <strong>Musio</strong>
