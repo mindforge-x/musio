@@ -37,6 +37,8 @@ _ALBUM_ID_PREFIX = "qqmusic:album:"
 _ARTIST_ID_PREFIX = "qqmusic:artist:"
 _CHART_ID_PREFIX = "qqmusic:chart:"
 _DEFAULT_STREAM_DOMAIN = "https://isure.stream.qqmusic.qq.com/"
+_PHOTO_NEW_DOMAIN = "https://y.gtimg.cn/music/photo_new/"
+_PHOTO_NEW_SIZE_SEGMENT = "R300x300"
 _LRC_TIMESTAMP_PATTERN = re.compile(r"\[[0-9:.]+\]")
 _WINDOWS_DRIVE_PATTERN = re.compile(r"^([A-Za-z]):[\\/](.*)$")
 _MUSIC_GENE_LIKED_SONG_LIMIT = 80
@@ -51,8 +53,8 @@ class QQMusicClient:
 
     async def search(self, keyword: str, limit: int) -> list[Song]:
         async with self._client() as client:
-            result = await client.search.search_by_type(keyword=keyword, num=limit)
-            return [self._to_song(song) for song in result.song[:limit]]
+            result = await self._raw_response(client.search.search_by_type(keyword=keyword, num=limit))
+            return [self._to_song(song) for song in self._items_at(result, "body", "item_song")[:limit]]
 
     async def song(self, song_id: str) -> SongDetail:
         async with self._client() as client:
@@ -63,21 +65,23 @@ class QQMusicClient:
         async with self._client() as client:
             track = await self._resolve_song(client, song_id)
             file_info = SongFileInfo(
-                mid=track.mid,
-                song_type=track.type,
-                media_mid=track.file.media_mid or None,
+                mid=self._text(self._value(track, "mid", "songmid", "songMid")),
+                song_type=self._int_value(self._value(track, "type")),
+                media_mid=self._text(self._value(self._value(track, "file"), "media_mid", "mediaMid")) or None,
             )
             for file_type in (SongFileType.MP3_320, SongFileType.MP3_128, SongFileType.ACC_96):
-                response = await client.song.get_song_urls([file_info], file_type=file_type)
-                if not response.data:
+                response = await self._raw_response(client.song.get_song_urls([file_info], file_type=file_type))
+                items = self._items_at(response, "midurlinfo")
+                if not items:
                     continue
-                item = response.data[0]
-                if item.result != 0 or not item.purl:
+                item = items[0]
+                purl = self._text(self._value(item, "purl"))
+                if self._int_value(self._value(item, "result")) != 0 or not purl:
                     continue
                 return SongUrl(
                     song_id=self._song_identity(track),
-                    url=item.purl if item.purl.startswith("http") else urljoin(_DEFAULT_STREAM_DOMAIN, item.purl),
-                    expires_in_seconds=response.expiration or None,
+                    url=purl if purl.startswith("http") else urljoin(_DEFAULT_STREAM_DOMAIN, purl),
+                    expires_in_seconds=self._positive_int(self._value(response, "expiration")),
                 )
             return SongUrl(song_id=self._song_identity(track))
 
@@ -95,18 +99,8 @@ class QQMusicClient:
     async def comments(self, song_id: str) -> list[Comment]:
         async with self._client() as client:
             track = await self._resolve_song(client, song_id)
-            result = await client.comment.get_hot_comments(track.id, page_size=_HOT_COMMENT_PAGE_SIZE)
-            comments = [
-                Comment(
-                    id=item.cmid,
-                    song_id=self._song_identity(track),
-                    author_name=item.nick,
-                    text=item.content,
-                    liked_count=item.praise_num,
-                    created_at=self._timestamp_to_iso(item.pub_time),
-                )
-                for item in result.comments
-            ]
+            result = await self._comment_response(client.comment.get_hot_comments(self._song_numeric_id(track), page_size=_HOT_COMMENT_PAGE_SIZE))
+            comments = self._comment_items(result, self._song_identity(track), "hot")
             return self._rank_hot_comments(comments)
 
     async def profile(self) -> UserProfile:
@@ -185,13 +179,18 @@ class QQMusicClient:
             return []
 
         async with self._client(credential) as client:
-            result = await client.user.get_created_songlist(credential.musicid, credential=credential)
-            return [self._to_playlist(item) for item in result.playlists]
+            result = await self._created_songlist_response(client, credential)
+            return [self._to_playlist(item) for item in self._created_songlist_items(result)]
 
     async def playlist_songs(self, playlist_id: str) -> list[Song]:
         async with self._client() as client:
-            result = await client.songlist.get_detail(int(self._qqmusic_value(playlist_id)), num=100, onlysong=True)
-            return [self._to_song(song) for song in result.songs]
+            result = await self._songlist_detail_response(
+                client,
+                playlist_id,
+                num=100,
+                onlysong=True,
+            )
+            return [self._to_song(song) for song in self._songlist_tracks(result)]
 
     async def track_playability(self, track_id: str) -> TrackPlayability:
         checked_at = self._now_iso()
@@ -247,46 +246,47 @@ class QQMusicClient:
 
     async def playlist_detail(self, playlist_id: str) -> dict[str, Any]:
         async with self._client() as client:
-            result = await client.songlist.get_detail(int(self._qqmusic_value(playlist_id)), num=1, page=1)
-            return self._to_playlist_detail(result.info, result.total)
+            result = await self._songlist_detail_response(client, playlist_id, num=1, page=1)
+            return self._to_playlist_detail(self._value(result, "dirinfo"), self._response_total(result, 0))
 
     async def playlist_tracks(self, playlist_id: str, limit: int, page: int) -> list[Song]:
         async with self._client() as client:
-            result = await client.songlist.get_detail(
-                int(self._qqmusic_value(playlist_id)),
+            result = await self._songlist_detail_response(
+                client,
+                playlist_id,
                 num=limit,
                 page=page,
                 onlysong=True,
             )
-            return [self._to_song(song) for song in result.songs]
+            return [self._to_song(song) for song in self._songlist_tracks(result)[:limit]]
 
     async def search_artists(self, keyword: str, limit: int, page: int) -> list[Artist]:
         async with self._client() as client:
-            result = await client.search.search_by_type(
+            result = await self._raw_response(client.search.search_by_type(
                 keyword=keyword,
                 search_type=SearchType.SINGER,
                 num=limit,
                 page=page,
-            )
-            return [self._to_artist(artist) for artist in result.singer[:limit]]
+            ))
+            return [self._to_artist(artist) for artist in self._items_at(result, "body", "singer")[:limit]]
 
     async def artist_detail(self, artist_id: str) -> Artist:
         mid = str(self._typed_value(artist_id, "artist"))
         async with self._client() as client:
-            info = await client.singer.get_info(mid)
+            info = await self._raw_response(client.singer.get_info(mid))
             description = ""
             try:
-                desc = await client.singer.get_desc([mid])
-                first = desc.singer_list[0] if desc.singer_list else None
-                if first is not None:
-                    description = self._text(getattr(first.ex_info, "desc", ""))
+                desc = await self._raw_response(client.singer.get_desc([mid]))
+                first = self._items_at(desc, "singer_list")[0] if self._items_at(desc, "singer_list") else None
+                description = self._text(self._value(self._value(first, "ex_info"), "desc")) if first is not None else ""
             except Exception:
                 description = ""
-            artist = self._to_artist(info.singer)
+            artist = self._to_artist(self._value(self._value(info, "Info"), "Singer"))
+            base_info = self._value(self._value(info, "Info"), "BaseInfo")
             return Artist(
                 id=artist.id,
-                name=artist.name or info.base_info.name,
-                avatar_url=info.base_info.avatar or artist.avatar_url,
+                name=artist.name or self._text(self._value(base_info, "name", "Name")),
+                avatar_url=self._text(self._value(base_info, "avatar", "Avatar")) or artist.avatar_url,
                 alias=artist.alias,
                 genres=artist.genres,
                 description=description or None,
@@ -296,23 +296,26 @@ class QQMusicClient:
 
     async def artist_tracks(self, artist_id: str, limit: int, page: int) -> list[Song]:
         async with self._client() as client:
-            result = await client.singer.get_songs_list(str(self._typed_value(artist_id, "artist")), num=limit, page=page)
-            return [self._to_song(song) for song in result.song_list[:limit]]
+            result = await self._raw_response(
+                client.singer.get_songs_list(str(self._typed_value(artist_id, "artist")), num=limit, page=page),
+            )
+            return [self._to_song(song) for song in self._items_at(result, "songList", "*", "songInfo")[:limit]]
 
     async def search_albums(self, keyword: str, limit: int, page: int) -> list[Album]:
         async with self._client() as client:
-            result = await client.search.search_by_type(
+            result = await self._raw_response(client.search.search_by_type(
                 keyword=keyword,
                 search_type=SearchType.ALBUM,
                 num=limit,
                 page=page,
-            )
-            return [self._to_album(album) for album in result.album[:limit]]
+            ))
+            return [self._to_album(album) for album in self._items_at(result, "body", "item_album")[:limit]]
 
     async def album_detail(self, album_id: str) -> Album:
         async with self._client() as client:
-            result = await client.album.get_detail(self._typed_value(album_id, "album"))
-            album = self._to_album(result.album)
+            result = await self._raw_response(client.album.get_detail(self._typed_value(album_id, "album")))
+            album_data = self._value(result, "basicInfo")
+            album = self._to_album(album_data)
             return Album(
                 id=album.id,
                 title=album.title,
@@ -320,63 +323,71 @@ class QQMusicClient:
                 artwork_url=album.artwork_url,
                 release_date=album.release_date,
                 song_count=album.song_count,
-                description=self._text(getattr(result.album, "desc", "")) or None,
+                description=self._text(self._value(album_data, "desc", "description")) or None,
             )
 
     async def album_tracks(self, album_id: str, limit: int, page: int) -> list[Song]:
         async with self._client() as client:
-            result = await client.album.get_song(self._typed_value(album_id, "album"), num=limit, page=page)
-            return [self._to_song(song) for song in result.song_list[:limit]]
+            result = await self._raw_response(client.album.get_song(self._typed_value(album_id, "album"), num=limit, page=page))
+            return [self._to_song(song) for song in self._items_at(result, "songList", "*", "songInfo")[:limit]]
 
     async def search_playlists(self, keyword: str, limit: int, page: int) -> list[Playlist]:
         async with self._client() as client:
-            result = await client.search.search_by_type(
+            result = await self._raw_response(client.search.search_by_type(
                 keyword=keyword,
                 search_type=SearchType.SONGLIST,
                 num=limit,
                 page=page,
-            )
-            return [self._to_playlist(item) for item in result.songlist[:limit]]
+            ))
+            return [self._to_playlist(item) for item in self._items_at(result, "body", "item_songlist")[:limit]]
 
     async def track_comments(self, track_id: str, comment_type: str, limit: int, page: int, cursor: str) -> dict[str, Any]:
         async with self._client() as client:
             track = await self._resolve_song(client, track_id)
             normalized_type = comment_type.strip().lower()
             if normalized_type == "new":
-                result = await client.comment.get_new_comments(track.id, page_num=page, page_size=limit, last_comment_seq_no=cursor)
+                result = await self._comment_response(
+                    client.comment.get_new_comments(self._song_numeric_id(track), page_num=page, page_size=limit, last_comment_seq_no=cursor),
+                )
             elif normalized_type == "recommend":
-                result = await client.comment.get_recommend_comments(track.id, page_num=page, page_size=limit, last_comment_seq_no=cursor)
+                result = await self._comment_response(
+                    client.comment.get_recommend_comments(self._song_numeric_id(track), page_num=page, page_size=limit, last_comment_seq_no=cursor),
+                )
             elif normalized_type == "moment":
-                result = await client.comment.get_moment_comments(track.id, page_size=limit, last_comment_seq_no=cursor)
+                result = await self._comment_response(
+                    client.comment.get_moment_comments(self._song_numeric_id(track), page_size=limit, last_comment_seq_no=cursor),
+                )
             else:
                 normalized_type = "hot"
-                result = await client.comment.get_hot_comments(track.id, page_num=page, page_size=limit, last_comment_seq_no=cursor)
-            comments = [self._to_comment(item, self._song_identity(track)) for item in result.comments[:limit]]
+                result = await self._comment_response(
+                    client.comment.get_hot_comments(self._song_numeric_id(track), page_num=page, page_size=limit, last_comment_seq_no=cursor),
+                )
+            comments = self._comment_items(result, self._song_identity(track), normalized_type)[:limit]
             return {
                 "trackId": self._song_identity(track),
                 "type": normalized_type,
                 "count": len(comments),
                 "comments": self._rank_hot_comments(comments) if normalized_type == "hot" else comments,
-                "hasMore": bool(getattr(result, "has_more", False)),
-                "nextCursor": self._text(getattr(result, "next_pos", "")) or self._next_comment_cursor(result),
+                "hasMore": self._comment_has_more(result, normalized_type),
+                "nextCursor": self._comment_next_cursor(result, comments, normalized_type),
             }
 
     async def recommend_tracks(self, recommend_type: str, limit: int, page: int) -> list[Song]:
         normalized_type = recommend_type.strip().lower()
         async with self._client() as client:
             if normalized_type == "new":
-                result = await client.recommend.get_recommend_newsong()
-                return [self._to_song(song) for song in result.songs[:limit]]
+                result = await self._raw_response(client.recommend.get_recommend_newsong())
+                return [self._to_song(song) for song in self._items_at(result, "songlist")[:limit]]
             if normalized_type == "radar":
-                result = await client.recommend.get_radar_recommend(page=page)
-                return [self._to_song(song) for song in result.songs[:limit]]
-            result = await client.recommend.get_guess_recommend()
-            return [self._to_song(song) for song in result.songs[:limit]]
+                result = await self._raw_response(client.recommend.get_radar_recommend(page=page))
+                return [self._to_song(song) for song in self._items_at(result, "VecSongs", "*", "Track")[:limit]]
+            result = await self._raw_response(client.recommend.get_guess_recommend())
+            return [self._to_song(song) for song in self._items_at(result, "Tracks")[:limit]]
 
     async def recommend_playlists(self, limit: int, page: int) -> list[Playlist]:
         async with self._client() as client:
-            result = await client.recommend.get_recommend_songlist(page=page, num=limit)
-            return [self._to_playlist(item) for item in result.songlists[:limit]]
+            result = await self._raw_response(client.recommend.get_recommend_songlist(page=page, num=limit))
+            return [self._to_playlist(item) for item in self._recommend_playlist_items(result)[:limit]]
 
     async def chart_categories(self) -> dict[str, Any]:
         async with self._client() as client:
@@ -395,10 +406,10 @@ class QQMusicClient:
 
     async def chart_detail(self, chart_id: str, limit: int, page: int) -> dict[str, Any]:
         async with self._client() as client:
-            result = await client.top.get_detail(int(self._typed_value(chart_id, "chart")), num=limit, page=page)
-            tracks = [self._to_song(song) for song in result.songs[:limit]]
+            result = await self._raw_response(client.top.get_detail(int(self._typed_value(chart_id, "chart")), num=limit, page=page))
+            tracks = [self._to_song(song) for song in self._items_at(result, "songInfoList")[:limit]]
             return {
-                "chart": self._to_chart(result.info),
+                "chart": self._to_chart(self._value(result, "data")),
                 "count": len(tracks),
                 "tracks": tracks,
                 "songs": tracks,
@@ -416,42 +427,42 @@ class QQMusicClient:
         liked_result = await self._optional_music_gene_source(
             "liked_songs",
             errors,
-            lambda: client.user.get_fav_song(
+            lambda: self._raw_response(client.user.get_fav_song(
                 euin,
                 page=1,
                 num=_MUSIC_GENE_LIKED_SONG_LIMIT,
                 credential=credential,
-            ),
+            )),
         )
         favorite_songlist_result = await self._optional_music_gene_source(
             "favorite_playlists",
             errors,
-            lambda: client.user.get_fav_songlist(
+            lambda: self._raw_response(client.user.get_fav_songlist(
                 euin,
                 page=1,
                 num=_MUSIC_GENE_LIST_LIMIT,
                 credential=credential,
-            ),
+            )),
         )
         favorite_album_result = await self._optional_music_gene_source(
             "favorite_albums",
             errors,
-            lambda: client.user.get_fav_album(
+            lambda: self._raw_response(client.user.get_fav_album(
                 euin,
                 page=1,
                 num=_MUSIC_GENE_LIST_LIMIT,
                 credential=credential,
-            ),
+            )),
         )
         follow_singer_result = await self._optional_music_gene_source(
             "follow_singers",
             errors,
-            lambda: client.user.get_follow_singers(
+            lambda: self._raw_response(client.user.get_follow_singers(
                 euin,
                 page=1,
                 num=_MUSIC_GENE_LIST_LIMIT,
                 credential=credential,
-            ),
+            )),
         )
 
         created_result = None
@@ -459,14 +470,14 @@ class QQMusicClient:
             created_result = await self._optional_music_gene_source(
                 "created_playlists",
                 errors,
-                lambda: client.user.get_created_songlist(credential.musicid, credential=credential),
+                lambda: self._created_songlist_response(client, credential),
             )
 
-        liked_songs = list(getattr(liked_result, "songs", []) or [])
-        created_playlists = list(getattr(created_result, "playlists", []) or [])
-        favorite_playlists = list(getattr(favorite_songlist_result, "playlists", []) or [])
-        favorite_albums = list(getattr(favorite_album_result, "albums", []) or [])
-        follow_singers = list(getattr(follow_singer_result, "users", []) or [])
+        liked_songs = self._songlist_tracks(liked_result)
+        created_playlists = self._created_songlist_items(created_result)
+        favorite_playlists = self._items_at(favorite_songlist_result, "v_list")
+        favorite_albums = self._items_at(favorite_album_result, "v_list")
+        follow_singers = self._items_at(follow_singer_result, "List")
 
         top_artists = self._rank_top_artists(liked_songs, favorite_albums, follow_singers)
         top_albums = self._rank_top_albums(liked_songs, favorite_albums)
@@ -493,7 +504,7 @@ class QQMusicClient:
                 "top_genre_ids": self._rank_numeric_song_attr(liked_songs, "genre"),
                 "top_language_ids": self._rank_numeric_song_attr(liked_songs, "language"),
                 "liked_song_count": self._response_total(liked_result, len(liked_songs)),
-                "created_playlist_count": self._response_total(created_result, len(created_playlists)),
+                "created_playlist_count": self._created_songlist_total(created_result, len(created_playlists)),
                 "favorite_playlist_count": self._response_total(favorite_songlist_result, len(favorite_playlists)),
                 "favorite_album_count": self._response_total(favorite_album_result, len(favorite_albums)),
                 "follow_singer_count": self._response_total(follow_singer_result, len(follow_singers)),
@@ -542,6 +553,92 @@ class QQMusicClient:
             )
             return None
 
+    async def _raw_response(self, request: Any) -> dict[str, Any]:
+        raw = await request.replace(response_model=None)
+        return raw if isinstance(raw, dict) else {}
+
+    async def _songlist_detail_response(
+        self,
+        client: Client,
+        playlist_id: str,
+        num: int,
+        page: int = 1,
+        *,
+        onlysong: bool = False,
+    ) -> dict[str, Any]:
+        return await self._raw_response(
+            client.songlist.get_detail(
+                int(self._qqmusic_value(playlist_id)),
+                num=num,
+                page=page,
+                onlysong=onlysong,
+            ),
+        )
+
+    def _songlist_tracks(self, response: Any | None) -> list[Any]:
+        return self._items_at(response, "songlist")
+
+    async def _comment_response(self, request: Any) -> dict[str, Any]:
+        return await self._raw_response(request)
+
+    def _comment_items(self, response: Any | None, song_id: str, comment_type: str) -> list[Comment]:
+        if comment_type == "moment":
+            items = self._items_at(response, "CmList")
+        else:
+            items = self._items_at(response, "CommentList", "Comments")
+        return [self._to_comment(item, song_id) for item in items]
+
+    def _comment_has_more(self, response: Any | None, comment_type: str) -> bool:
+        if comment_type == "moment":
+            return bool(self._value(response, "HasMore", "has_more"))
+        comment_list = self._value(response, "CommentList")
+        return bool(self._value(comment_list, "HasMore", "has_more"))
+
+    def _comment_next_cursor(self, response: Any | None, comments: list[Comment], comment_type: str) -> str:
+        if comment_type == "moment":
+            return self._text(self._value(response, "NextPos", "next_pos"))
+        if not comments:
+            return ""
+        raw_comments = self._items_at(response, "CommentList", "Comments")
+        if raw_comments:
+            return self._text(self._value(raw_comments[-1], "SeqNo", "seq_no"))
+        return comments[-1].id
+
+    async def _created_songlist_response(self, client: Client, credential: Credential) -> dict[str, Any]:
+        return await self._raw_response(client.user.get_created_songlist(credential.musicid, credential=credential))
+
+    def _created_songlist_items(self, response: Any | None) -> list[Any]:
+        if response is None:
+            return []
+        if isinstance(response, dict):
+            for key in ("v_playlist", "playlists"):
+                items = self._items_value(response.get(key))
+                if items:
+                    return items
+            return []
+        return list(getattr(response, "playlists", []) or [])
+
+    def _created_songlist_total(self, response: Any | None, fallback: int) -> int:
+        if isinstance(response, dict):
+            value = response.get("total")
+            try:
+                total = int(value)
+            except (TypeError, ValueError):
+                return fallback
+            return total if total >= 0 else fallback
+        return self._response_total(response, fallback)
+
+    def _recommend_playlist_items(self, response: Any | None) -> list[Any]:
+        items = []
+        for entry in self._items_at(response, "List"):
+            playlist = self._value(entry, "Playlist") or entry
+            basic = self._value(playlist, "basic") or playlist
+            if isinstance(playlist, dict) and isinstance(basic, dict):
+                items.append({**playlist, **basic})
+            else:
+                items.append(basic)
+        return items
+
     def _compact_song_signal(self, song: Any) -> dict[str, Any]:
         data = self._jsonable(self._to_song(song))
         if isinstance(data, dict):
@@ -551,19 +648,21 @@ class QQMusicClient:
     def _compact_playlist_signal(self, playlist: Any, source: str) -> dict[str, Any]:
         return self._compact_dict(
             {
-                "id": f"{_SONG_ID_PREFIX}{getattr(playlist, 'id', '')}",
-                "name": self._text(getattr(playlist, "title", "")),
+                "id": f"{_SONG_ID_PREFIX}{self._playlist_identity(playlist)}",
+                "name": self._text(self._value(playlist, "title", "name", "dissname", "dirName")),
                 "source": source,
-                "song_count": self._positive_int(getattr(playlist, "songnum", 0)),
+                "song_count": self._positive_int(
+                    self._value(playlist, "songnum", "songNum", "song_cnt", "songCnt", "total_song_num"),
+                ),
                 "play_count": self._positive_int(
-                    getattr(playlist, "play_cnt", getattr(playlist, "listennum", 0)),
+                    self._value(playlist, "play_cnt", "playCnt", "listennum"),
                 ),
-                "favorite_count": self._positive_int(getattr(playlist, "create_fav_cnt", 0)),
-                "comment_count": self._positive_int(getattr(playlist, "comment_cnt", 0)),
+                "favorite_count": self._positive_int(self._value(playlist, "create_fav_cnt", "fav_cnt", "favCnt")),
+                "comment_count": self._positive_int(self._value(playlist, "comment_cnt", "commentCnt")),
                 "owner_name": self._text(
-                    getattr(playlist, "nick", None) or getattr(playlist, "nickname", None),
+                    self._value(playlist, "nick", "nickname"),
                 ),
-                "artwork_url": self._text(getattr(playlist, "picurl", "")),
+                "artwork_url": self._text(self._value(playlist, "picurl", "picUrl", "cover", "logo")),
             },
         )
 
@@ -571,26 +670,26 @@ class QQMusicClient:
         name = self._album_name(album)
         return self._compact_dict(
             {
-                "id": f"qqmusic:album:{getattr(album, 'mid', '') or getattr(album, 'id', '')}",
-                "mid": self._text(getattr(album, "mid", "")),
+                "id": f"qqmusic:album:{self._value(album, 'mid', 'albumMid') or self._value(album, 'id', 'albumID') or ''}",
+                "mid": self._text(self._value(album, "mid", "albumMid")),
                 "name": name,
                 "artists": self._album_artist_names(album),
-                "song_count": self._positive_int(getattr(album, "songnum", 0)),
+                "song_count": self._positive_int(self._value(album, "songnum", "songNum", "totalNum")),
                 "published_at": self._text(
-                    getattr(album, "time_public", None) or getattr(album, "pubtime", None),
+                    self._value(album, "time_public", "publishDate", "pubtime"),
                 ),
-                "artwork_url": self._cover_url(album),
+                "artwork_url": self._album_cover_url(album) or self._cover_url(album),
             },
         )
 
     def _compact_relation_user_signal(self, user: Any) -> dict[str, Any]:
         return self._compact_dict(
             {
-                "id": self._text(getattr(user, "mid", None) or getattr(user, "enc_uin", None)),
-                "name": self._text(getattr(user, "name", "")),
-                "description": self._text(getattr(user, "desc", "")),
-                "avatar_url": self._text(getattr(user, "avatar_url", "")),
-                "fan_count": self._positive_int(getattr(user, "fan_num", 0)),
+                "id": self._text(self._value(user, "mid", "MID", "enc_uin", "EncUin")),
+                "name": self._text(self._value(user, "name", "Name")),
+                "description": self._text(self._value(user, "desc", "Desc")),
+                "avatar_url": self._text(self._value(user, "avatar_url", "AvatarUrl")),
+                "fan_count": self._positive_int(self._value(user, "fan_num", "FanNum")),
             },
         )
 
@@ -640,12 +739,12 @@ class QQMusicClient:
                 {
                     "name": name,
                     "artists": self._album_artist_names(album),
-                    "artwork_url": self._cover_url(album),
+                    "artwork_url": self._album_cover_url(album) or self._cover_url(album),
                 },
             )
 
         for song in songs:
-            album = getattr(song, "album", None)
+            album = self._value(self._song_payload(song), "album")
             name = self._album_name(album)
             if not name:
                 continue
@@ -655,7 +754,7 @@ class QQMusicClient:
                 {
                     "name": name,
                     "artists": self._album_artist_names(album),
-                    "artwork_url": self._cover_url(album),
+                    "artwork_url": self._album_cover_url(album) or self._cover_url(album),
                 },
             )
 
@@ -670,45 +769,84 @@ class QQMusicClient:
     def _rank_numeric_song_attr(self, songs: list[Any], attr: str) -> list[dict[str, int]]:
         counts: Counter[int] = Counter()
         for song in songs:
-            value = getattr(song, attr, 0)
-            if isinstance(value, int) and value > 0:
-                counts[value] += 1
+            value = self._value(self._song_payload(song), attr)
+            number = self._positive_int(value)
+            if number:
+                counts[number] += 1
         return [{"id": int(value), "count": int(count)} for value, count in counts.most_common(15)]
 
     def _song_artist_names(self, song: Any) -> list[str]:
+        song = self._song_payload(song)
         return [
-            name
-            for artist in getattr(song, "singer", []) or []
-            if (name := self._text(getattr(artist, "name", "")))
+            name if name else self._text(artist)
+            for artist in self._items_value(self._value(song, "singer", "singers", "singerList") or [])
+            if (name := self._text(self._value(artist, "name", "singerName"))) or isinstance(artist, str)
         ]
 
     def _album_artist_names(self, album: Any) -> list[str]:
-        artists = getattr(album, "singers", None) or getattr(album, "singer_list", None)
+        singer_container = self._value(album, "singer")
+        artists = (
+            self._value(album, "singers", "singer_list", "singerList", "v_singer")
+            or self._value(singer_container, "singerList")
+        )
         if artists:
             return [
                 name
-                for artist in artists
-                if (name := self._text(getattr(artist, "name", "")))
+                for artist in self._items_value(artists)
+                if (name := self._text(self._value(artist, "name", "singerName")))
             ]
-        singer_name = self._text(getattr(album, "singer_name", "")) or self._text(getattr(album, "singer", ""))
+        singer_name = self._text(self._value(album, "singer_name", "singerName", "singer"))
         if singer_name:
             return [singer_name]
-        return [
-            name
-            for artist in getattr(album, "singers", []) or []
-            if (name := self._text(getattr(artist, "name", "")))
-        ]
+        return []
 
     def _album_name(self, album: Any) -> str:
         if album is None:
             return ""
-        return self._text(getattr(album, "name", None) or getattr(album, "title", None))
+        if isinstance(album, str):
+            return self._text(album)
+        return self._text(self._value(album, "name", "title", "albumName"))
 
     def _cover_url(self, value: Any) -> str | None:
-        for attr in ("pic", "picurl", "picUrl", "singer_pic", "avatar_url", "front_pic_url"):
-            text = self._text(getattr(value, attr, ""))
-            if text:
-                return text
+        if value is None:
+            return None
+        for attr in (
+            "pic",
+            "picurl",
+            "picUrl",
+            "singer_pic",
+            "singerPic",
+            "avatar_url",
+            "AvatarUrl",
+            "front_pic_url",
+            "frontPicUrl",
+            "head_pic_url",
+            "headPicUrl",
+            "bigpicUrl",
+            "albumPicUrl",
+        ):
+            direct_url = self._direct_image_url(self._value(value, attr))
+            if direct_url:
+                return direct_url
+        cover = self._value(value, "cover")
+        cover_url = self._direct_image_url(self._value(cover, "default_url", "url"))
+        if cover_url:
+            return cover_url
+        album = self._value(value, "album")
+        if album is not None and album is not value:
+            album_cover = self._album_cover_url(album)
+            if album_cover:
+                return album_cover
+        for singer in self._items_value(self._value(value, "singer", "singers", "singerList") or []):
+            singer_cover = self._singer_cover_url(singer)
+            if singer_cover:
+                return singer_cover
+        album_cover = self._album_cover_url(value, allow_plain_mid=False)
+        if album_cover:
+            return album_cover
+        singer_cover = self._singer_cover_url(value, allow_plain_mid=False)
+        if singer_cover:
+            return singer_cover
         if hasattr(value, "cover_url"):
             try:
                 return value.cover_url() or None
@@ -716,12 +854,60 @@ class QQMusicClient:
                 return None
         return None
 
+    def _album_cover_url(self, album: Any, *, allow_plain_mid: bool = True) -> str:
+        direct_url = self._direct_image_url(
+            self._value(album, "pic", "picurl", "picUrl", "cover", "front_pic_url", "frontPicUrl", "albumPicUrl", "bigpicUrl"),
+        )
+        if direct_url:
+            return direct_url
+        names = ["albumMid", "albumMID", "albumMId", "albummid", "pmid", "logo"]
+        if allow_plain_mid:
+            names.insert(0, "mid")
+        mid = self._cover_mid(album, *names)
+        return self._photo_new_cover_url("T002", mid) if mid else ""
+
+    def _singer_cover_url(self, singer: Any, *, allow_plain_mid: bool = True) -> str:
+        direct_url = self._direct_image_url(
+            self._value(singer, "pic", "singer_pic", "singerPic", "SingerPic", "avatar_url", "AvatarUrl"),
+        )
+        if direct_url:
+            return direct_url
+        names = ["singerMid", "SingerMid", "singerMID", "singer_mid", "singerPmid", "SingerPMid", "pic_mid"]
+        if allow_plain_mid:
+            names.extend(("mid", "pmid"))
+        mid = self._cover_mid(singer, *names)
+        return self._photo_new_cover_url("T001", mid) if mid else ""
+
+    def _direct_image_url(self, value: Any) -> str:
+        text = self._text(value)
+        if text.startswith("//"):
+            return f"https:{text}"
+        if text.startswith("http://") or text.startswith("https://"):
+            return text
+        return ""
+
+    def _cover_mid(self, value: Any, *names: str) -> str:
+        mid = self._text(self._value(value, *names))
+        if not mid or mid.startswith("http://") or mid.startswith("https://") or mid.startswith("//"):
+            return ""
+        return mid
+
+    def _photo_new_cover_url(self, kind: str, mid: str) -> str:
+        normalized_mid = mid.strip()
+        if not normalized_mid:
+            return ""
+        return f"{_PHOTO_NEW_DOMAIN}{kind}{_PHOTO_NEW_SIZE_SEGMENT}M000{normalized_mid}.jpg"
+
     def _response_total(self, response: Any | None, fallback: int) -> int:
         if response is None:
             return fallback
-        value = getattr(response, "total", None)
-        if isinstance(value, int) and value >= 0:
-            return value
+        value = self._value(response, "total", "Total", "totalNum", "total_song_num")
+        try:
+            total = int(value)
+        except (TypeError, ValueError):
+            return fallback
+        if total >= 0:
+            return total
         return fallback
 
     def _music_gene_confidence(self, source_signal_count: int) -> str:
@@ -751,6 +937,60 @@ class QQMusicClient:
         if value is None:
             return ""
         return str(value).strip()
+
+    def _value(self, value: Any, *names: str) -> Any:
+        if isinstance(value, dict):
+            for name in names:
+                if name in value and value[name] is not None:
+                    return value[name]
+            lowered = {str(key).lower(): item for key, item in value.items() if item is not None}
+            for name in names:
+                item = lowered.get(name.lower())
+                if item is not None:
+                    return item
+            return None
+        for name in names:
+            item = getattr(value, name, None)
+            if item is not None:
+                return item
+        return None
+
+    def _items_at(self, value: Any | None, *path: str) -> list[Any]:
+        if value is None:
+            return []
+        values = [value]
+        for key in path:
+            next_values = []
+            for item in values:
+                if key == "*":
+                    next_values.extend(self._items_value(item))
+                    continue
+                for candidate in self._items_value(item) if isinstance(item, (list, tuple)) else [item]:
+                    child = self._value(candidate, key)
+                    next_values.extend(self._items_value(child))
+            values = next_values
+            if not values:
+                return []
+        return values
+
+    def _items_value(self, value: Any) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, tuple):
+            return list(value)
+        return [value]
+
+    def _looks_like_playlist(self, value: dict[str, Any]) -> bool:
+        playlist_keys = {"id", "tid", "dissid", "dirid", "dirId", "title", "name", "dissname", "dirName"}
+        return any(key in value for key in playlist_keys)
+
+    def _playlist_identity(self, playlist: Any) -> Any:
+        playlist_id = self._value(playlist, "id", "tid", "dissid")
+        if self._text(playlist_id) in {"", "-1", "0"}:
+            playlist_id = self._value(playlist, "dirid", "dirId")
+        return playlist_id or ""
 
     def _rank_hot_comments(self, comments: list[Comment]) -> list[Comment]:
         return sorted(
@@ -802,14 +1042,15 @@ class QQMusicClient:
 
     async def _resolve_song(self, client: Client, song_id: str):
         value = self._qqmusic_value(song_id)
-        detail = await client.song.get_detail(value)
-        return detail.track
+        detail = await self._raw_response(client.song.get_detail(value))
+        return self._value(detail, "track_info", "track") or detail
 
     def _song_file_info(self, track: Any) -> SongFileInfo:
+        file_info = self._value(track, "file")
         return SongFileInfo(
-            mid=track.mid,
-            song_type=track.type,
-            media_mid=track.file.media_mid or None,
+            mid=self._text(self._value(track, "mid", "songmid", "songMid")),
+            song_type=self._int_value(self._value(track, "type")),
+            media_mid=self._text(self._value(file_info, "media_mid", "mediaMid")) or None,
         )
 
     async def _quality_playability(
@@ -820,8 +1061,9 @@ class QQMusicClient:
         track: Any,
     ) -> TrackPlayabilityQuality:
         try:
-            response = await client.song.get_song_urls([file_info], file_type=file_type)
-            item = response.data[0] if response.data else None
+            response = await self._raw_response(client.song.get_song_urls([file_info], file_type=file_type))
+            items = self._items_at(response, "midurlinfo")
+            item = items[0] if items else None
             if item is None:
                 return TrackPlayabilityQuality(
                     quality=file_type.name,
@@ -829,12 +1071,12 @@ class QQMusicClient:
                     state=self._fallback_track_state(track, []),
                     message="No URL authorization result returned.",
                 )
-            state = self._url_result_state(item.result, item.purl)
+            state = self._url_result_state(self._int_value(self._value(item, "result")), self._text(self._value(item, "purl")))
             return TrackPlayabilityQuality(
                 quality=file_type.name,
                 playable=state == "PLAYABLE",
                 state=state,
-                message=self._quality_message(state, item.result),
+                message=self._quality_message(state, self._int_value(self._value(item, "result"))),
             )
         except Exception as error:
             return TrackPlayabilityQuality(
@@ -871,17 +1113,19 @@ class QQMusicClient:
                 return "DEVICE_RESTRICTED"
             return states[0]
 
-        status = getattr(track, "status", 0)
+        status = self._int_value(self._value(track, "status"))
         if status == 3:
             return "REGION_RESTRICTED"
         if status not in (0, None):
             return "COPYRIGHT_RESTRICTED"
 
-        pay = getattr(track, "pay", None)
+        pay = self._value(track, "pay")
         if pay is not None:
-            if self._positive_int(getattr(pay, "price_track", 0)) or self._positive_int(getattr(pay, "price_album", 0)):
+            if self._positive_int(self._value(pay, "price_track", "priceTrack")) or self._positive_int(
+                self._value(pay, "price_album", "priceAlbum"),
+            ):
                 return "PURCHASE_REQUIRED"
-            if self._positive_int(getattr(pay, "pay_play", 0)) or self._positive_int(getattr(pay, "pay_month", 0)):
+            if self._positive_int(self._value(pay, "pay_play", "payPlay")) or self._positive_int(self._value(pay, "pay_month", "payMonth")):
                 return "MEMBERSHIP_REQUIRED"
         return "UNKNOWN"
 
@@ -990,18 +1234,29 @@ class QQMusicClient:
         raw = value.removeprefix(typed_prefix).removeprefix(_SONG_ID_PREFIX)
         return int(raw) if raw.isdigit() else raw
 
+    def _song_payload(self, song: Any) -> Any:
+        if isinstance(song, dict):
+            for key in ("track", "Track", "songInfo", "song_info", "songinfo"):
+                nested = song.get(key)
+                if isinstance(nested, dict):
+                    return nested
+        return song
+
     def _to_song(self, song: Any) -> Song:
+        song = self._song_payload(song)
+        album = self._value(song, "album")
         return Song(
             id=self._song_identity(song),
-            title=song.title or song.name,
-            artists=[artist.name for artist in song.singer if artist.name],
-            album=song.album.name or song.album.title or None,
-            duration_seconds=song.interval or None,
-            artwork_url=song.cover_url() or None,
+            title=self._text(self._value(song, "title", "title_main", "name", "songName")),
+            artists=self._song_artist_names(song),
+            album=self._album_name(album) or None,
+            duration_seconds=self._positive_int(self._value(song, "interval", "duration", "songInterval")),
+            artwork_url=self._cover_url(song),
         )
 
     def _to_song_detail(self, song: Any) -> SongDetail:
         base = self._to_song(song)
+        mid = self._text(self._value(self._song_payload(song), "mid", "songmid", "songMid"))
         return SongDetail(
             id=base.id,
             title=base.title,
@@ -1009,98 +1264,114 @@ class QQMusicClient:
             album=base.album,
             duration_seconds=base.duration_seconds,
             artwork_url=base.artwork_url,
-            source_url=f"https://y.qq.com/n/ryqq/songDetail/{song.mid}" if song.mid else None,
+            source_url=f"https://y.qq.com/n/ryqq/songDetail/{mid}" if mid else None,
         )
 
     def _to_comment(self, item: Any, song_id: str) -> Comment:
         return Comment(
-            id=self._text(getattr(item, "cmid", "")),
+            id=self._text(self._value(item, "cmid", "CmId")),
             song_id=song_id,
-            author_name=self._text(getattr(item, "nick", "")) or self._text(getattr(item, "encrypt_uin", "")),
-            text=self._text(getattr(item, "content", "")),
-            liked_count=self._positive_int(getattr(item, "praise_num", 0)),
-            created_at=self._timestamp_to_iso(getattr(item, "pub_time", 0)),
+            author_name=self._text(self._value(item, "nick", "Nick")) or self._text(self._value(item, "encrypt_uin", "EncryptUin")),
+            text=self._text(self._value(item, "content", "Content")),
+            liked_count=self._positive_int(self._value(item, "praise_num", "PraiseNum")),
+            created_at=self._timestamp_to_iso(self._value(item, "pub_time", "PubTime")),
         )
 
     def _to_playlist(self, playlist: Any) -> Playlist:
         return Playlist(
-            id=f"{_SONG_ID_PREFIX}{playlist.id}",
-            name=playlist.title,
-            song_count=playlist.songnum or None,
-            artwork_url=playlist.picurl or None,
+            id=f"{_SONG_ID_PREFIX}{self._playlist_identity(playlist)}",
+            name=self._text(self._value(playlist, "title", "name", "dissname", "dirName")),
+            song_count=self._positive_int(
+                self._value(playlist, "songnum", "songNum", "song_cnt", "songCnt", "total_song_num"),
+            ),
+            artwork_url=self._text(self._value(playlist, "picurl", "picUrl", "cover", "logo")) or None,
         )
 
     def _to_playlist_detail(self, playlist: Any, total: int | None = None) -> dict[str, Any]:
-        creator = getattr(playlist, "creator", None)
+        creator = self._value(playlist, "creator")
         return self._compact_dict(
             {
-                "id": f"{_SONG_ID_PREFIX}{getattr(playlist, 'id', '')}",
+                "id": f"{_SONG_ID_PREFIX}{self._playlist_identity(playlist)}",
                 "provider": "qqmusic",
-                "name": self._text(getattr(playlist, "title", "")),
-                "description": self._text(getattr(playlist, "desc", "")),
-                "songCount": self._positive_int(total) or self._positive_int(getattr(playlist, "songnum", 0)),
-                "artworkUrl": self._text(getattr(playlist, "picurl", "")),
-                "ownerName": self._text(getattr(creator, "nick", "")) if creator is not None else "",
-                "ownerId": self._text(getattr(creator, "musicid", "")) if creator is not None else "",
-                "playCount": self._positive_int(getattr(playlist, "listennum", 0)),
+                "name": self._text(self._value(playlist, "title", "name", "dirName")),
+                "description": self._text(self._value(playlist, "desc", "description")),
+                "songCount": self._positive_int(total)
+                or self._positive_int(self._value(playlist, "songnum", "songNum", "total_song_num")),
+                "artworkUrl": self._text(self._value(playlist, "picurl", "picUrl", "cover", "logo")),
+                "ownerName": self._text(self._value(creator, "nick", "name")) if creator is not None else "",
+                "ownerId": self._text(self._value(creator, "musicid", "uin")) if creator is not None else "",
+                "playCount": self._positive_int(self._value(playlist, "listennum", "playCnt", "play_cnt")),
             },
         )
 
     def _to_album(self, album: Any) -> Album:
-        album_id = self._text(getattr(album, "mid", "")) or self._text(getattr(album, "id", ""))
+        album_id = self._text(self._value(album, "mid", "albumMid", "albumMId")) or self._text(
+            self._value(album, "id", "albumID", "albumId"),
+        )
         return Album(
             id=f"{_ALBUM_ID_PREFIX}{album_id}",
             title=self._album_name(album),
             artists=self._album_artist_names(album),
-            artwork_url=self._cover_url(album),
-            release_date=self._text(getattr(album, "time_public", "")) or None,
+            artwork_url=self._album_cover_url(album) or self._cover_url(album),
+            release_date=self._text(self._value(album, "time_public", "publishDate", "publish_date")) or None,
             song_count=self._positive_int(
-                getattr(album, "songnum", getattr(album, "total_num", getattr(album, "totalNum", 0))),
+                self._value(album, "songnum", "songNum", "total_num", "totalNum"),
             ),
-            description=self._text(getattr(album, "description", "")) or None,
+            description=self._text(self._value(album, "description", "desc")) or None,
         )
 
     def _to_artist(self, artist: Any) -> Artist:
-        artist_id = self._text(getattr(artist, "mid", "")) or self._text(getattr(artist, "id", ""))
+        artist_id = self._text(self._value(artist, "mid", "singerMid", "singerMID")) or self._text(
+            self._value(artist, "id", "singerId", "singerID", "singer_id"),
+        )
         aliases = [
             value
             for value in (
-                self._text(getattr(artist, "other_name", "")),
-                self._text(getattr(artist, "subtitle", "")),
-                self._text(getattr(artist, "foreign_name", "")),
+                self._text(self._value(artist, "other_name", "otherName")),
+                self._text(self._value(artist, "subtitle")),
+                self._text(self._value(artist, "foreign_name", "foreignName")),
             )
             if value
         ]
         genres = [
             value
             for value in (
-                self._text(getattr(artist, "genre", "")),
-                self._text(getattr(artist, "tag", "")),
+                self._text(self._value(artist, "genre")),
+                self._text(self._value(artist, "tag")),
             )
             if value
         ]
         return Artist(
             id=f"{_ARTIST_ID_PREFIX}{artist_id}",
-            name=self._text(getattr(artist, "name", "")) or self._text(getattr(artist, "title", "")),
-            avatar_url=self._text(getattr(artist, "pic", "")) or self._text(getattr(artist, "singer_pic", "")) or self._cover_url(artist),
+            name=self._text(self._value(artist, "name", "singerName")) or self._text(self._value(artist, "title")),
+            avatar_url=self._direct_image_url(self._value(artist, "pic", "singerPic", "singer_pic")) or self._singer_cover_url(artist),
             alias=aliases,
             genres=genres,
-            song_count=self._positive_int(getattr(artist, "song_num", 0)),
-            album_count=self._positive_int(getattr(artist, "album_num", 0)),
+            song_count=self._positive_int(self._value(artist, "song_num", "songNum")),
+            album_count=self._positive_int(self._value(artist, "album_num", "albumNum")),
         )
 
     def _to_chart(self, chart: Any) -> Chart:
-        chart_id = self._text(getattr(chart, "id", ""))
+        chart_id = self._text(self._value(chart, "id", "topId"))
         return Chart(
             id=f"{_CHART_ID_PREFIX}{chart_id}",
-            name=self._text(getattr(chart, "name", "")),
-            description=self._text(getattr(chart, "intro", "")) or None,
-            update_frequency=self._text(getattr(chart, "update_time", "")) or self._text(getattr(chart, "period", "")) or None,
-            artwork_url=self._text(getattr(chart, "front_pic_url", "")) or self._text(getattr(chart, "head_pic_url", "")) or None,
+            name=self._text(self._value(chart, "name", "title")),
+            description=self._text(self._value(chart, "intro")) or None,
+            update_frequency=self._text(self._value(chart, "update_time", "updateTime"))
+            or self._text(self._value(chart, "period"))
+            or None,
+            artwork_url=self._text(self._value(chart, "front_pic_url", "frontPicUrl"))
+            or self._text(self._value(chart, "head_pic_url", "headPicUrl"))
+            or None,
         )
 
     def _song_identity(self, song: Any) -> str:
-        return f"{_SONG_ID_PREFIX}{song.mid or song.id}"
+        song = self._song_payload(song)
+        return f"{_SONG_ID_PREFIX}{self._value(song, 'mid', 'songmid', 'songMid') or self._value(song, 'id', 'songId') or ''}"
+
+    def _song_numeric_id(self, song: Any) -> int:
+        song = self._song_payload(song)
+        return self._int_value(self._value(song, "id", "songId"))
 
     def _track_web_url(self, song_id: str) -> str | None:
         value = self._typed_value(song_id, "")
@@ -1120,10 +1391,14 @@ class QQMusicClient:
                 lines.append(cleaned)
         return "\n".join(lines)
 
-    def _timestamp_to_iso(self, value: int) -> str | None:
+    def _timestamp_to_iso(self, value: Any) -> str | None:
         if not value:
             return None
-        return datetime.fromtimestamp(value, UTC).isoformat().replace("+00:00", "Z")
+        try:
+            timestamp = int(value)
+        except (TypeError, ValueError):
+            return None
+        return datetime.fromtimestamp(timestamp, UTC).isoformat().replace("+00:00", "Z")
 
     def _now_iso(self) -> str:
         return datetime.now(UTC).isoformat().replace("+00:00", "Z")
