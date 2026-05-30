@@ -23,6 +23,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
 
 @Component
 public class LlmMemoryEnricher {
@@ -59,9 +60,28 @@ public class LlmMemoryEnricher {
             AgentLlmLogger.logResponse("memory_enrichment", ai, content);
             return parseResult(content).orElseGet(MemoryEnrichmentResult::empty);
         } catch (Exception e) {
-            log.warn("LLM memory enrichment failed for user {}", request.userId(), e);
+            if (wasInterrupted(e)) {
+                Thread.currentThread().interrupt();
+                log.debug("LLM memory enrichment interrupted for user {}", request.userId());
+            } else {
+                log.warn("LLM memory enrichment failed for user {}", request.userId(), e);
+            }
             return MemoryEnrichmentResult.empty();
         }
+    }
+
+    static boolean wasInterrupted(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof InterruptedException || current instanceof CancellationException) {
+                return true;
+            }
+            if ("org.springframework.retry.backoff.BackOffInterruptedException".equals(current.getClass().getName())) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     Prompt buildPrompt(MemoryWriteRequest request) {

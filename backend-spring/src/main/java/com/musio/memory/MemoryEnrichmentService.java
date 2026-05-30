@@ -162,9 +162,18 @@ public class MemoryEnrichmentService {
         } catch (TimeoutException e) {
             future.cancel(true);
             log.warn("Memory enrichment timed out for user {}", request.userId());
+        } catch (InterruptedException e) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            log.debug("Memory enrichment job interrupted for user {}", request.userId());
         } catch (Exception e) {
             future.cancel(true);
-            log.warn("Memory enrichment job failed for user {}", request.userId(), e);
+            if (LlmMemoryEnricher.wasInterrupted(e)) {
+                Thread.currentThread().interrupt();
+                log.debug("Memory enrichment job interrupted for user {}", request.userId());
+            } else {
+                log.warn("Memory enrichment job failed for user {}", request.userId(), e);
+            }
         }
     }
 

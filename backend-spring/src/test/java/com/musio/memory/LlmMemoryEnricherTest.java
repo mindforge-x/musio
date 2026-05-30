@@ -62,6 +62,13 @@ class LlmMemoryEnricherTest {
     }
 
     @Test
+    void recognizesInterruptedEnrichmentFailures() {
+        assertTrue(LlmMemoryEnricher.wasInterrupted(new RuntimeException(new InterruptedException("sleep interrupted"))));
+        assertTrue(LlmMemoryEnricher.wasInterrupted(new java.util.concurrent.CancellationException("cancelled")));
+        assertFalse(LlmMemoryEnricher.wasInterrupted(new RuntimeException("model unavailable")));
+    }
+
+    @Test
     void enrichmentPromptIncludesTaskMemoryForReferenceResolution() {
         Song song = new Song("qqmusic:memory", ProviderType.QQMUSIC, "七秒钟的记忆", List.of("徐良", "孙羽幽"), "", 0, "");
         AgentTaskMemory taskMemory = new AgentTaskMemory(
